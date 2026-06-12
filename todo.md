@@ -69,3 +69,10 @@
 - [x] Campaign daily-series fallback (sum children) so campaign spend never shows 0
 - [x] Update demo data to include thumbnails, video metrics, statuses
 - [x] Tests updated + all passing (39 tests, typecheck clean)
+
+## Bug: real Meta account showed all zeros
+- [x] Root cause 1: insights queries didn't request campaign_id/adset_id/ad_id fields, so rows couldn't be matched back to objects → all metrics zero
+- [x] Root cause 2: hierarchy was filtered to ACTIVE only; relaxed to active OR delivered in last 30 days
+- [x] Added transient-error retry and broader async-insights fallback for large accounts (617 objects)
+- [x] Verified live: 30d spend $7,462 across 29 campaigns now matches Ads Manager; thumbnails pulled for 481 ads
+- [x] Removed temporary diagnostic scripts; typecheck + 39 tests pass

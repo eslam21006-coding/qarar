@@ -38,18 +38,24 @@ export function buildOAuthUrl(redirectUri: string, state: string): string {
 async function graphGet(path: string, params: Record<string, string>): Promise<any> {
   const qs = new URLSearchParams(params);
   const url = `${GRAPH}${path}?${qs.toString()}`;
-  const res = await fetch(url);
-  const json: any = await res.json().catch(() => ({}));
-  if (!res.ok || json.error) {
+  let lastErr: any = null;
+  // Up to 3 attempts: Meta returns transient "unknown error" (code 1/2) on heavy queries
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 1500 * attempt));
+    const res = await fetch(url);
+    const json: any = await res.json().catch(() => ({}));
+    if (res.ok && !json.error) return json;
     const err = json.error || {};
     const e: any = new Error(err.message || `Meta API error ${res.status}`);
     e.metaCode = err.code;
     e.metaType = err.type;
     e.isAuthError = err.code === 190 || err.type === "OAuthException";
     e.isRateLimit = err.code === 17 || err.code === 4 || err.code === 32 || err.code === 613;
-    throw e;
+    e.isTransient = err.code === 1 || err.code === 2 || err.is_transient === true;
+    lastErr = e;
+    if (!e.isTransient) throw e;
   }
-  return json;
+  throw lastErr;
 }
 
 export async function exchangeCodeForToken(
@@ -223,7 +229,9 @@ async function fetchLevelInsights(
   const byId = new Map<string, any[]>();
   const params: Record<string, string> = {
     level,
-    fields: INSIGHTS_FIELDS,
+    // The id field MUST be requested explicitly, otherwise rows cannot be
+    // matched back to objects and every metric reads as zero.
+    fields: `${idField},${INSIGHTS_FIELDS}`,
     limit: "500",
     access_token: token,
     ...timeParams,
@@ -233,7 +241,11 @@ async function fetchLevelInsights(
     rows = await graphGetAll(`/${accountId}/insights`, params, 20);
   } catch (e: any) {
     // Large accounts / heavy queries: fall back to Meta's async insights job
-    if (e.isRateLimit || /reduce the amount of data|too large/i.test(e.message ?? "")) {
+    if (
+      e.isRateLimit ||
+      e.isTransient ||
+      /reduce the amount of data|too large|unknown error/i.test(e.message ?? "")
+    ) {
       const { access_token: _t, limit: _l, ...asyncParams } = params;
       rows = await fetchInsightsAsync(token, accountId, asyncParams);
     } else {
@@ -368,6 +380,28 @@ export async function buildSnapshot(
   // Baselines
   const baselines = await fetchBaselines(token, accountId);
 
+  // Relevance filter: keep objects that are currently delivering OR had any
+  // delivery in the last 30 days. Mature accounts hold thousands of long-dead
+  // paused objects that would drown the decision table in noise.
+  const hadDelivery = (lvl: "campaign" | "adset" | "ad", id: string) =>
+    (dailyMaps.get(lvl)!.get(id)?.length ?? 0) > 0 ||
+    (w3dMaps.get(lvl)!.get(id)?.length ?? 0) > 0 ||
+    (todayMaps.get(lvl)!.get(id)?.length ?? 0) > 0;
+  const isRelevant = (lvl: "campaign" | "adset" | "ad", o: any) =>
+    o.effective_status === "ACTIVE" || hadDelivery(lvl, o.id);
+
+  const keptCampaignIds = new Set(
+    campaigns.filter((c: any) => isRelevant("campaign", c)).map((c: any) => c.id)
+  );
+  const filteredCampaigns = campaigns.filter((c: any) => keptCampaignIds.has(c.id));
+  const filteredAdsets = adsets.filter(
+    (s: any) => keptCampaignIds.has(s.campaign_id) && isRelevant("adset", s)
+  );
+  const keptAdsetIds = new Set(filteredAdsets.map((s: any) => s.id));
+  const filteredAds = ads.filter(
+    (a: any) => keptAdsetIds.has(a.adset_id) && isRelevant("ad", a)
+  );
+
   const objects: NormalizedObject[] = [];
 
   const toDaily = (rows: any[] | undefined): DailyMetrics[] =>
@@ -379,7 +413,7 @@ export async function buildSnapshot(
 
   const firstRow = (rows: any[] | undefined) => (rows && rows.length ? rows[0] : null);
 
-  for (const c of campaigns) {
+  for (const c of filteredCampaigns) {
     objects.push({
       id: c.id,
       name: c.name,
@@ -400,7 +434,7 @@ export async function buildSnapshot(
     });
   }
 
-  for (const s of adsets) {
+  for (const s of filteredAdsets) {
     const learning =
       s.learning_stage_info?.status === "LEARNING" ||
       s.learning_stage_info?.status === "learning";
@@ -424,7 +458,7 @@ export async function buildSnapshot(
     });
   }
 
-  for (const a of ads) {
+  for (const a of filteredAds) {
     objects.push({
       id: a.id,
       name: a.name,
