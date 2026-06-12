@@ -1,7 +1,15 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
-import { ENV } from './_core/env';
+import {
+  InsertUser,
+  users,
+  metaConnections,
+  adAccounts,
+  funnelSettings,
+  snapshots,
+  actionChecks,
+} from "../drizzle/schema";
+import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -56,8 +64,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       values.role = user.role;
       updateSet.role = user.role;
     } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
+      values.role = "admin";
+      updateSet.role = "admin";
     }
 
     if (!values.lastSignedIn) {
@@ -89,4 +97,292 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+// ============================================================
+// Meta connections — ALWAYS scoped by userId (hard isolation)
+// ============================================================
+
+export async function getConnection(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(metaConnections)
+    .where(eq(metaConnections.userId, userId))
+    .limit(1);
+  return rows[0];
+}
+
+export async function upsertConnection(data: {
+  userId: number;
+  fbUserId: string;
+  fbUserName: string;
+  encryptedToken: string;
+  tokenExpiresAt: Date | null;
+  scopes: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db
+    .insert(metaConnections)
+    .values({ ...data, status: "active" })
+    .onDuplicateKeyUpdate({
+      set: {
+        fbUserId: data.fbUserId,
+        fbUserName: data.fbUserName,
+        encryptedToken: data.encryptedToken,
+        tokenExpiresAt: data.tokenExpiresAt,
+        scopes: data.scopes,
+        status: "active",
+      },
+    });
+}
+
+export async function markConnectionStatus(
+  userId: number,
+  status: "active" | "expired" | "revoked"
+) {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(metaConnections)
+    .set({ status })
+    .where(eq(metaConnections.userId, userId));
+}
+
+/** Full data wipe for "افصل واحذف بياناتي". */
+export async function deleteAllUserData(userId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db.delete(snapshots).where(eq(snapshots.userId, userId));
+  await db.delete(funnelSettings).where(eq(funnelSettings.userId, userId));
+  await db.delete(actionChecks).where(eq(actionChecks.userId, userId));
+  await db.delete(adAccounts).where(eq(adAccounts.userId, userId));
+  await db.delete(metaConnections).where(eq(metaConnections.userId, userId));
+}
+
+// ============================================================
+// Ad accounts
+// ============================================================
+
+export async function listAccounts(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(adAccounts).where(eq(adAccounts.userId, userId));
+}
+
+export async function getAccount(userId: number, id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(adAccounts)
+    .where(and(eq(adAccounts.id, id), eq(adAccounts.userId, userId)))
+    .limit(1);
+  return rows[0];
+}
+
+export async function syncAccounts(
+  userId: number,
+  connectionId: number,
+  accounts: Array<{ accountId: string; name: string; currency: string; accountStatus: number }>
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const existing = await db
+    .select()
+    .from(adAccounts)
+    .where(eq(adAccounts.userId, userId));
+  const byAccountId = new Map(existing.map(a => [a.accountId, a]));
+  for (const acc of accounts) {
+    const ex = byAccountId.get(acc.accountId);
+    if (ex) {
+      await db
+        .update(adAccounts)
+        .set({
+          name: acc.name,
+          currency: acc.currency,
+          accountStatus: acc.accountStatus,
+          connectionId,
+        })
+        .where(and(eq(adAccounts.id, ex.id), eq(adAccounts.userId, userId)));
+    } else {
+      await db.insert(adAccounts).values({
+        userId,
+        connectionId,
+        accountId: acc.accountId,
+        name: acc.name,
+        currency: acc.currency,
+        accountStatus: acc.accountStatus,
+        selected: false,
+        isDemo: false,
+      });
+    }
+  }
+}
+
+export async function selectAccount(userId: number, id: number, selected: boolean) {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(adAccounts)
+    .set({ selected })
+    .where(and(eq(adAccounts.id, id), eq(adAccounts.userId, userId)));
+}
+
+export async function ensureDemoAccount(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const rows = await db
+    .select()
+    .from(adAccounts)
+    .where(and(eq(adAccounts.userId, userId), eq(adAccounts.isDemo, true)))
+    .limit(1);
+  if (rows[0]) return rows[0];
+  await db.insert(adAccounts).values({
+    userId,
+    connectionId: null,
+    accountId: "demo_account",
+    name: "حساب تجريبي — Demo",
+    currency: "USD",
+    accountStatus: 1,
+    selected: true,
+    isDemo: true,
+  });
+  const created = await db
+    .select()
+    .from(adAccounts)
+    .where(and(eq(adAccounts.userId, userId), eq(adAccounts.isDemo, true)))
+    .limit(1);
+  return created[0];
+}
+
+// ============================================================
+// Funnel settings
+// ============================================================
+
+export async function getFunnel(userId: number, adAccountId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(funnelSettings)
+    .where(
+      and(eq(funnelSettings.userId, userId), eq(funnelSettings.adAccountId, adAccountId))
+    )
+    .limit(1);
+  return rows[0];
+}
+
+export async function upsertFunnel(
+  userId: number,
+  adAccountId: number,
+  data: Partial<typeof funnelSettings.$inferInsert>
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const existing = await getFunnel(userId, adAccountId);
+  if (existing) {
+    await db
+      .update(funnelSettings)
+      .set({ ...data, lastReviewedAt: new Date() })
+      .where(
+        and(eq(funnelSettings.userId, userId), eq(funnelSettings.adAccountId, adAccountId))
+      );
+  } else {
+    await db.insert(funnelSettings).values({
+      ...(data as typeof funnelSettings.$inferInsert),
+      userId,
+      adAccountId,
+    });
+  }
+  return getFunnel(userId, adAccountId);
+}
+
+// ============================================================
+// Snapshots
+// ============================================================
+
+export async function getLatestSnapshot(userId: number, adAccountId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(snapshots)
+    .where(and(eq(snapshots.userId, userId), eq(snapshots.adAccountId, adAccountId)))
+    .orderBy(desc(snapshots.fetchedAt))
+    .limit(1);
+  return rows[0];
+}
+
+export async function saveSnapshot(
+  userId: number,
+  adAccountId: number,
+  payload: unknown,
+  status: "pending" | "ready" | "error" = "ready",
+  errorMessage: string | null = null
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  // keep only the latest snapshot per account — delete older ones
+  await db
+    .delete(snapshots)
+    .where(and(eq(snapshots.userId, userId), eq(snapshots.adAccountId, adAccountId)));
+  await db.insert(snapshots).values({
+    userId,
+    adAccountId,
+    payload,
+    status,
+    errorMessage,
+    fetchedAt: new Date(),
+  });
+}
+
+// ============================================================
+// Action checks (قرارات النهاردة — تم)
+// ============================================================
+
+export async function getChecks(userId: number, adAccountId: number, day: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(actionChecks)
+    .where(
+      and(
+        eq(actionChecks.userId, userId),
+        eq(actionChecks.adAccountId, adAccountId),
+        eq(actionChecks.day, day)
+      )
+    );
+}
+
+export async function setCheck(
+  userId: number,
+  adAccountId: number,
+  actionKey: string,
+  day: string,
+  done: boolean
+) {
+  const db = await getDb();
+  if (!db) return;
+  const rows = await db
+    .select()
+    .from(actionChecks)
+    .where(
+      and(
+        eq(actionChecks.userId, userId),
+        eq(actionChecks.adAccountId, adAccountId),
+        eq(actionChecks.actionKey, actionKey),
+        eq(actionChecks.day, day)
+      )
+    )
+    .limit(1);
+  if (rows[0]) {
+    await db
+      .update(actionChecks)
+      .set({ done })
+      .where(eq(actionChecks.id, rows[0].id));
+  } else {
+    await db.insert(actionChecks).values({ userId, adAccountId, actionKey, day, done });
+  }
+}

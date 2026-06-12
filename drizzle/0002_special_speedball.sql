@@ -1,0 +1,1 @@
+ALTER TABLE `funnelSettings` ADD `htoUnderperforming` boolean DEFAULT false NOT NULL;
