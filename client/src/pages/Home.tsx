@@ -48,7 +48,7 @@ export default function Home() {
     if (!meta) return;
     if (meta === "connected") toast.success("تم توصيل حساب ميتا بنجاح ✓");
     else if (meta === "denied") toast.error("تم رفض الإذن — لازم توافق على صلاحية ads_read");
-    else toast.error("فشل توصيل الحساب — جرّب تاني");
+    else toast.error("فشل توصيل الحساب — حاول مرة أخرى");
     window.history.replaceState({}, "", "/");
   }, []);
 
@@ -107,13 +107,13 @@ function Landing() {
           قراءة فقط — لا يعدّل حسابك أبدًا
         </div>
         <h1 className="text-4xl font-extrabold leading-tight lg:text-5xl">
-          مش هتحتار تاني قدام
+          لن تحتار بعد اليوم أمام
           <span className="text-primary"> Ads Manager</span>
         </h1>
         <p className="text-lg leading-relaxed text-muted-foreground">
-          «قرار» يوصّل بحساب إعلانات ميتا بتاعك، يمرّر كل حملة وad set وإعلان على
-          قواعد حتمية من كتاب قواعد مكتوب — ويطلعلك الحكم:
-          <span className="font-bold text-foreground"> 🔴 اقفل · 🟡 راقب · 🟢 كمّل · 🛟 أنقذه · ⏳ بدري</span>
+          «قرار» يتصل بحساب إعلانات ميتا الخاص بك، ويفحص كل حملة ومجموعة وإعلان
+          وفق قواعد ثابتة مكتوبة — ثم يعطيك الحكم:
+          <span className="font-bold text-foreground"> 🔴 أوقف · 🟡 راقب · 🟢 واصل · 🛟 أنقذه · ⏳ مبكّر</span>
           — مع رقم القاعدة والسبب والإجراء بالعربي.
         </p>
         <ul className="space-y-2 text-sm text-muted-foreground">
@@ -123,7 +123,7 @@ function Landing() {
           </li>
           <li className="flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 shrink-0 text-v-continue" />
-            بوابات بيانات صارمة — مفيش حكم على بيانات ناقصة
+            بوابات بيانات صارمة — لا حكم على بيانات ناقصة
           </li>
           <li className="flex items-center gap-2">
             <CheckCircle2 className="h-4 w-4 shrink-0 text-v-continue" />
@@ -143,11 +143,11 @@ function Landing() {
             LIVE PREVIEW
           </div>
           {[
-            { e: "🔴", n: "إعلان هوك ميت — CTR 0.4%", r: "K3", c: "text-v-kill" },
-            { e: "🟢", n: "كومبو رابح — CPA تحت الهدف", r: "S1", c: "text-v-continue" },
-            { e: "🟡", n: "الإعلان بريء — المشكلة في الصفحة", r: "W3", c: "text-v-watch" },
-            { e: "🛟", n: "محروم من الصرف وكفاءته أعلى", r: "K5", c: "text-v-rescue" },
-            { e: "⏳", n: "لسه بدري — البيانات تحت البوابة", r: "GATE", c: "text-v-early" },
+            { e: "🔴", n: "أوقفه — لا أحد يضغط على الإعلان", r: "أوقف", c: "text-v-kill" },
+            { e: "🟢", n: "واصل — العميل يكلفك أقل من هدفك", r: "واصل", c: "text-v-continue" },
+            { e: "🟡", n: "راقب — الإعلان جيد لكن صفحتك تخسّرك", r: "راقب", c: "text-v-watch" },
+            { e: "🛟", n: "أنقذه — إعلان جيد لم يأخذ فرصته", r: "أنقذ", c: "text-v-rescue" },
+            { e: "⏳", n: "انتظر — ما زال مبكّرًا على الحكم", r: "انتظر", c: "text-v-early" },
           ].map(x => (
             <div
               key={x.r}
@@ -219,7 +219,7 @@ function ConnectScreen({
       <div>
         <h1 className="text-2xl font-extrabold">أهلًا {userName} 👋</h1>
         <p className="mt-1 text-muted-foreground">
-          وصّل حساب ميتا أو جرّب الوضع التجريبي عشان تشوف المحرك شغال.
+          وصّل حساب ميتا أو جرّب الوضع التجريبي لترى المحرك يعمل.
         </p>
       </div>
 
@@ -309,7 +309,7 @@ function ConnectScreen({
       {realAccounts.length > 0 && (
         <Card className="border-border/60">
           <CardContent className="p-6">
-            <h2 className="mb-4 font-bold">اختار الحساب الإعلاني اللي عايز تراقبه</h2>
+            <h2 className="mb-4 font-bold">اختر الحساب الإعلاني الذي تريد مراقبته</h2>
             <div className="space-y-2">
               {realAccounts.map(a => (
                 <div
@@ -343,7 +343,7 @@ function ConnectScreen({
                         variant="outline"
                         onClick={() => selectAccount.mutate({ id: a.id, selected: true })}
                       >
-                        راقب الحساب ده
+                        راقب هذا الحساب
                       </Button>
                     )}
                   </div>
@@ -364,7 +364,7 @@ function ConnectScreen({
             <div>
               <div className="font-bold">الوضع التجريبي</div>
               <div className="text-sm text-muted-foreground">
-                حساب صناعي واقعي يغطي كل الأحكام — جرّب المحرك من غير ما توصّل حسابك.
+                حساب تجريبي واقعي يغطي كل الأحكام — جرّب المحرك دون توصيل حسابك.
               </div>
             </div>
           </div>

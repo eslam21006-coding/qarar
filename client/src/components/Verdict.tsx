@@ -25,22 +25,44 @@ export function VerdictBadge({ verdict, rule }: { verdict: Verdict; rule: RuleCo
   );
 }
 
-/** Rule code chip with rulebook definition tooltip — codes shown verbatim. */
+/**
+ * Rule explanation chip — plain-Arabic title with the rulebook definition in a
+ * tooltip. The internal rule code (K1, W5...) appears only faded inside the
+ * tooltip for reference/support, never as the primary label.
+ */
 export function RuleChip({ rule }: { rule: RuleCode }) {
   const def = RULES[rule];
-  if (!def) return <span className="num text-[10px] opacity-80">{rule}</span>;
+  if (!def) return null;
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span className="num cursor-help rounded bg-white/10 px-1 text-[10px] font-bold tracking-wide underline decoration-dotted underline-offset-2">
-          {rule}
+        <span className="cursor-help rounded bg-white/10 px-1.5 text-[10px] font-bold underline decoration-dotted underline-offset-2">
+          ليه؟
         </span>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-xs text-right" dir="rtl">
-        <p className="mb-1 font-bold">
-          <span className="num">{rule}</span> — {def.titleAr}
-        </p>
+        <p className="mb-1 font-bold">{def.titleAr}</p>
         <p className="text-xs leading-relaxed opacity-90">{def.defAr}</p>
+        <p className="num mt-1.5 text-[9px] opacity-40">رمز القاعدة: {rule}</p>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Inline rule title (used in rows/cards where space allows). */
+export function RuleTitle({ rule }: { rule: RuleCode }) {
+  const def = RULES[rule];
+  if (!def) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="cursor-help text-xs font-semibold underline decoration-dotted underline-offset-2 opacity-90">
+          {def.titleAr}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-xs text-right" dir="rtl">
+        <p className="text-xs leading-relaxed opacity-90">{def.defAr}</p>
+        <p className="num mt-1.5 text-[9px] opacity-40">رمز القاعدة: {rule}</p>
       </TooltipContent>
     </Tooltip>
   );

@@ -53,3 +53,19 @@
 - [x] No cross-user data leakage (all queries scoped by userId via requireAccount)
 - [x] Read-only: no write calls to Meta (ads_read scope only)
 - [x] Checkpoint + delivery
+
+## Revamp round 2 (user feedback)
+- [x] Answer effectiveCPA vs rawTargetCPA question in simple Arabic
+- [x] Sweep all copy → simple fusha Arabic (≤6th grade), no jargon
+- [x] Targets card: rename to أرقامك المستهدفة, one main "هدف تكلفة العميل" number, formulas hidden behind "كيف حسبنا الرقم ده؟"
+- [x] Rule codes (K/W/S): Arabic labels in UI, faded code inside tooltip only
+- [x] W5 toggle and all settings copy rewritten in plain Arabic
+- [x] Date range selector (today / 3d / 7d / 14d / 30d / custom) — affects table numbers only, verdict stays rulebook windows (note shown)
+- [x] Filters: search by name, filter by verdict
+- [x] Pull ad creative thumbnails and show in ads table
+- [x] Columns in English like Ads Manager: Spend, CPA, Link CTR, Results, CPM, CPC, Hook Rate, Hold Rate, LP View %, % Spend, Frequency
+- [x] Sortable columns + column picker (show/hide) persisted in localStorage, sensible defaults
+- [x] ads_management scope + pause/resume buttons with confirmation dialog (campaign/adset/ad); demo simulates
+- [x] Campaign daily-series fallback (sum children) so campaign spend never shows 0
+- [x] Update demo data to include thumbnails, video metrics, statuses
+- [x] Tests updated + all passing (39 tests, typecheck clean)

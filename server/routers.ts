@@ -11,6 +11,7 @@ import {
   buildSnapshot,
   fetchAdAccounts,
   revokeToken,
+  setObjectStatus,
   META_APP_ID,
 } from "./meta";
 import { buildDemoSnapshot, DEMO_FUNNEL } from "./demo";
@@ -228,11 +229,59 @@ export const appRouter = router({
         const checks = await db.getChecks(ctx.user.id, input.adAccountId, day);
         const needsReview =
           Date.now() - new Date(funnel.lastReviewedAt).getTime() > 30 * 86400000;
+        // light per-object series for the display-only date-range selector
+        const dailyOf = (o: (typeof payload.objects)[number]) => {
+          const own = o.daily30 ?? o.daily7;
+          if (own && own.length > 0) return own;
+          // fallback: sum children's daily series by date (demo campaigns have no own series)
+          const children = payload.objects.filter(c =>
+            o.level === "campaign" ? c.level === "adset" && c.campaignId === o.id : c.parentId === o.id
+          );
+          const byDate = new Map<string, (typeof payload.objects)[number]["daily7"][number]>();
+          for (const c of children) {
+            for (const d of c.daily30 ?? c.daily7 ?? []) {
+              const cur = byDate.get(d.date);
+              if (!cur) byDate.set(d.date, { ...d });
+              else {
+                cur.spend += d.spend;
+                cur.impressions += d.impressions;
+                cur.clicks += d.clicks;
+                cur.linkClicks += d.linkClicks;
+                cur.conversions += d.conversions;
+                cur.lpViews += d.lpViews;
+                cur.videoViews3s = (cur.videoViews3s ?? 0) + (d.videoViews3s ?? 0);
+                cur.thruplays = (cur.thruplays ?? 0) + (d.thruplays ?? 0);
+              }
+            }
+          }
+          return Array.from(byDate.values())
+            .map(d => ({
+              ...d,
+              ctrAll: d.impressions > 0 ? (d.clicks / d.impressions) * 100 : 0,
+              ctrLink: d.impressions > 0 ? (d.linkClicks / d.impressions) * 100 : 0,
+              cpm: d.impressions > 0 ? (d.spend / d.impressions) * 1000 : 0,
+              cpa: d.conversions > 0 ? d.spend / d.conversions : null,
+            }))
+            .sort((a, b) => a.date.localeCompare(b.date));
+        };
+        const series = payload.objects.map(o => ({
+          id: o.id,
+          level: o.level,
+          parentId: o.parentId,
+          status: o.status,
+          effectiveStatus: o.effectiveStatus ?? null,
+          thumbnailUrl: o.thumbnailUrl ?? null,
+          today: o.today,
+          w3d: o.w3d,
+          daily30: dailyOf(o),
+        }));
         return {
           state: "ready" as const,
           result,
           isDemo: account.isDemo,
           accountExternalId: payload.accountId,
+          currency: payload.currency,
+          series,
           checks: checks.map(c => ({ actionKey: c.actionKey, done: c.done })),
           settingsReviewDue: needsReview,
         };
@@ -285,6 +334,56 @@ export const appRouter = router({
         const day = new Date().toISOString().slice(0, 10);
         await db.setCheck(ctx.user.id, input.adAccountId, input.actionKey, day, input.done);
         return { success: true };
+      }),
+  }),
+
+  control: router({
+    /**
+     * Pause or resume a campaign / ad set / ad — the only write to Meta.
+     * Guarded by: account ownership, object-in-snapshot check, and an explicit
+     * confirmation dialog in the UI.
+     */
+    setStatus: protectedProcedure
+      .input(
+        z.object({
+          adAccountId: z.number(),
+          objectId: z.string().max(64),
+          status: z.enum(["PAUSED", "ACTIVE"]),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        const account = await requireAccount(ctx.user.id, input.adAccountId);
+        const snap = await db.getLatestSnapshot(ctx.user.id, input.adAccountId);
+        const payload = snap?.payload as AccountSnapshotPayload | null;
+        const obj = payload?.objects.find(o => o.id === input.objectId);
+        if (!obj) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "العنصر غير موجود في هذا الحساب" });
+        }
+        if (account.isDemo) {
+          // simulate in the cached demo snapshot
+          obj.status = input.status;
+          obj.effectiveStatus = input.status;
+          await db.saveSnapshot(ctx.user.id, account.id, payload!);
+          return { success: true, simulated: true };
+        }
+        const token = await getUserToken(ctx.user.id);
+        try {
+          await setObjectStatus(token, input.objectId, input.status);
+        } catch (e: any) {
+          if (e.isAuthError) {
+            await db.markConnectionStatus(ctx.user.id, "expired");
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "RECONNECT_REQUIRED" });
+          }
+          if (e.needsPermission) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "NEEDS_RECONNECT_PERMISSION" });
+          }
+          throw new TRPCError({ code: "BAD_GATEWAY", message: e.message });
+        }
+        // reflect the change in the cached snapshot immediately
+        obj.status = input.status;
+        obj.effectiveStatus = input.status;
+        await db.saveSnapshot(ctx.user.id, account.id, payload!);
+        return { success: true, simulated: false };
       }),
   }),
 });

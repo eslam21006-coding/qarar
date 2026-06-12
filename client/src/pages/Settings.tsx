@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { money } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 import { deriveTargets, type FunnelInputs } from "@shared/qarar";
-import { AlertTriangle, ArrowRight, Calculator, Loader2, Save } from "lucide-react";
+import { AlertTriangle, ArrowRight, Calculator, ChevronDown, Loader2, Save } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useParams } from "wouter";
@@ -122,7 +122,7 @@ export default function Settings() {
     onSuccess: () => {
       utils.funnel.get.invalidate({ adAccountId: accountId });
       utils.dashboard.get.invalidate({ adAccountId: accountId });
-      toast.success("تم حفظ إعدادات الفانل ✓");
+      toast.success("تم حفظ إعداداتك ✓");
       navigate(`/dashboard/${accountId}`);
     },
     onError: e => toast.error(`فشل الحفظ: ${e.message}`),
@@ -151,7 +151,7 @@ export default function Settings() {
             <ArrowRight className="h-4 w-4" />
             رجوع للوحة
           </Link>
-          <div className="font-extrabold">⚙️ إعدادات الفانل</div>
+          <div className="font-extrabold">⚙️ إعدادات البيع والأهداف</div>
         </div>
       </header>
 
@@ -159,11 +159,11 @@ export default function Settings() {
         <div className="space-y-6">
           <Card className="border-border/60">
             <CardHeader>
-              <CardTitle className="text-base">نوع الفانل والعرض</CardTitle>
+              <CardTitle className="text-base">طريقة البيع والعرض</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>نوع الفانل (Archetype)</Label>
+                <Label>كيف تبيع؟</Label>
                 <Select
                   value={form.archetype}
                   onValueChange={v => set("archetype", v as FunnelInputs["archetype"])}
@@ -172,28 +172,28 @@ export default function Settings() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="paid_lto">عرض مدفوع منخفض التذكرة (LTO)</SelectItem>
-                    <SelectItem value="free_lead">ليد مجاني → HTO</SelectItem>
-                    <SelectItem value="direct_call">حجز مكالمة مباشر</SelectItem>
+                    <SelectItem value="paid_lto">أبيع منتجًا رخيصًا أولًا ثم أعرض منتجًا غاليًا</SelectItem>
+                    <SelectItem value="free_lead">أجمع بيانات عملاء مجانًا ثم أبيع منتجًا غاليًا</SelectItem>
+                    <SelectItem value="direct_call">العميل يحجز مكالمة مباشرة</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>الساحة (Targeting)</Label>
+                <Label>طريقة الاستهداف</Label>
                 <Select value={form.arena} onValueChange={v => set("arena", v as FunnelInputs["arena"])}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="broad">Broad — واسع</SelectItem>
-                    <SelectItem value="interests">Interests — اهتمامات</SelectItem>
+                    <SelectItem value="broad">استهداف واسع (بدون اهتمامات)</SelectItem>
+                    <SelectItem value="interests">استهداف بالاهتمامات</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="flex items-center justify-between rounded-lg border border-border/60 p-3 sm:col-span-2">
                 <div>
-                  <Label>فيه مكوّن لايف (ويبينار/تحدي)؟</Label>
-                  <p className="text-xs text-muted-foreground">يأثر على إيقاع القراءة فقط</p>
+                  <Label>هل تقدم بثًا مباشرًا أو ورشة مباشرة؟</Label>
+                  <p className="text-xs text-muted-foreground">يساعدنا فقط في فهم توقيت أرقامك</p>
                 </div>
                 <Switch
                   checked={form.liveComponent}
@@ -214,53 +214,53 @@ export default function Settings() {
 
           <Card className="border-border/60">
             <CardHeader>
-              <CardTitle className="text-base">الاقتصاد — أرقام الفانل</CardTitle>
+              <CardTitle className="text-base">أرقام البيع لديك</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
               <Field
-                label="متوسط قيمة الطلب AOV ($)"
-                hint="سعر الـ LTO + الـ bumps والـ upsells"
+                label="متوسط قيمة الطلب الواحد ($)"
+                hint="كم يدفع العميل في المتوسط عند أول شراء؟"
                 value={form.aov}
                 onChange={v => set("aov", v)}
               />
               <Field
-                label="Front-End ROAS المستهدف"
-                hint="1.0 تعادل · 0.65 استثمار في المشترين"
+                label="كم ضعفًا تريد استرداده من الإعلان؟"
+                hint="1 = تسترد أموالك بالضبط · أقل من 1 = تقبل خسارة بسيطة مقابل كسب عملاء"
                 value={form.frontEndRoas}
                 onChange={v => set("frontEndRoas", v)}
                 step="0.05"
               />
               <Field
-                label="سعر الـ HTO ($)"
-                hint="العرض الخلفي عالي التذكرة"
+                label="سعر المنتج الغالي ($)"
+                hint="العرض الكبير الذي تبيعه بعد المنتج الرخيص"
                 value={form.htoPrice}
                 onChange={v => set("htoPrice", v)}
               />
               <Field
-                label="نسبة تحويل مشتري LTO → HTO (%)"
-                hint="مثال: 4 يعني 4%"
+                label="من كل 100 مشترٍ، كم واحدًا يشتري الغالي؟ (%)"
+                hint="مثال: 4 تعني 4 من كل 100"
                 value={form.htoConversionRate}
                 onChange={v => set("htoConversionRate", v)}
                 step="0.5"
               />
               <Field
-                label="الميزانية اليومية ($) — اختياري"
+                label="ميزانيتك اليومية للإعلانات ($) — اختياري"
                 value={form.dailyBudget}
                 onChange={v => set("dailyBudget", v)}
               />
               {form.archetype === "free_lead" && (
                 <Field
-                  label="Benchmark سوقي للـ CPL ($) — للحسابات الجديدة"
-                  hint="يُستخدم إذا لا يوجد ميديان 30 يوم للحساب"
+                  label="سعر العميل المحتمل المعتاد في مجالك ($) — اختياري"
+                  hint="إن كان حسابك جديدًا ولا يوجد تاريخ نقيس عليه"
                   value={form.marketCplBenchmark}
                   onChange={v => set("marketCplBenchmark", v)}
                 />
               )}
               <div className="flex items-center justify-between rounded-lg border border-v-watch/30 bg-v-watch/5 p-3 sm:col-span-2">
                 <div>
-                  <Label>إشارة W5: ليدات/مبيعات LTO كويسة لكن HTO ضعيف؟</Label>
+                  <Label>البيع الأول جيد، لكن المنتج الغالي لا يُباع؟</Label>
                   <p className="text-xs text-muted-foreground">
-                    ميتا لا ترى ما بعد التحويل — فعّلها لو الـ nurture/الحضور ضعيف عشان المحرك يحكم على مستوى الفانل
+                    فعّل هذا الخيار إن كان الناس يشترون الرخيص ولا يكملون للغالي — سينبهك التطبيق إلى أن المشكلة ليست في الإعلانات نفسها
                   </p>
                 </div>
                 <Switch
@@ -277,7 +277,7 @@ export default function Settings() {
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>أفضل اهتمام مجرَّب</Label>
+                <Label>أنجح اهتمام جرّبته سابقًا</Label>
                 <Input
                   value={form.bestInterest}
                   onChange={e => set("bestInterest", e.target.value)}
@@ -316,66 +316,79 @@ export default function Settings() {
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-base">
                 <Calculator className="h-4 w-4 text-primary" />
-                الأهداف المشتقة — لايف
+                أرقامك المستهدفة
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {!valid ? (
                 <p className="text-sm text-muted-foreground">
-                  أدخل AOV و ROAS صحيحين لعرض الأهداف.
+                  اكتب متوسط قيمة الطلب والعائد الذي تريده لكي نحسب لك أهدافك.
                 </p>
               ) : (
                 <>
-                  <TargetRow
-                    label="rawTargetCPA"
-                    sub="AOV ÷ Front-End ROAS"
-                    value={money(targets.rawTargetCPA)}
-                  />
-                  <TargetRow
-                    label="fullBuyerValue"
-                    sub="AOV + HTO × نسبة التحويل"
-                    value={money(targets.fullBuyerValue)}
-                  />
-                  <TargetRow
-                    label="maxCPA"
-                    sub="fullBuyerValue ÷ 2 — أرضية ROAS كلي 2.0"
-                    value={money(targets.maxCPA)}
-                  />
-                  <div className="rounded-lg border border-primary/40 bg-primary/10 p-3">
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-sm font-bold">effectiveCPA — هدفك التشغيلي</span>
-                      <span className="num text-xl font-extrabold text-primary">
-                        {money(targets.effectiveCPA)}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-muted-foreground">
-                      min(rawTargetCPA، maxCPA) — المحرك يحكم بهذا الرقم
+                  {/* The one number that matters */}
+                  <div className="rounded-lg border border-primary/40 bg-primary/10 p-4 text-center">
+                    <p className="text-sm font-bold">هدف تكلفة العميل</p>
+                    <p className="num my-1 text-3xl font-extrabold text-primary">
+                      {money(targets.effectiveCPA)}
+                    </p>
+                    <p className="text-[11px] leading-relaxed text-muted-foreground">
+                      إن كلفك العميل أقل من هذا الرقم = جيد، وأكثر منه = خسارة.
+                      <br />يحكم التطبيق على كل إعلان بهذا الرقم.
                     </p>
                   </div>
                   {targets.capped && (
                     <div className="flex items-start gap-2 rounded-lg border border-v-watch/40 bg-v-watch/10 p-3 text-xs">
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-v-watch" />
                       <span>
-                        <b>تحذير السقف:</b> rawTargetCPA ({money(targets.rawTargetCPA)}) أعلى
-                        من maxCPA — تم تقييده للحفاظ على Full-Funnel ROAS ≥ 2.0. اقتصاد
-                        الفانل ضيّق: راجع AOV أو نسبة تحويل الـ HTO.
+                        <b>تنبيه:</b> أرقامك تسمح بدفع أكثر للعميل، لكننا خفّضنا الهدف
+                        لتبقى رابحًا في المجمل. إن أردت هامشًا أوسع: ارفع متوسط قيمة
+                        الطلب أو حسّن نسبة شراء المنتج الغالي.
                       </span>
                     </div>
                   )}
                   {form.archetype === "free_lead" && targets.cplCeiling !== null && (
                     <TargetRow
-                      label="CPL Ceiling"
-                      sub="70% من قيمة الليد — السقف الاقتصادي (K7)"
+                      label="أقصى تكلفة للعميل المحتمل"
+                      sub="إن دفعت أكثر من ذلك للعميل المحتمل الواحد فأنت تخسر"
                       value={money(targets.cplCeiling)}
                     />
                   )}
+
+                  {/* How we computed it — collapsed by default */}
+                  <details className="group rounded-lg border border-border/60 bg-background/50">
+                    <summary className="flex cursor-pointer select-none items-center justify-between px-3 py-2 text-xs font-bold text-muted-foreground hover:text-foreground">
+                      كيف حسبنا هذا الرقم؟
+                      <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                    </summary>
+                    <div className="space-y-2 px-3 pb-3">
+                      <TargetRow
+                        label="تكلفة العميل من البيع الأول"
+                        sub="متوسط قيمة الطلب ÷ العائد المطلوب"
+                        value={money(targets.rawTargetCPA)}
+                      />
+                      <TargetRow
+                        label="القيمة الكاملة للعميل"
+                        sub="البيع الأول + نصيبه من المنتج الغالي"
+                        value={money(targets.fullBuyerValue)}
+                      />
+                      <TargetRow
+                        label="أقصى تكلفة مسموحة"
+                        sub="نصف القيمة الكاملة — لتربح الضعف دائمًا"
+                        value={money(targets.maxCPA)}
+                      />
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        هدفك = الأصغر بين الرقم الأول والثالث، لنبقى دائمًا في الجانب الآمن.
+                      </p>
+                    </div>
+                  </details>
                   {inputs.dailyBudget != null && inputs.dailyBudget > 0 && (
                     <p className="rounded-lg bg-background/60 p-2 text-[11px] text-muted-foreground">
-                      ميزانية ad set الاختبار المقترحة: 1–1.5 × الهدف ={" "}
+                      ميزانية مقترحة لكل مجموعة إعلانية جديدة:{" "}
                       <span className="num">
                         {money(targets.effectiveCPA)}–{money(1.5 * targets.effectiveCPA)}
                       </span>{" "}
-                      يوميًا
+                      في اليوم
                     </p>
                   )}
                 </>

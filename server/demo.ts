@@ -316,6 +316,51 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
 
   computeSpendShares(objects);
 
+  // ---- enrich for the UI: daily30 history, thumbnails, video (hook/hold) metrics ----
+  const hash = (s: string) => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return h;
+  };
+  for (const o of objects) {
+    // deterministic 30-day history that ends with the known daily7 days
+    const known = new Map(o.daily7.map(d => [d.date, d]));
+    const out: DailyMetrics[] = [];
+    const base = o.daily7.length
+      ? o.daily7.reduce((s, d) => s + d.spend, 0) / o.daily7.length
+      : o.w3d.spend / 3;
+    for (let off = 29; off >= 0; off--) {
+      const date = dateStr(off);
+      if (known.has(date)) {
+        out.push(known.get(date)!);
+        continue;
+      }
+      if (off >= o.ageDays) continue; // object didn't exist yet
+      const h = hash(o.id + date);
+      const wobble = 0.7 + ((h % 60) / 100); // 0.7–1.29
+      const spend = Math.round(base * wobble * 100) / 100;
+      const imps = Math.round(spend * (50 + (h % 20)));
+      const ctr = Math.round((o.w3d.ctrLink || 1.5) * (0.85 + ((h >> 3) % 30) / 100) * 100) / 100;
+      const conv = base > 20 ? Math.max(0, Math.round(spend / 45 + (((h >> 5) % 3) - 1))) : 0;
+      out.push(D(date, { spend, impressions: imps, ctrLink: ctr, ctrAll: ctr * 1.6, conversions: conv }));
+    }
+    o.daily30 = out;
+    if (o.level === "ad") {
+      o.thumbnailUrl = `https://picsum.photos/seed/qarar_${hash(o.id) % 1000}/120/120`;
+      const isVideo = o.name.includes("فيديو") || o.name.includes("UGC");
+      if (isVideo) {
+        for (const w of [o.w3d, o.today]) {
+          w.videoViews3s = Math.round(w.impressions * 0.27);
+          w.thruplays = Math.round(w.impressions * 0.09);
+        }
+        for (const d of [...o.daily7, ...o.daily30]) {
+          d.videoViews3s = Math.round(d.impressions * 0.27);
+          d.thruplays = Math.round(d.impressions * 0.09);
+        }
+      }
+    }
+  }
+
   return {
     accountId: "demo_account",
     currency: "USD",

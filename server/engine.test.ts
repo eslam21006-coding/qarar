@@ -232,7 +232,7 @@ describe("S3 — horizontal scaling path", () => {
     const r = result.rows.find(x => x.id === "as_w1")!;
     expect(r.verdict).toBe("continue");
     expect(r.rule).toBe("S2");
-    expect(r.reason_ar).toContain("Learning");
+    expect(r.reason_ar).toContain("يتعلّم");
   });
 });
 

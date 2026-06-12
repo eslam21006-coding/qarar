@@ -1,8 +1,8 @@
 /**
- * Meta Marketing API client — read-only.
- * All calls are server-side with the user's own token. The app NEVER writes
- * to the ad account (no POST to campaign/adset/ad objects — only the async
- * insights job POST, which creates a report, not an account change).
+ * Meta Marketing API client.
+ * All calls are server-side with the user's own token. Reads insights data,
+ * and — with explicit user confirmation in the UI — can pause/resume a
+ * campaign, ad set, or ad (the ONLY write operation, via setObjectStatus).
  */
 import {
   AccountSnapshotPayload,
@@ -20,7 +20,7 @@ export const META_APP_ID = () => process.env.FACEBOOK_APP_ID ?? "";
 export const META_APP_SECRET = () => process.env.FACEBOOK_APP_SECRET ?? "";
 
 export const INSIGHTS_FIELDS =
-  "impressions,reach,frequency,clicks,inline_link_clicks,ctr,inline_link_click_ctr,spend,cpm,cpc,actions,action_values,cost_per_action_type,date_start,date_stop";
+  "impressions,reach,frequency,clicks,inline_link_clicks,ctr,inline_link_click_ctr,spend,cpm,cpc,actions,action_values,cost_per_action_type,video_thruplay_watched_actions,date_start,date_stop";
 
 // ---------- OAuth ----------
 
@@ -29,7 +29,7 @@ export function buildOAuthUrl(redirectUri: string, state: string): string {
     client_id: META_APP_ID(),
     redirect_uri: redirectUri,
     state,
-    scope: "ads_read",
+    scope: "ads_read,ads_management",
     response_type: "code",
   });
   return `https://www.facebook.com/v23.0/dialog/oauth?${params.toString()}`;
@@ -114,6 +114,32 @@ export async function fetchAdAccounts(
   return out;
 }
 
+/**
+ * Pause or resume a campaign / ad set / ad.
+ * The single write operation in the app — always behind a user confirmation
+ * dialog in the UI and an ownership check in the router.
+ */
+export async function setObjectStatus(
+  token: string,
+  objectId: string,
+  status: "PAUSED" | "ACTIVE"
+): Promise<void> {
+  const body = new URLSearchParams({ status, access_token: token });
+  const res = await fetch(`${GRAPH}/${objectId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) {
+    const err = json.error || {};
+    const e: any = new Error(err.message || `Meta API error ${res.status}`);
+    e.isAuthError = err.code === 190 || err.type === "OAuthException";
+    e.needsPermission = err.code === 200 || err.code === 10;
+    throw e;
+  }
+}
+
 /** Revoke the app's permissions for this user (disconnect). */
 export async function revokeToken(token: string): Promise<void> {
   try {
@@ -130,7 +156,7 @@ function emptyWindow(): WindowMetrics {
   return {
     spend: 0, impressions: 0, reach: 0, frequency: 0, clicks: 0, linkClicks: 0,
     ctrAll: 0, ctrLink: 0, cpm: 0, cpc: 0, conversions: 0, conversionValue: 0,
-    lpViews: 0, cpa: null,
+    lpViews: 0, cpa: null, videoViews3s: 0, thruplays: 0,
   };
 }
 
@@ -167,6 +193,8 @@ export function parseInsightsRow(row: any): WindowMetrics {
   w.conversions = pickAction(row.actions, CONVERSION_ACTION_TYPES);
   w.lpViews = pickAction(row.actions, ["landing_page_view"]);
   w.conversionValue = pickAction(row.action_values, CONVERSION_ACTION_TYPES);
+  w.videoViews3s = pickAction(row.actions, ["video_view"]);
+  w.thruplays = pickAction(row.video_thruplay_watched_actions, ["video_view"]);
   w.cpa = w.conversions > 0 ? w.spend / w.conversions : null;
   return w;
 }
@@ -247,17 +275,17 @@ async function graphGetAll(
 
 async function fetchHierarchy(token: string, accountId: string) {
   const campaigns = await graphGetAll(`/${accountId}/campaigns`, {
-    fields: "id,name,status,daily_budget,lifetime_budget,bid_strategy,created_time",
+    fields: "id,name,status,effective_status,daily_budget,lifetime_budget,bid_strategy,created_time",
     limit: "200",
     access_token: token,
   });
   const adsets = await graphGetAll(`/${accountId}/adsets`, {
-    fields: "id,name,status,daily_budget,campaign_id,created_time,learning_stage_info",
+    fields: "id,name,status,effective_status,daily_budget,campaign_id,created_time,learning_stage_info",
     limit: "500",
     access_token: token,
   });
   const ads = await graphGetAll(`/${accountId}/ads`, {
-    fields: "id,name,status,adset_id,campaign_id,created_time",
+    fields: "id,name,status,effective_status,adset_id,campaign_id,created_time,creative{thumbnail_url,image_url}",
     limit: "500",
     access_token: token,
   });
@@ -322,7 +350,8 @@ export async function buildSnapshot(
     time_range: JSON.stringify({ since: daysAgo(2), until: daysAgo(0) }),
   };
   const today = { date_preset: "today" };
-  const last7daily = { date_preset: "last_7d", time_increment: "1" };
+  // last 30 days daily — powers both daily7 (engine) and the date-range selector (display)
+  const last30daily = { date_preset: "last_30d", time_increment: "1" };
 
   const { campaigns, adsets, ads } = await fetchHierarchy(token, accountId);
 
@@ -333,7 +362,7 @@ export async function buildSnapshot(
   for (const lvl of levels) {
     w3dMaps.set(lvl, await fetchLevelInsights(token, accountId, lvl, threeDay));
     todayMaps.set(lvl, await fetchLevelInsights(token, accountId, lvl, today));
-    dailyMaps.set(lvl, await fetchLevelInsights(token, accountId, lvl, last7daily));
+    dailyMaps.set(lvl, await fetchLevelInsights(token, accountId, lvl, last30daily));
   }
 
   // Baselines
@@ -345,6 +374,8 @@ export async function buildSnapshot(
     (rows ?? [])
       .map(r => ({ ...parseInsightsRow(r), date: r.date_start as string }))
       .sort((a, b) => a.date.localeCompare(b.date));
+
+  const last7 = (rows: DailyMetrics[]): DailyMetrics[] => rows.slice(-7);
 
   const firstRow = (rows: any[] | undefined) => (rows && rows.length ? rows[0] : null);
 
@@ -362,8 +393,10 @@ export async function buildSnapshot(
       ageDays: ageDaysFrom(c.created_time),
       w3d: parseInsightsRow(firstRow(w3dMaps.get("campaign")!.get(c.id))),
       today: parseInsightsRow(firstRow(todayMaps.get("campaign")!.get(c.id))),
-      daily7: toDaily(dailyMaps.get("campaign")!.get(c.id)),
+      daily7: last7(toDaily(dailyMaps.get("campaign")!.get(c.id))),
+      daily30: toDaily(dailyMaps.get("campaign")!.get(c.id)),
       spendSharePct: null,
+      effectiveStatus: c.effective_status ?? null,
     });
   }
 
@@ -383,9 +416,11 @@ export async function buildSnapshot(
       ageDays: ageDaysFrom(s.created_time),
       w3d: parseInsightsRow(firstRow(w3dMaps.get("adset")!.get(s.id))),
       today: parseInsightsRow(firstRow(todayMaps.get("adset")!.get(s.id))),
-      daily7: toDaily(dailyMaps.get("adset")!.get(s.id)),
+      daily7: last7(toDaily(dailyMaps.get("adset")!.get(s.id))),
+      daily30: toDaily(dailyMaps.get("adset")!.get(s.id)),
       spendSharePct: null,
       learningPhase: !!learning,
+      effectiveStatus: s.effective_status ?? null,
     });
   }
 
@@ -402,8 +437,11 @@ export async function buildSnapshot(
       ageDays: ageDaysFrom(a.created_time),
       w3d: parseInsightsRow(firstRow(w3dMaps.get("ad")!.get(a.id))),
       today: parseInsightsRow(firstRow(todayMaps.get("ad")!.get(a.id))),
-      daily7: toDaily(dailyMaps.get("ad")!.get(a.id)),
+      daily7: last7(toDaily(dailyMaps.get("ad")!.get(a.id))),
+      daily30: toDaily(dailyMaps.get("ad")!.get(a.id)),
       spendSharePct: null,
+      thumbnailUrl: a.creative?.image_url || a.creative?.thumbnail_url || null,
+      effectiveStatus: a.effective_status ?? null,
     });
   }
 
