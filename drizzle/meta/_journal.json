@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1781281837535,
+      "tag": "0000_fixed_sasquatch",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1781282280110,
+      "tag": "0001_foamy_ogun",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1781283386153,
+      "tag": "0002_special_speedball",
+      "breakpoints": true
+    }
+  ]
+}
