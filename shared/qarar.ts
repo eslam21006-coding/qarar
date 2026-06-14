@@ -278,6 +278,8 @@ export interface TopAction {
   objectId: string;
   objectName: string;
   level: ObjectLevel;
+  parentId: string | null;
+  campaignId: string | null;
   rule: RuleCode;
   verdict: Verdict;
   action_ar: string;

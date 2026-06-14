@@ -17,7 +17,7 @@ import {
   Settings as SettingsIcon,
   Stethoscope,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useParams } from "wouter";
 
@@ -48,6 +48,14 @@ export default function Dashboard() {
       }
     },
   });
+
+  const [tableSearch, setTableSearch] = useState("");
+  const tableRef = useRef<HTMLDivElement>(null);
+
+  const focusObject = (name: string) => {
+    setTableSearch(name);
+    tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   if (dash.isLoading) return <DashboardSkeleton />;
 
@@ -211,17 +219,22 @@ export default function Dashboard() {
           actions={summary.top_3_actions}
           checks={checks}
           accountId={accountId}
+          onFocusObject={focusObject}
         />
 
         {/* Decision table with drill-down */}
-        <DecisionTable
-          rows={rows}
-          series={series}
-          unitTarget={targets.unitTarget}
-          actId={isDemo ? null : (accountExternalId ?? null)}
-          accountId={accountId}
-          isDemo={!!isDemo}
-        />
+        <div ref={tableRef}>
+          <DecisionTable
+            rows={rows}
+            series={series}
+            unitTarget={targets.unitTarget}
+            actId={isDemo ? null : (accountExternalId ?? null)}
+            accountId={accountId}
+            isDemo={!!isDemo}
+            searchTerm={tableSearch}
+            onSearchTermChange={setTableSearch}
+          />
+        </div>
 
         {/* Deep diagnosis section */}
         <DiagnosisSection rows={rows} summary={summary} />
@@ -364,10 +377,12 @@ function TodayActions({
   actions,
   checks,
   accountId,
+  onFocusObject,
 }: {
   actions: TopAction[];
   checks: { actionKey: string; done: boolean }[];
   accountId: number;
+  onFocusObject: (name: string) => void;
 }) {
   const utils = trpc.useUtils();
   const setCheck = trpc.dashboard.setCheck.useMutation({
@@ -413,13 +428,15 @@ function TodayActions({
           actions.map(a => {
             const done = doneMap.get(a.key) ?? false;
             return (
-              <div
+              <button
+                type="button"
                 key={a.key}
-                className={`flex items-start gap-3 rounded-lg border p-3 transition-opacity ${
+                onClick={() => onFocusObject(a.objectName)}
+                className={`flex w-full items-start gap-3 rounded-lg border p-3 text-start transition-opacity ${
                   done
                     ? "border-border/40 bg-background/30 opacity-55"
                     : "border-border/60 bg-background/60 hover:border-primary/40 hover:bg-primary/5"
-                }`}
+                } cursor-pointer`}
               >
                 <Checkbox
                   checked={done}
@@ -430,6 +447,7 @@ function TodayActions({
                       done: v === true,
                     })
                   }
+                  onClick={e => e.stopPropagation()}
                   className="mt-1"
                 />
                 <div className="min-w-0 flex-1">
@@ -449,7 +467,7 @@ function TodayActions({
                     {a.impact_ar}
                   </p>
                 </div>
-              </div>
+              </button>
             );
           })
         )}

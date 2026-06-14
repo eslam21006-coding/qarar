@@ -29,6 +29,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { VerdictBadge } from "@/components/Verdict";
 import { cpaColorClass, ctrColorClass, money, num, pct } from "@/lib/format";
+import { applyFilters, FILTER_FIELDS, type FilterAgg, type FilterJoin, type FilterOp, type FilterRule } from "@/lib/filters";
+import { aggregateTotals } from "@/lib/aggregate";
 import { trpc } from "@/lib/trpc";
 import type { DailyMetrics, EngineRow, Verdict, WindowMetrics } from "@shared/qarar";
 import {
@@ -37,10 +39,12 @@ import {
   ChevronLeft,
   Columns3,
   ExternalLink,
+  Filter,
   ImageOff,
   Loader2,
   Pause,
   Play,
+  Plus,
   Search,
   X,
 } from "lucide-react";
@@ -84,25 +88,13 @@ function dateStr(off: number): string {
   );
 }
 
-interface Agg {
-  spend: number;
-  impressions: number;
-  results: number;
-  cpa: number | null;
-  ctrLink: number | null;
-  ctrAll: number | null;
-  cpm: number | null;
-  cpc: number | null;
-  hookRate: number | null;
-  holdRate: number | null;
-  lpRate: number | null;
-}
-
-function aggFromWindow(w: WindowMetrics): Agg {
+function aggFromWindow(w: WindowMetrics): FilterAgg {
   return {
     spend: w.spend,
     impressions: w.impressions,
     results: w.conversions,
+    linkClicks: w.linkClicks,
+    clicks: w.clicks,
     cpa: w.conversions > 0 ? w.spend / w.conversions : null,
     ctrLink: w.impressions > 0 ? w.ctrLink : null,
     ctrAll: w.impressions > 0 ? w.ctrAll : null,
@@ -117,10 +109,12 @@ function aggFromWindow(w: WindowMetrics): Agg {
         ? ((w.thruplays ?? 0) / (w.videoViews3s ?? 1)) * 100
         : null,
     lpRate: w.linkClicks > 0 && w.lpViews > 0 ? (w.lpViews / w.linkClicks) * 100 : null,
+    frequency: null,
+    spendShare: null,
   };
 }
 
-function aggregate(s: SeriesObj | undefined, range: RangeKey, from: string, to: string): Agg | null {
+function aggregate(s: SeriesObj | undefined, range: RangeKey, from: string, to: string): FilterAgg | null {
   if (!s) return null;
   if (range === "today") return aggFromWindow(s.today);
   // if the daily series is missing entirely, fall back to the engine's 3-day window
@@ -145,6 +139,8 @@ function aggregate(s: SeriesObj | undefined, range: RangeKey, from: string, to: 
     spend,
     impressions: imps,
     results: conv,
+    linkClicks,
+    clicks,
     cpa: conv > 0 ? spend / conv : null,
     ctrLink: imps > 0 ? (linkClicks / imps) * 100 : null,
     ctrAll: imps > 0 ? (clicks / imps) * 100 : null,
@@ -153,6 +149,8 @@ function aggregate(s: SeriesObj | undefined, range: RangeKey, from: string, to: 
     hookRate: imps > 0 && v3 > 0 ? (v3 / imps) * 100 : null,
     holdRate: v3 > 0 && tp > 0 ? (tp / v3) * 100 : null,
     lpRate: linkClicks > 0 && lp > 0 ? (lp / linkClicks) * 100 : null,
+    frequency: null,
+    spendShare: null,
   };
 }
 
@@ -169,7 +167,8 @@ type ColKey =
   | "holdRate"
   | "lpRate"
   | "spendShare"
-  | "frequency";
+  | "frequency"
+  | "impressions";
 
 const ALL_COLUMNS: { key: ColKey; label: string; adOnly?: boolean }[] = [
   { key: "spend", label: "Spend" },
@@ -184,6 +183,7 @@ const ALL_COLUMNS: { key: ColKey; label: string; adOnly?: boolean }[] = [
   { key: "lpRate", label: "LP View %" },
   { key: "spendShare", label: "% Spend", adOnly: true },
   { key: "frequency", label: "Frequency" },
+  { key: "impressions", label: "Impressions" },
 ];
 
 const DEFAULT_VISIBLE: ColKey[] = ["spend", "results", "cpa", "ctrLink", "spendShare"];
@@ -207,6 +207,27 @@ const VERDICT_CHIPS: { v: Verdict; label: string }[] = [
   { v: "too_early", label: "⏳ مبكّر" },
 ];
 
+const LEVEL_LABELS_AR: Record<string, string> = {
+  campaign: "حملة",
+  adset: "مجموعة",
+  ad: "إعلان",
+};
+
+const OP_LABELS_AR: Record<FilterOp, string> = {
+  is: "يساوي",
+  is_not: "لا يساوي",
+  contains: "يحتوي على",
+  gte: "أكبر من أو يساوي",
+  lte: "أصغر من أو يساوي",
+  between: "بين",
+};
+
+const OPS_BY_TYPE: Record<string, FilterOp[]> = {
+  text: ["contains"],
+  enum: ["is", "is_not"],
+  numeric: ["gte", "lte", "between"],
+};
+
 // ============================================================
 
 export function DecisionTable({
@@ -216,6 +237,8 @@ export function DecisionTable({
   actId,
   accountId,
   isDemo,
+  searchTerm,
+  onSearchTermChange,
 }: {
   rows: EngineRow[];
   series: SeriesObj[];
@@ -223,6 +246,8 @@ export function DecisionTable({
   actId: string | null;
   accountId: number;
   isDemo: boolean;
+  searchTerm: string;
+  onSearchTermChange: (q: string) => void;
 }) {
   const utils = trpc.useUtils();
 
@@ -236,8 +261,12 @@ export function DecisionTable({
   const [to, setTo] = useState(dateStr(0));
 
   // filters
-  const [q, setQ] = useState("");
+  const q = searchTerm;
+  const setQ = onSearchTermChange;
   const [verdicts, setVerdicts] = useState<Set<Verdict>>(new Set());
+  const [filterRules, setFilterRules] = useState<FilterRule[]>([]);
+  const [filterJoin, setFilterJoin] = useState<FilterJoin>("AND");
+  const [showFilters, setShowFilters] = useState(false);
 
   // columns
   const [visibleCols, setVisibleCols] = useState<ColKey[]>(loadVisible);
@@ -299,11 +328,29 @@ export function DecisionTable({
     return `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${act}&${param}`;
   };
 
-  // visible rows at the current drill-down level + filters
+  // effective-status-aware status resolver for filters
+  const getStatus = (r: EngineRow) => {
+    const s = seriesMap.get(r.id);
+    return (s?.effectiveStatus ?? s?.status ?? r.status) === "ACTIVE" ? "ACTIVE" : "PAUSED";
+  };
+
+  // aggregate metrics per row for the selected range (all rows, for filter support)
+  const aggs = useMemo(() => {
+    const m = new Map<string, FilterAgg | null>();
+    for (const r of rows) m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to));
+    return m;
+  }, [rows, seriesMap, range, from, to]);
+
+  // visible rows — when searching/filtering, search across ALL levels
+  const hasFilters = filterRules.length > 0;
+  const isSearching = q.trim() !== "" || verdicts.size > 0 || hasFilters;
   const visible = useMemo(() => {
     let list: EngineRow[];
-    if (level === "campaign") list = rows.filter(r => r.level === "campaign");
-    else if (level === "adset")
+    if (isSearching) {
+      list = rows;
+    } else if (level === "campaign") {
+      list = rows.filter(r => r.level === "campaign");
+    } else if (level === "adset")
       list = rows.filter(r => r.level === "adset" && r.campaignId === path.campaign!.id);
     else list = rows.filter(r => r.level === "ad" && r.parentId === path.adset!.id);
     if (q.trim()) {
@@ -311,15 +358,9 @@ export function DecisionTable({
       list = list.filter(r => r.name.toLowerCase().includes(needle));
     }
     if (verdicts.size > 0) list = list.filter(r => verdicts.has(r.verdict));
+    if (hasFilters) list = applyFilters(list, filterRules, filterJoin, aggs, getStatus);
     return list;
-  }, [rows, level, path, q, verdicts]);
-
-  // aggregate metrics per row for the selected range
-  const aggs = useMemo(() => {
-    const m = new Map<string, Agg | null>();
-    for (const r of visible) m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to));
-    return m;
-  }, [visible, seriesMap, range, from, to]);
+  }, [rows, level, path, q, verdicts, isSearching, hasFilters, filterRules, filterJoin, aggs]);
 
   const verdictOrder: Record<Verdict, number> = {
     kill: 0,
@@ -342,7 +383,7 @@ export function DecisionTable({
         case "frequency":
           return r.frequency_3d ?? -1;
         default: {
-          const v = a?.[sort.key as keyof Agg];
+          const v = a?.[sort.key as keyof FilterAgg];
           return typeof v === "number" ? v : -1;
         }
       }
@@ -358,6 +399,34 @@ export function DecisionTable({
   const activeCols = ALL_COLUMNS.filter(
     c => visibleCols.includes(c.key) && (!c.adOnly || level === "ad")
   );
+
+  const totals = useMemo(
+    () => aggregateTotals(sorted.map(r => r.id), aggs),
+    [sorted, aggs],
+  );
+
+  const totalCell = (key: ColKey): string => {
+    switch (key) {
+      case "spend":
+        return money(totals.spend);
+      case "results":
+        return num(totals.results);
+      case "cpa":
+        return totals.cpa === null ? "—" : money(totals.cpa);
+      case "ctrLink":
+        return totals.ctrLink === null ? "—" : pct(totals.ctrLink);
+      case "ctrAll":
+        return totals.ctrAll === null ? "—" : pct(totals.ctrAll);
+      case "cpm":
+        return totals.cpm === null ? "—" : money(totals.cpm);
+      case "cpc":
+        return totals.cpc === null ? "—" : money(totals.cpc);
+      case "impressions":
+        return num(totals.impressions);
+      default:
+        return "—";
+    }
+  };
 
   const cellValue = (r: EngineRow, key: ColKey): string => {
     const a = aggs.get(r.id);
@@ -386,6 +455,8 @@ export function DecisionTable({
         return r.spend_share_pct == null ? "—" : pct(r.spend_share_pct, 0);
       case "frequency":
         return r.frequency_3d ? r.frequency_3d.toFixed(2) : "—";
+      case "impressions":
+        return num(a?.impressions ?? 0);
     }
   };
 
@@ -516,6 +587,21 @@ export function DecisionTable({
             ))}
           </div>
 
+          <Button
+            variant={showFilters || hasFilters ? "default" : "outline"}
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => setShowFilters(s => !s)}
+          >
+            <Filter className="h-3.5 w-3.5" />
+            فلتر
+            {hasFilters && (
+              <span className="num rounded bg-primary-foreground/20 px-1 text-[9px]">
+                {filterRules.length}
+              </span>
+            )}
+          </Button>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
@@ -539,8 +625,140 @@ export function DecisionTable({
                 </DropdownMenuCheckboxItem>
               ))}
             </DropdownMenuContent>
-          </DropdownMenu>
+        </DropdownMenu>
         </div>
+
+        {showFilters && (
+          <div className="space-y-2 rounded-lg border border-border/60 bg-background/40 p-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-muted-foreground">ربط القواعد:</span>
+              <div className="flex rounded-md border border-border/60">
+                {(["AND", "OR"] as FilterJoin[]).map(j => (
+                  <button
+                    key={j}
+                    onClick={() => setFilterJoin(j)}
+                    className={`rounded-md px-3 py-0.5 text-[11px] font-bold ${
+                      filterJoin === j
+                        ? "bg-primary/20 text-primary"
+                        : "text-muted-foreground hover:bg-accent"
+                    }`}
+                  >
+                    {j === "AND" ? "الكل (و)" : "أي واحد (أو)"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {filterRules.map((rule, idx) => {
+              const meta = FILTER_FIELDS[rule.field];
+              const ops = meta ? OPS_BY_TYPE[meta.type] : [];
+              return (
+                <div key={rule.id} className="flex flex-wrap items-center gap-1.5">
+                  <select
+                    value={rule.field}
+                    onChange={e => {
+                      const field = e.target.value;
+                      const m = FILTER_FIELDS[field];
+                      const defaultOp = m ? OPS_BY_TYPE[m.type][0] : "is";
+                      setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, field, op: defaultOp, value: "", value2: undefined } : r));
+                    }}
+                    className="rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                  >
+                    {Object.entries(FILTER_FIELDS).map(([key, m]) => (
+                      <option key={key} value={key}>{m.label}</option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={rule.op}
+                    onChange={e => setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, op: e.target.value as FilterOp } : r))}
+                    className="rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                  >
+                    {ops.map(op => (
+                      <option key={op} value={op}>{OP_LABELS_AR[op]}</option>
+                    ))}
+                  </select>
+
+                  {meta?.type === "enum" && meta.options ? (
+                    <select
+                      value={rule.value}
+                      onChange={e => setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, value: e.target.value } : r))}
+                      className="rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                    >
+                      <option value="">— اختر —</option>
+                      {meta.options.map(o => (
+                        <option key={o} value={o}>{o}</option>
+                      ))}
+                    </select>
+                  ) : rule.op === "between" ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        value={rule.value}
+                        onChange={e => setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, value: e.target.value } : r))}
+                        placeholder="من"
+                        className="num w-16 rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                      />
+                      <span className="text-xs text-muted-foreground">→</span>
+                      <input
+                        type="number"
+                        value={rule.value2 ?? ""}
+                        onChange={e => setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, value2: e.target.value } : r))}
+                        placeholder="إلى"
+                        className="num w-16 rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                      />
+                    </div>
+                  ) : (
+                    <input
+                      type={meta?.type === "numeric" ? "number" : "text"}
+                      value={rule.value}
+                      onChange={e => setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, value: e.target.value } : r))}
+                      placeholder="قيمة…"
+                      className="num rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                    />
+                  )}
+
+                  <button
+                    onClick={() => setFilterRules(rs => rs.filter(r => r.id !== rule.id))}
+                    className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-v-kill"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              onClick={() => {
+                const firstField = Object.keys(FILTER_FIELDS)[0];
+                const m = FILTER_FIELDS[firstField];
+                setFilterRules(rs => [...rs, {
+                  id: `f${Date.now()}`,
+                  field: firstField,
+                  op: OPS_BY_TYPE[m.type][0],
+                  value: "",
+                }]);
+              }}
+            >
+              <Plus className="h-3 w-3" />
+              إضافة قاعدة
+            </Button>
+
+            {hasFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-muted-foreground"
+                onClick={() => setFilterRules([])}
+              >
+                مسح الكل
+              </Button>
+            )}
+          </div>
+        )}
 
         {range !== "3d" && (
           <p className="text-[11px] text-muted-foreground">
@@ -596,20 +814,23 @@ export function DecisionTable({
               {sorted.map(r => {
                 const paused = isPaused(r);
                 const thumb = seriesMap.get(r.id)?.thumbnailUrl;
+                const showLevelPill = isSearching;
+                const canDrillDown = !isSearching && level !== "ad";
                 return (
                   <tr
                     key={r.id}
                     className={`border-b border-border/40 transition-colors hover:bg-accent/40 ${
-                      level !== "ad" ? "cursor-pointer" : ""
+                      canDrillDown ? "cursor-pointer" : ""
                     } ${paused ? "opacity-50" : ""}`}
                     onClick={() => {
+                      if (isSearching) return;
                       if (level === "campaign") setPath({ campaign: r });
                       else if (level === "adset") setPath({ campaign: path.campaign, adset: r });
                     }}
                   >
                     <td className="max-w-[280px] px-4 py-2.5">
                       <div className="flex items-center gap-2">
-                        {level === "ad" &&
+                        {(level === "ad" || (isSearching && r.level === "ad")) &&
                           (thumb ? (
                             <img
                               src={thumb}
@@ -625,7 +846,12 @@ export function DecisionTable({
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
                             <span className="truncate font-medium">{r.name}</span>
-                            {level !== "ad" && (
+                            {showLevelPill && (
+                              <span className="shrink-0 rounded bg-muted px-1 text-[9px] font-bold text-muted-foreground">
+                                {LEVEL_LABELS_AR[r.level] ?? r.level}
+                              </span>
+                            )}
+                            {!isSearching && level !== "ad" && (
                               <ChevronLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                             )}
                             {adsManagerUrl(r) && (
@@ -695,6 +921,24 @@ export function DecisionTable({
                 );
               })}
             </tbody>
+            {sorted.length > 0 && (
+              <tfoot>
+                <tr className="border-y-2 border-border/60 bg-background/60 font-bold">
+                  <td className="px-4 py-2 text-xs">
+                    الإجمالي ({sorted.length})
+                  </td>
+                  {activeCols.map(c => (
+                    <td
+                      key={c.key}
+                      className="num whitespace-nowrap px-2 py-2 text-center text-xs"
+                    >
+                      {totalCell(c.key)}
+                    </td>
+                  ))}
+                  <td colSpan={3} />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </CardContent>

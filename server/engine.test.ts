@@ -360,3 +360,19 @@ describe("account_alert (US2)", () => {
     expect(result.summary.account_alert).toBeNull();
   });
 });
+
+describe("TopAction parent fields (US3 / T021)", () => {
+  it("every top_3_action has parentId and campaignId populated from its row", () => {
+    const result = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs);
+    expect(result.summary.top_3_actions.length).toBeGreaterThan(0);
+    for (const a of result.summary.top_3_actions) {
+      // Both fields must be present (not undefined). They may be null for
+      // top-level campaigns, but never undefined.
+      expect(a).toHaveProperty("parentId");
+      expect(a).toHaveProperty("campaignId");
+      const r = result.rows.find(x => x.id === a.objectId)!;
+      expect(a.parentId).toBe(r.parentId);
+      expect(a.campaignId).toBe(r.campaignId);
+    }
+  });
+});
