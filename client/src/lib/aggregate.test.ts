@@ -80,4 +80,15 @@ describe("aggregateTotals — US6", () => {
     expect(result.lpRate).not.toBeNull();
     expect(result.lpRate).toBeCloseTo(73.33, 1);
   });
+
+  it("lpRate is non-null for the render path when linkClicks and lpViews are both non-zero", () => {
+    const aggs = new Map<string, FilterAgg | null>([
+      ["a", agg({ linkClicks: 100, lpViews: 80 })],
+    ]);
+
+    const result = aggregateTotals(["a"], aggs);
+
+    expect(result.lpRate).not.toBeNull();
+    expect(result.lpRate!).toBeGreaterThan(0);
+  });
 });

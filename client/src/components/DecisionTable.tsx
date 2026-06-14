@@ -444,6 +444,8 @@ export function DecisionTable({
         return totals.cpm === null ? "—" : money(totals.cpm);
       case "cpc":
         return totals.cpc === null ? "—" : money(totals.cpc);
+      case "lpRate":
+        return totals.lpRate === null ? "—" : pct(totals.lpRate, 0);
       case "impressions":
         return num(totals.impressions);
       default:
