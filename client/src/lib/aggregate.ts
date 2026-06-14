@@ -9,6 +9,7 @@ export interface TotalsResult {
   ctrAll: number | null;
   cpm: number | null;
   cpc: number | null;
+  lpRate: number | null;
 }
 
 export function aggregateTotals(
@@ -20,6 +21,7 @@ export function aggregateTotals(
   let conv = 0;
   let linkClicks = 0;
   let clicks = 0;
+  let lpViews = 0;
 
   for (const id of ids) {
     const a = aggs.get(id);
@@ -29,6 +31,7 @@ export function aggregateTotals(
     conv += a.results;
     linkClicks += a.linkClicks;
     clicks += a.clicks;
+    lpViews += a.lpViews;
   }
 
   return {
@@ -40,5 +43,6 @@ export function aggregateTotals(
     ctrAll: imps > 0 ? (clicks / imps) * 100 : null,
     cpm: imps > 0 ? (spend / imps) * 1000 : null,
     cpc: linkClicks > 0 ? spend / linkClicks : null,
+    lpRate: linkClicks > 0 ? (lpViews / linkClicks) * 100 : null,
   };
 }

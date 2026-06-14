@@ -29,6 +29,7 @@ export interface FilterAgg {
   results: number;
   linkClicks: number;
   clicks: number;
+  lpViews: number;
   cpa: number | null;
   ctrLink: number | null;
   ctrAll: number | null;

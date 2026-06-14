@@ -9,6 +9,7 @@ function agg(overrides: Partial<FilterAgg> = {}): FilterAgg {
     results: 2,
     linkClicks: 75,
     clicks: 100,
+    lpViews: 60,
     cpa: 50,
     ctrLink: 1.5,
     ctrAll: 2.0,
@@ -62,5 +63,21 @@ describe("aggregateTotals — US6", () => {
     expect(result.spend).toBe(150);
     expect(result.impressions).toBe(7000);
     expect(result.results).toBe(4);
+  });
+
+  it("footer LP view rate = ΣlpViews / ΣlinkClicks × 100, not null, when both are non-zero", () => {
+    // Row A: 100 linkClicks, 80 lpViews → 80%
+    // Row B: 50  linkClicks, 30 lpViews → 60%
+    // Mean of row rates = (80 + 60) / 2 = 70%
+    // Correct: (80 + 30) / (100 + 50) * 100 = 73.33%
+    const aggs = new Map<string, FilterAgg | null>([
+      ["a", agg({ linkClicks: 100, lpViews: 80, lpRate: 80 })],
+      ["b", agg({ linkClicks: 50, lpViews: 30, lpRate: 60 })],
+    ]);
+
+    const result = aggregateTotals(["a", "b"], aggs);
+
+    expect(result.lpRate).not.toBeNull();
+    expect(result.lpRate).toBeCloseTo(73.33, 1);
   });
 });
