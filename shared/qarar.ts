@@ -236,6 +236,13 @@ export interface DerivedTargets {
 
 // ---------- Engine output ----------
 
+export interface Finding {
+  step: 1 | 2 | 3 | 4 | 5 | 6;
+  text_ar: string;
+  primary: boolean;
+  ctaUrl?: string;
+}
+
 export interface EngineRow {
   id: string;
   name: string;
@@ -259,7 +266,7 @@ export interface EngineRow {
   rule: RuleCode;
   reason_ar: string;
   action_ar: string;
-  diagnosis: string | null;
+  findings: Finding[];
   promotion_eligible: boolean;
   promotion_note: string | null;
   learning_phase: boolean;
@@ -288,6 +295,7 @@ export interface AccountSummary {
   attributionStraddle: boolean;
   fetchedAt: string;
   currency: string;
+  account_funnel_cta: { reason_ar: string; ctaUrl: string } | null;
 }
 
 export interface EngineResult {

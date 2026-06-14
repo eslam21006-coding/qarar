@@ -128,10 +128,11 @@ describe("runEngine — demo snapshot verdicts (hand-computed)", () => {
     expect(r.rule).toBe("W3");
   });
 
-  it("kill/watch rows always carry a diagnosis line; continue rows don't need one", () => {
+  it("kill/watch rows always carry at least one finding with a primary; continue rows don't need one", () => {
     for (const r of result.rows) {
       if (r.verdict === "kill" || r.verdict === "watch") {
-        expect(r.diagnosis, `diagnosis missing for ${r.id}`).toBeTruthy();
+        expect(r.findings.length, `findings missing for ${r.id}`).toBeGreaterThanOrEqual(1);
+        expect(r.findings.some(f => f.primary), `no primary finding for ${r.id}`).toBe(true);
       }
     }
   });
@@ -267,5 +268,58 @@ describe("objective inheritance", () => {
     // ad_fatigue belongs to cmp_scale
     const ad = result.rows.find(r => r.id === "ad_fatigue")!;
     expect(ad.objective).toBeNull();
+  });
+});
+
+describe("diagnosis findings (US1)", () => {
+  it("a row failing both link-CTR AND page-CVR returns two findings, one primary (CTR)", () => {
+    const snap = buildDemoSnapshot();
+    const obj = snap.objects.find(o => o.id === "as_k1")!;
+    obj.w3d = {
+      spend: 200, impressions: 5000, reach: 4000, frequency: 1.25,
+      clicks: 150, linkClicks: 120, ctrAll: 1.2, ctrLink: 0.8,
+      cpm: 18, cpc: 1.67, conversions: 1, conversionValue: 43,
+      lpViews: 100, cpa: 200,
+    };
+    obj.today = {
+      spend: 30, impressions: 1000, reach: 900, frequency: 1.1,
+      clicks: 10, linkClicks: 8, ctrAll: 1.0, ctrLink: 0.8,
+      cpm: 30, cpc: 3.75, conversions: 1, conversionValue: 43,
+      lpViews: 7, cpa: 30,
+    };
+
+    const result = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "as_k1")!;
+
+    expect(r.findings.length).toBe(2);
+    const primaries = r.findings.filter(f => f.primary);
+    expect(primaries.length).toBe(1);
+    expect(primaries[0].step).toBe(2);
+    expect(r.findings.map(f => f.step)).toEqual([2, 5]);
+  });
+
+  it("good CTR + good LP views + weak page CVR → step-5 finding with discovery-call ctaUrl", () => {
+    const snap = buildDemoSnapshot();
+    // as_w3 already has: ctrLink 2.6 > median 1.7, lpViews 480, conv 2 → cvr 0.42% < 2%
+    const result = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "as_w3")!;
+
+    const step5 = r.findings.find(f => f.step === 5);
+    expect(step5).toBeDefined();
+    expect(step5!.ctaUrl).toBe("https://eslamsalah.com/team-discovery-call");
+  });
+
+  it("campaign with htoUnderperforming + good LTO CPA fires W5 and sets account_funnel_cta", () => {
+    const result = runEngine(buildDemoSnapshot(), {
+      ...(DEMO_FUNNEL as FunnelInputs),
+      htoUnderperforming: true,
+    });
+    const r = result.rows.find(x => x.id === "cmp_scale")!;
+    expect(r.verdict).toBe("watch");
+    expect(r.rule).toBe("W5");
+    expect(result.summary.account_funnel_cta).not.toBeNull();
+    expect(result.summary.account_funnel_cta!.ctaUrl).toBe(
+      "https://eslamsalah.com/team-discovery-call"
+    );
   });
 });

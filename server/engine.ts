@@ -20,6 +20,7 @@ import {
   DerivedTargets,
   EngineResult,
   EngineRow,
+  Finding,
   FunnelInputs,
   NormalizedObject,
   RuleCode,
@@ -53,6 +54,7 @@ interface Fired {
   action: string;
   promotionEligible?: boolean;
   promotionNote?: string | null;
+  ctaUrl?: string;
 }
 
 // ============================================================
@@ -570,38 +572,55 @@ function continueRules(
 }
 
 // ============================================================
-// Diagnosis ladder (الجزء الثامن) — for every kill/watch
+// Diagnosis (الجزء الثامن) — collect ALL broken rungs per entity
 // ============================================================
 
-export function diagnosisLadder(
+const DISCOVERY_CALL_URL = "https://eslamsalah.com/team-discovery-call";
+
+export function diagnose(
   o: NormalizedObject,
   baselines: Baselines,
   archetype: FunnelInputs["archetype"]
-): string {
+): Finding[] {
   const w = o.w3d;
   const ctrMedian = baselines.ctrLinkMedian90;
+  const findings: Finding[] = [];
 
-  // 1. CPM
-  if (baselines.cpmAvg14 && baselines.cpmNow && baselines.cpmNow > 1.3 * baselines.cpmAvg14) {
-    return "الخطوة 1 — سعر الظهور مرتفع على حسابك كله مقارنة بآخر 14 يومًا — السبب السوق أو الموسم أو المنافسة، وليس تصاميمك. توقّع تكلفة أعلى مؤقتًا";
-  }
+  // 1. Per-ad CPM (account-wide CPM removed — handled at summary level)
   if (baselines.cpmAvg14 && w.cpm > 1.3 * baselines.cpmAvg14 && w.impressions > 500) {
-    return `الخطوة 1 — سعر الظهور مرتفع على هذا الإعلان تحديدًا (${money(w.cpm)} مقابل متوسط ${money(baselines.cpmAvg14)}) — فيسبوك يرفع سعر التصميم الذي لا يعجب الناس`;
+    findings.push({
+      step: 1,
+      text_ar: `الخطوة 1 — سعر الظهور مرتفع على هذا الإعلان تحديدًا (${money(w.cpm)} مقابل متوسط ${money(baselines.cpmAvg14)}) — فيسبوك يرفع سعر التصميم الذي لا يعجب الناس`,
+      primary: false,
+    });
   }
 
-  // 2. Link CTR (hook)
+  // 2. Link CTR (hook) + 3. CTR All vs Link CTR mismatch
   const ctrLow = ctrMedian !== null ? w.ctrLink < ctrMedian : w.ctrLink < 1.0;
   if (ctrLow && w.impressions >= 1000) {
     // 3. CTR All vs Link CTR mismatch
     if (w.ctrAll >= 2 * w.ctrLink && w.ctrAll > 1.5) {
-      return `الخطوة 3 — الناس تتفاعل مع الإعلان (${w.ctrAll.toFixed(2)}%) لكنها لا تضغط للشراء (${w.ctrLink.toFixed(2)}%) — بداية الإعلان جيدة لكن الرسالة أو دعوة الشراء ضعيفة`;
+      findings.push({
+        step: 3,
+        text_ar: `الخطوة 3 — الناس تتفاعل مع الإعلان (${w.ctrAll.toFixed(2)}%) لكنها لا تضغط للشراء (${w.ctrLink.toFixed(2)}%) — بداية الإعلان جيدة لكن الرسالة أو دعوة الشراء ضعيفة`,
+        primary: false,
+      });
+    } else {
+      findings.push({
+        step: 2,
+        text_ar: `الخطوة 2 — ضغط الناس على الإعلان قليل (${w.ctrLink.toFixed(2)}%) رغم أن سعر الظهور طبيعي — المشكلة في التصميم نفسه، جدّده`,
+        primary: false,
+      });
     }
-    return `الخطوة 2 — ضغط الناس على الإعلان قليل (${w.ctrLink.toFixed(2)}%) رغم أن سعر الظهور طبيعي — المشكلة في التصميم نفسه، جدّده`;
   }
 
   // 4. LP view rate
   if (w.linkClicks >= 50 && w.lpViews > 0 && w.lpViews / w.linkClicks < 0.75) {
-    return `الخطوة 4 — ${((w.lpViews / w.linkClicks) * 100).toFixed(0)}% فقط ممن ضغطوا وصلوا لصفحتك (المفترض 75%+) — افحص سرعة التحميل أولًا، ثم تأكد أن الصفحة تطابق وعد الإعلان`;
+    findings.push({
+      step: 4,
+      text_ar: `الخطوة 4 — ${((w.lpViews / w.linkClicks) * 100).toFixed(0)}% فقط ممن ضغطوا وصلوا لصفحتك (المفترض 75%+) — افحص سرعة التحميل أولًا، ثم تأكد أن الصفحة تطابق وعد الإعلان`,
+      primary: false,
+    });
   }
 
   // 5. page CVR — "ad innocent"
@@ -609,12 +628,31 @@ export function diagnosisLadder(
     const cvr = (w.conversions / w.lpViews) * 100;
     const weakPage = archetype === "free_lead" ? cvr < 15 : cvr < 2;
     if (weakPage) {
-      return `الخطوة 5 — الناس تصل لصفحتك لكن ${cvr.toFixed(1)}% فقط يشترون — المشكلة في الصفحة أو العرض أو السعر — ⚠️ الإعلان بريء، لا تعدّله`;
+      findings.push({
+        step: 5,
+        text_ar: `الخطوة 5 — الناس تصل لصفحتك لكن ${cvr.toFixed(1)}% فقط يشترون — المشكلة في الصفحة أو العرض أو السعر — ⚠️ الإعلان بريء، لا تعدّله`,
+        primary: false,
+        ctaUrl: DISCOVERY_CALL_URL,
+      });
     }
   }
 
-  // 6. post-conversion
-  return "الخطوة 6 — الإعلان والصفحة سليمان — إن كانت النتائج النهائية ضعيفة فالمشكلة فيما بعد البيع: الرسائل والمتابعة والمكالمات";
+  // 6. post-conversion (fallback — ad and page are fine)
+  if (findings.length === 0) {
+    findings.push({
+      step: 6,
+      text_ar: "الخطوة 6 — الإعلان والصفحة سليمان — إن كانت النتائج النهائية ضعيفة فالمشكلة فيما بعد البيع: الرسائل والمتابعة والمكالمات",
+      primary: false,
+      ctaUrl: DISCOVERY_CALL_URL,
+    });
+  }
+
+  // Mark the first finding as primary
+  if (findings.length > 0) {
+    findings[0].primary = true;
+  }
+
+  return findings;
 }
 
 // ============================================================
@@ -646,8 +684,9 @@ function evaluateCampaign(
     return {
       verdict: "watch",
       rule: "W5",
-      reason: `الإعلانات تجلب عملاء بسعر جيد (${money(o.w3d.cpa)}) لكنهم لا يشترون منتجك الأساسي بعد ذلك — الإعلان بريء`,
-      action: "لا تغيّر شيئًا في الإعلانات — راجع الرسائل والمتابعة بعد البيع الأول",
+      reason: `الإعلانات تجلب عملاء بسعر جيد (${money(o.w3d.cpa)}) لكن المشكلة في العرض أو مسار الفانل — الإعلان بريء`,
+      action: "لا تغيّر شيئًا في الإعلانات — راجع العرض ومسار التحويل بعد البيع الأول، واحجز مكالمة تشخيصية",
+      ctaUrl: DISCOVERY_CALL_URL,
     };
   }
 
@@ -769,7 +808,7 @@ export function runEngine(
   const byId = new Map(snapshot.objects.map(o => [o.id, o]));
   const rows: EngineRow[] = [];
 
-  const toRow = (o: NormalizedObject, fired: Fired, diagnosis: string | null): EngineRow => ({
+  const toRow = (o: NormalizedObject, fired: Fired, findings: Finding[]): EngineRow => ({
     id: o.id,
     name: o.name,
     status: o.status,
@@ -792,7 +831,7 @@ export function runEngine(
     rule: fired.rule,
     reason_ar: fired.reason,
     action_ar: fired.action,
-    diagnosis,
+    findings,
     promotion_eligible: !!fired.promotionEligible,
     promotion_note: fired.promotionNote ?? null,
     learning_phase: !!o.learningPhase || weeklyConversions(o) < 50,
@@ -806,30 +845,39 @@ export function runEngine(
   for (const ad of ads) {
     const parent = ad.parentId ? byId.get(ad.parentId) : undefined;
     const fired = evaluateAd(ad, parent, targets, funnel.archetype, baselines);
-    const diag =
+    const findings =
       fired.verdict === "kill" || fired.verdict === "watch"
-        ? diagnosisLadder(ad, baselines, funnel.archetype)
-        : null;
-    rows.push(toRow(ad, fired, diag));
+        ? diagnose(ad, baselines, funnel.archetype)
+        : [];
+    rows.push(toRow(ad, fired, findings));
   }
 
   for (const s of adsets) {
     const fired = evaluateAdset(s, targets, funnel.archetype, baselines);
-    const diag =
+    const findings =
       fired.verdict === "kill" || fired.verdict === "watch"
-        ? diagnosisLadder(s, baselines, funnel.archetype)
-        : null;
-    rows.push(toRow(s, fired, diag));
+        ? diagnose(s, baselines, funnel.archetype)
+        : [];
+    rows.push(toRow(s, fired, findings));
   }
 
   for (const c of campaigns) {
     const childRows = rows.filter(r => r.campaignId === c.id && r.level === "adset");
     const fired = evaluateCampaign(c, targets, childRows, !!funnel.htoUnderperforming);
-    const diag =
-      fired.verdict === "kill" || fired.verdict === "watch"
-        ? diagnosisLadder(c, baselines, funnel.archetype)
-        : null;
-    rows.push(toRow(c, fired, diag));
+    let findings: Finding[] = [];
+    if (fired.verdict === "kill" || fired.verdict === "watch") {
+      findings = diagnose(c, baselines, funnel.archetype);
+      // W5 campaign: ensure discovery-call ctaUrl is present on findings
+      if (fired.ctaUrl && !findings.some(f => f.ctaUrl === fired.ctaUrl)) {
+        findings.push({
+          step: 6,
+          text_ar: "المشكلة في العرض أو مسار الفانل — الإعلانات تجلب عملاء بسعر جيد لكن التحويل بعد البيع يحتاج إصلاح",
+          primary: false,
+          ctaUrl: fired.ctaUrl,
+        });
+      }
+    }
+    rows.push(toRow(c, fired, findings));
   }
 
   // Objective inheritance: objective exists only at campaign level in Meta.
@@ -957,6 +1005,21 @@ function buildSummary(
   }
   const top3 = actions.slice(0, 3).map((a, i) => ({ ...a, rank: i + 1 }));
 
+  // Account-level funnel CTA: when any row has a step-5/step-6 finding
+  // OR a campaign W5 fired, show the discovery-call card.
+  const hasFunnelFinding = rows.some(
+    r => r.findings.some(f => f.step === 5 || f.step === 6)
+  );
+  const hasW5 = rows.some(r => r.rule === "W5");
+  const account_funnel_cta =
+    hasFunnelFinding || hasW5
+      ? {
+          reason_ar:
+            "مؤشرات إعلاناتك جيدة لكن مشكلتك الأساسية في التحويل بسبب العرض أو مسار الفانل — احجز مكالمة تشخيصية مجانية مع الفريق",
+          ctaUrl: DISCOVERY_CALL_URL,
+        }
+      : null;
+
   return {
     total_spend_3d,
     total_spend_today,
@@ -967,5 +1030,6 @@ function buildSummary(
     attributionStraddle: snapshot.attributionStraddle,
     fetchedAt: snapshot.fetchedAt,
     currency: snapshot.currency,
+    account_funnel_cta,
   };
 }

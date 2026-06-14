@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { VerdictBadge } from "@/components/Verdict";
 import { money, pct, timeAgoAr } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import type { EngineRow, TopAction } from "@shared/qarar";
+import type { EngineRow, Finding, TopAction } from "@shared/qarar";
 import {
   Activity,
   AlertTriangle,
@@ -209,7 +209,7 @@ export default function Dashboard() {
         />
 
         {/* Deep diagnosis section */}
-        <DiagnosisSection rows={rows} />
+        <DiagnosisSection rows={rows} summary={summary} />
       </main>
     </Shell>
   );
@@ -403,7 +403,7 @@ function TodayActions({
                 className={`flex items-start gap-3 rounded-lg border p-3 transition-opacity ${
                   done
                     ? "border-border/40 bg-background/30 opacity-55"
-                    : "border-border/60 bg-background/60"
+                    : "border-border/60 bg-background/60 hover:border-primary/40 hover:bg-primary/5"
                 }`}
               >
                 <Checkbox
@@ -444,14 +444,20 @@ function TodayActions({
 }
 
 // ============================================================
-// Deep diagnosis — ladder output for every 🔴/🟡 unit
+// Deep diagnosis — findings for every 🔴/🟡 unit
 // ============================================================
 
-function DiagnosisSection({ rows }: { rows: EngineRow[] }) {
+function DiagnosisSection({
+  rows,
+  summary,
+}: {
+  rows: EngineRow[];
+  summary: { account_funnel_cta: { reason_ar: string; ctaUrl: string } | null };
+}) {
   const diagRows = rows.filter(
-    r => (r.verdict === "kill" || r.verdict === "watch") && r.diagnosis
+    r => (r.verdict === "kill" || r.verdict === "watch") && r.findings.length > 0
   );
-  if (diagRows.length === 0) return null;
+  if (diagRows.length === 0 && !summary.account_funnel_cta) return null;
   return (
     <Card className="border-border/60">
       <CardHeader className="pb-3">
@@ -463,22 +469,68 @@ function DiagnosisSection({ rows }: { rows: EngineRow[] }) {
           لكل إعلان عليه علامة 🔴 أو 🟡، بنفحص رحلة العميل خطوة خطوة ونقولك أول حتة بتخسر فيها الناس
         </p>
       </CardHeader>
-      <CardContent className="space-y-2">
+      <CardContent className="space-y-3">
+        {/* Account-level funnel CTA card */}
+        {summary.account_funnel_cta && (
+          <div className="rounded-lg border-2 border-primary/40 bg-primary/5 p-4">
+            <p className="text-sm font-bold leading-relaxed">
+              {summary.account_funnel_cta.reason_ar}
+            </p>
+            <Button asChild className="mt-3 font-bold">
+              <a
+                href={summary.account_funnel_cta.ctaUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                احجز مكالمة تشخيصية مجانية
+              </a>
+            </Button>
+          </div>
+        )}
+
         {diagRows.map(r => (
           <div
             key={r.id}
-            className="flex flex-wrap items-start gap-2 rounded-lg border border-border/50 bg-background/50 p-3"
+            className="rounded-lg border border-border/50 bg-background/50 p-3"
           >
-            <VerdictBadge verdict={r.verdict} rule={r.rule} />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-bold">{r.name}</div>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                {r.diagnosis}
-              </p>
+            <div className="mb-2 flex items-center gap-2">
+              <VerdictBadge verdict={r.verdict} rule={r.rule} />
+              <span className="truncate text-sm font-bold">{r.name}</span>
+            </div>
+            <div className="space-y-1.5">
+              {r.findings.map((f, i) => (
+                <FindingRow key={i} finding={f} />
+              ))}
             </div>
           </div>
         ))}
       </CardContent>
     </Card>
+  );
+}
+
+function FindingRow({ finding }: { finding: Finding }) {
+  return (
+    <div className={finding.primary ? "" : "opacity-60"}>
+      <p
+        className={`text-xs leading-relaxed ${
+          finding.primary ? "font-bold text-foreground" : "text-muted-foreground"
+        }`}
+      >
+        {finding.primary && <span className="ml-1 text-primary">★</span>}
+        {finding.text_ar}
+      </p>
+      {finding.ctaUrl && (
+        <Button asChild size="sm" className="mt-1.5 font-bold">
+          <a
+            href={finding.ctaUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            احجز مكالمة تشخيصية مجانية
+          </a>
+        </Button>
+      )}
+    </div>
   );
 }
