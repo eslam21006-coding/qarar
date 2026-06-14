@@ -41,8 +41,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: npm run check
+      - run: pnpm run check
 
-      - run: npx drizzle-kit push
+      - run: pnpm run db:push
 
-      - run: npm test
+      - run: pnpm test
