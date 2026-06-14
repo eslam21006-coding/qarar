@@ -628,22 +628,30 @@ export function diagnose(
     const cvr = (w.conversions / w.lpViews) * 100;
     const weakPage = archetype === "free_lead" ? cvr < 15 : cvr < 2;
     if (weakPage) {
+      // Only absolve the ad ("الإعلان بريء") when no earlier rung (1–4) fired.
+      // If the ad/landing flow is already flagged above, step 5 must not
+      // contradict it by declaring the ad innocent.
+      const adClean = findings.length === 0;
       findings.push({
         step: 5,
-        text_ar: `الخطوة 5 — الناس تصل لصفحتك لكن ${cvr.toFixed(1)}% فقط يشترون — المشكلة في الصفحة أو العرض أو السعر — ⚠️ الإعلان بريء، لا تعدّله`,
+        text_ar: adClean
+          ? `الخطوة 5 — الناس تصل لصفحتك لكن ${cvr.toFixed(1)}% فقط يشترون — المشكلة في الصفحة أو العرض أو السعر — ⚠️ الإعلان بريء، لا تعدّله`
+          : `الخطوة 5 — قلة ممن يصلون لصفحتك يشترون (${cvr.toFixed(1)}%) — راجع الصفحة أو العرض أو السعر أيضًا`,
         primary: false,
         ctaUrl: DISCOVERY_CALL_URL,
       });
     }
   }
 
-  // 6. post-conversion (fallback — ad and page are fine)
+  // 6. post-conversion (fallback — ad and page look fine). This is a catch-all
+  // for any clean kill/watch row, including delivery-timing rules (CB1/CB2/W2)
+  // whose 3-day metrics are clean, so it carries NO discovery-call CTA — a
+  // booking prompt here would be a false funnel signal.
   if (findings.length === 0) {
     findings.push({
       step: 6,
       text_ar: "الخطوة 6 — الإعلان والصفحة سليمان — إن كانت النتائج النهائية ضعيفة فالمشكلة فيما بعد البيع: الرسائل والمتابعة والمكالمات",
       primary: false,
-      ctaUrl: DISCOVERY_CALL_URL,
     });
   }
 
@@ -1011,10 +1019,12 @@ function buildSummary(
   }
   const top3 = actions.slice(0, 3).map((a, i) => ({ ...a, rank: i + 1 }));
 
-  // Account-level funnel CTA: when any row has a step-5/step-6 finding
-  // OR a campaign W5 fired, show the discovery-call card.
+  // Account-level funnel CTA: only a genuine page-CVR (step 5) finding or a
+  // campaign W5 counts as funnel evidence. The step-6 fallback fires for ANY
+  // clean kill/watch row (including delivery-timing rules like CB1/CB2/W2), so
+  // it must NOT trigger the account funnel CTA — that would be a false alarm.
   const hasFunnelFinding = rows.some(
-    r => r.findings.some(f => f.step === 5 || f.step === 6)
+    r => r.findings.some(f => f.step === 5)
   );
   const hasW5 = rows.some(r => r.rule === "W5");
   const account_funnel_cta =
@@ -1040,6 +1050,7 @@ function buildSummary(
     account_alert:
       snapshot.baselines.cpmNow !== null &&
       snapshot.baselines.cpmAvg14 !== null &&
+      snapshot.baselines.cpmAvg14 > 0 &&
       snapshot.baselines.cpmNow > 1.3 * snapshot.baselines.cpmAvg14
         ? {
             cpmNow: snapshot.baselines.cpmNow,

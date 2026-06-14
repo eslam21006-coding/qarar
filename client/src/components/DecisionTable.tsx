@@ -806,7 +806,7 @@ export function DecisionTable({
                     colSpan={activeCols.length + 4}
                     className="px-4 py-8 text-center text-muted-foreground"
                   >
-                    {q || verdicts.size > 0
+                    {q || verdicts.size > 0 || hasFilters
                       ? "لا توجد نتائج — امسح البحث للعودة"
                       : "لا توجد عناصر نشطة في هذا المستوى"}
                   </td>
