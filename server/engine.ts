@@ -1031,5 +1031,17 @@ function buildSummary(
     fetchedAt: snapshot.fetchedAt,
     currency: snapshot.currency,
     account_funnel_cta,
+    account_alert:
+      snapshot.baselines.cpmNow !== null &&
+      snapshot.baselines.cpmAvg14 !== null &&
+      snapshot.baselines.cpmNow > 1.3 * snapshot.baselines.cpmAvg14
+        ? {
+            cpmNow: snapshot.baselines.cpmNow,
+            cpmAvg14: snapshot.baselines.cpmAvg14,
+            deltaPct: Math.round(
+              (snapshot.baselines.cpmNow / snapshot.baselines.cpmAvg14 - 1) * 100
+            ),
+          }
+        : null,
   };
 }

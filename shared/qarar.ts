@@ -296,6 +296,11 @@ export interface AccountSummary {
   fetchedAt: string;
   currency: string;
   account_funnel_cta: { reason_ar: string; ctaUrl: string } | null;
+  account_alert: {
+    cpmNow: number;
+    cpmAvg14: number;
+    deltaPct: number;
+  } | null;
 }
 
 export interface EngineResult {

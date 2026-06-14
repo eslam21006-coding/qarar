@@ -323,3 +323,40 @@ describe("diagnosis findings (US1)", () => {
     );
   });
 });
+
+describe("account_alert (US2)", () => {
+  it("cpmNow > 1.3×cpmAvg14 sets summary.account_alert; no per-row step-1 finding for account CPM", () => {
+    const snap = buildDemoSnapshot();
+    snap.baselines.cpmAvg14 = 18;
+    snap.baselines.cpmNow = 30; // 30 > 1.3 × 18 = 23.4
+
+    const result = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+
+    expect(result.summary.account_alert).not.toBeNull();
+    expect(result.summary.account_alert!.cpmNow).toBe(30);
+    expect(result.summary.account_alert!.cpmAvg14).toBe(18);
+    // deltaPct = round((30/18 − 1) × 100) = round(66.67) ≈ 67
+    expect(result.summary.account_alert!.deltaPct).toBe(67);
+
+    // No row finding should be a step-1 "account-wide CPM" finding
+    // (step 1 may legitimately exist for a per-ad CPM rung, but its text
+    // must NOT match the account-wide wording "على حسابك كله").
+    for (const r of result.rows) {
+      for (const f of r.findings) {
+        if (f.step === 1) {
+          expect(f.text_ar).not.toContain("على حسابك كله");
+        }
+      }
+    }
+  });
+
+  it("null cpmAvg14 ⇒ account_alert === null", () => {
+    const snap = buildDemoSnapshot();
+    snap.baselines.cpmAvg14 = null;
+    snap.baselines.cpmNow = 30;
+
+    const result = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+
+    expect(result.summary.account_alert).toBeNull();
+  });
+});

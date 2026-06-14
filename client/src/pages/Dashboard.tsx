@@ -153,6 +153,21 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Account-level CPM alert (US2) — rendered ONCE from summary.account_alert */}
+      {summary.account_alert && (
+        <div className="border-b border-amber-500/30 bg-amber-500/10">
+          <div className="container flex items-start gap-2 py-2 text-xs">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+            <span>
+              سعر الظهور على حسابك ارتفع {summary.account_alert.deltaPct}% مقارنة
+              بمتوسط آخر 14 يومًا ({money(summary.account_alert.cpmNow)} مقابل{" "}
+              {money(summary.account_alert.cpmAvg14)}). السبب الغالب: المنافسة أو
+              الموسم — وليس تصاميمك. توقّع تكلفة أعلى مؤقتًا.
+            </span>
+          </div>
+        </div>
+      )}
+
       {settingsReviewDue && (
         <div className="border-b border-primary/20 bg-primary/5">
           <div className="container flex items-center justify-between gap-2 py-2 text-xs">
