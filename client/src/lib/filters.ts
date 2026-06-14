@@ -1,11 +1,23 @@
 import type { EngineRow } from "@shared/qarar";
 
-export type FilterOp = "is" | "is_not" | "contains" | "gte" | "lte" | "between";
+export type FilterOp = "is" | "is_not" | "contains" | ">=" | "<=" | "between";
 export type FilterJoin = "AND" | "OR";
+
+export type FilterField =
+  | "name"
+  | "objective"
+  | "verdict"
+  | "status"
+  | "level"
+  | "spend"
+  | "impressions"
+  | "cpa"
+  | "ctrLink"
+  | "cpm";
 
 export interface FilterRule {
   id: string;
-  field: string;
+  field: FilterField;
   op: FilterOp;
   value: string;
   value2?: string;
@@ -30,7 +42,7 @@ export interface FilterAgg {
 }
 
 export const FILTER_FIELDS: Record<
-  string,
+  FilterField,
   { type: "text" | "enum" | "numeric"; label: string; options?: string[] }
 > = {
   name: { type: "text", label: "الاسم" },
@@ -40,15 +52,13 @@ export const FILTER_FIELDS: Record<
   level: { type: "enum", label: "المستوى" },
   spend: { type: "numeric", label: "الصرف" },
   impressions: { type: "numeric", label: "المشاهدات" },
-  results: { type: "numeric", label: "النتائج" },
   cpa: { type: "numeric", label: "تكلفة العميل" },
   ctrLink: { type: "numeric", label: "نسبة النقر" },
   cpm: { type: "numeric", label: "سعر الظهور" },
-  frequency: { type: "numeric", label: "التكرار" },
 };
 
 function getNumericValue(
-  field: string,
+  field: FilterField,
   row: EngineRow,
   agg: FilterAgg | null | undefined,
 ): number | null {
@@ -57,23 +67,19 @@ function getNumericValue(
       return agg?.spend ?? null;
     case "impressions":
       return agg?.impressions ?? null;
-    case "results":
-      return agg?.results ?? null;
     case "cpa":
       return agg?.cpa ?? null;
     case "ctrLink":
       return agg?.ctrLink ?? null;
     case "cpm":
       return agg?.cpm ?? null;
-    case "frequency":
-      return agg?.frequency ?? row.frequency_3d ?? null;
     default:
       return null;
   }
 }
 
 function getStringValue(
-  field: string,
+  field: FilterField,
   row: EngineRow,
   getStatus?: (row: EngineRow) => string,
 ): string {
@@ -111,8 +117,8 @@ export function applyFilters(
         const val = getNumericValue(f.field, row, aggs.get(row.id));
         if (val === null) return false;
         const v = parseFloat(f.value);
-        if (f.op === "gte") return val >= v;
-        if (f.op === "lte") return val <= v;
+        if (f.op === ">=") return val >= v;
+        if (f.op === "<=") return val <= v;
         if (f.op === "between") {
           const v2 = parseFloat(f.value2 ?? "0");
           return val >= v && val <= v2;

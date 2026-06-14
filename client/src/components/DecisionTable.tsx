@@ -29,7 +29,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { VerdictBadge } from "@/components/Verdict";
 import { cpaColorClass, ctrColorClass, money, num, pct } from "@/lib/format";
-import { applyFilters, FILTER_FIELDS, type FilterAgg, type FilterJoin, type FilterOp, type FilterRule } from "@/lib/filters";
+import { applyFilters, FILTER_FIELDS, type FilterAgg, type FilterField, type FilterJoin, type FilterOp, type FilterRule } from "@/lib/filters";
 import { aggregateTotals } from "@/lib/aggregate";
 import { trpc } from "@/lib/trpc";
 import type { DailyMetrics, EngineRow, Verdict, WindowMetrics } from "@shared/qarar";
@@ -217,15 +217,15 @@ const OP_LABELS_AR: Record<FilterOp, string> = {
   is: "يساوي",
   is_not: "لا يساوي",
   contains: "يحتوي على",
-  gte: "أكبر من أو يساوي",
-  lte: "أصغر من أو يساوي",
+  ">=": "أكبر من أو يساوي",
+  "<=": "أصغر من أو يساوي",
   between: "بين",
 };
 
 const OPS_BY_TYPE: Record<string, FilterOp[]> = {
   text: ["contains"],
   enum: ["is", "is_not"],
-  numeric: ["gte", "lte", "between"],
+  numeric: [">=", "<=", "between"],
 };
 
 // ============================================================
@@ -658,7 +658,7 @@ export function DecisionTable({
                   <select
                     value={rule.field}
                     onChange={e => {
-                      const field = e.target.value;
+                      const field = e.target.value as FilterField;
                       const m = FILTER_FIELDS[field];
                       const defaultOp = m ? OPS_BY_TYPE[m.type][0] : "is";
                       setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, field, op: defaultOp, value: "", value2: undefined } : r));
@@ -735,7 +735,7 @@ export function DecisionTable({
               size="sm"
               className="h-7 gap-1 text-xs"
               onClick={() => {
-                const firstField = Object.keys(FILTER_FIELDS)[0];
+                const firstField = Object.keys(FILTER_FIELDS)[0] as FilterField;
                 const m = FILTER_FIELDS[firstField];
                 setFilterRules(rs => [...rs, {
                   id: `f${Date.now()}`,

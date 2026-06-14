@@ -64,7 +64,7 @@ describe("applyFilters — US5 predicate", () => {
     ]);
     const filters: FilterRule[] = [
       { id: "f1", field: "objective", op: "is", value: "OUTCOME_SALES" },
-      { id: "f2", field: "spend", op: "gte", value: "100" },
+      { id: "f2", field: "spend", op: ">=", value: "100" },
     ];
 
     const result = applyFilters(rows, filters, "AND", aggs);
@@ -84,7 +84,7 @@ describe("applyFilters — US5 predicate", () => {
     ]);
     const filters: FilterRule[] = [
       { id: "f1", field: "objective", op: "is", value: "OUTCOME_SALES" },
-      { id: "f2", field: "spend", op: "gte", value: "100" },
+      { id: "f2", field: "spend", op: ">=", value: "100" },
     ];
 
     const result = applyFilters(rows, filters, "OR", aggs);
