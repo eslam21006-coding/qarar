@@ -43,6 +43,6 @@ jobs:
 
       - run: npm run check
 
-      - run: npm run db:push
+      - run: npx drizzle-kit push
 
       - run: npm test
