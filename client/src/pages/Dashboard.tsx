@@ -463,10 +463,10 @@ function DiagnosisSection({
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Stethoscope className="h-4 w-4 text-primary" />
-          فين المشكلة بالظبط؟
+          أين المشكلة تحديداً؟
         </CardTitle>
         <p className="text-xs text-muted-foreground">
-          لكل إعلان عليه علامة 🔴 أو 🟡، بنفحص رحلة العميل خطوة خطوة ونقولك أول حتة بتخسر فيها الناس
+          لكل إعلان عليه علامة 🔴 أو 🟡، نفحص رحلة العميل خطوة بخطوة ونوضح أول مرحلة تفقد فيها العملاء
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
