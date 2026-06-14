@@ -81,6 +81,19 @@ function explicitCtrKillAllowed(o: NormalizedObject): boolean {
 }
 
 function gateVerdict(o: NormalizedObject, target: number): Fired | null {
+  // Paused / not active → frozen data, no judgment (US4 / T027).
+  // The subtraction (2000 − impressions) would otherwise always read "needs
+  // 2,000 more" because paused objects carry zero impressions in the 3-day
+  // window. Branch FIRST so the message matches the actual state.
+  const effectiveDelivered = o.effectiveStatus ?? o.status;
+  if (effectiveDelivered !== "ACTIVE") {
+    return {
+      verdict: "too_early",
+      rule: "GATE",
+      reason: "هذا الإعلان موقوف الآن — لا يصرف ولا يجمع بيانات",
+      action: "شغّله إن أردت تقييمه، أو احذفه إن لم تعد تحتاجه",
+    };
+  }
   // Minimum age gate: < 48h → no judgment at all (quick matrix: عمره < 48 ساعة → لا شيء)
   if (o.ageDays < 2 && !explicitCtrKillAllowed(o)) {
     return {

@@ -183,7 +183,7 @@ const ALL_COLUMNS: { key: ColKey; label: string; adOnly?: boolean }[] = [
   { key: "lpRate", label: "LP View %" },
   { key: "spendShare", label: "% Spend", adOnly: true },
   { key: "frequency", label: "Frequency" },
-  { key: "impressions", label: "Impressions" },
+  { key: "impressions", label: "مشاهدات" },
 ];
 
 const DEFAULT_VISIBLE: ColKey[] = ["spend", "results", "cpa", "ctrLink", "spendShare"];
@@ -466,6 +466,7 @@ export function DecisionTable({
     if (key === "ctrLink") return `font-bold ${a?.ctrLink == null ? "" : ctrColorClass(a.ctrLink)}`;
     if (key === "spendShare" && r.spend_share_pct !== null && r.spend_share_pct < 10)
       return "text-v-rescue";
+    if (key === "impressions") return ""; // neutral — no color
     return "";
   };
 

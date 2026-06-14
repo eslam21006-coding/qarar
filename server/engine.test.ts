@@ -376,3 +376,36 @@ describe("TopAction parent fields (US3 / T021)", () => {
     }
   });
 });
+
+describe("paused + under-data messaging (US4 / T026)", () => {
+  it("a paused object returns the paused message, not 'needs more impressions'", () => {
+    const snap = buildDemoSnapshot();
+    const obj = snap.objects.find(o => o.id === "ad_gate")!;
+    obj.status = "PAUSED";
+    obj.effectiveStatus = "PAUSED";
+
+    const result = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "ad_gate")!;
+
+    expect(r.verdict).toBe("too_early");
+    expect(r.reason_ar).toContain("موقوف");
+    expect(r.reason_ar).not.toContain("مشاهدة إضافية");
+    expect(r.reason_ar).not.toContain("2,000");
+  });
+
+  it("an active object with 300 impressions (threshold 2000) states '1,700 more'", () => {
+    const snap = buildDemoSnapshot();
+    const obj = snap.objects.find(o => o.id === "ad_gate")!;
+    obj.status = "ACTIVE";
+    obj.effectiveStatus = "ACTIVE";
+    obj.ageDays = 3;
+    obj.w3d = { ...obj.w3d, impressions: 300, spend: 10, ctrLink: 1.5 };
+    obj.today = { ...obj.today, impressions: 300, spend: 10, ctrLink: 1.5 };
+
+    const result = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "ad_gate")!;
+
+    expect(r.verdict).toBe("too_early");
+    expect(r.reason_ar).toContain("1,700");
+  });
+});
