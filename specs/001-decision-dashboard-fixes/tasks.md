@@ -49,20 +49,20 @@ description: "Task list for Decision Dashboard Fixes & Next-Step Features"
 
 ### Tests for User Story 1
 
-- [ ] T007 [P] [US1] Engine test: a row failing link-CTR AND page-CVR returns two findings, exactly one `primary`, primary = the CTR step, ordered by step (`server/engine.test.ts`).
-- [ ] T008 [P] [US1] Engine test: a "good CTR + good LP views + weak page CVR" ad produces a step-5 finding whose `ctaUrl === "https://eslamsalah.com/team-discovery-call"` (`server/engine.test.ts`).
-- [ ] T009 [P] [US1] Engine test: a campaign with `htoUnderperforming=true` + good LTO CPA fires W5 AND sets `summary.account_funnel_cta` (`server/engine.test.ts`).
+- [x] T007 [P] [US1] Engine test: a row failing link-CTR AND page-CVR returns two findings, exactly one `primary`, primary = the CTR step, ordered by step (`server/engine.test.ts`).
+- [x] T008 [P] [US1] Engine test: a "good CTR + good LP views + weak page CVR" ad produces a step-5 finding whose `ctaUrl === "https://eslamsalah.com/team-discovery-call"` (`server/engine.test.ts`).
+- [x] T009 [P] [US1] Engine test: a campaign with `htoUnderperforming=true` + good LTO CPA fires W5 AND sets `summary.account_funnel_cta` (`server/engine.test.ts`).
 
 ### Implementation for User Story 1
 
-- [ ] T010 [US1] Add the `Finding` interface and change `EngineRow.diagnosis: string | null` → `findings: Finding[]` (`shared/qarar.ts`).
-- [ ] T011 [US1] Refactor `diagnosisLadder` → `diagnose(o, baselines, archetype): Finding[]` in `server/engine.ts`: evaluate every rung (link-CTR/hook, CTR-all-vs-link, LP-view-rate, page-CVR, post-conversion), push a `Finding` per broken rung, mark the first `primary: true`; **remove the account-wide CPM rung**; attach `ctaUrl` on step-5 and step-6 findings. Keep existing Arabic rung copy as `text_ar`.
-- [ ] T012 [US1] Update `toRow` to set `findings` from `diagnose(...)` (`server/engine.ts`).
-- [ ] T013 [US1] In `evaluateCampaign`, attach the discovery-call `ctaUrl` and funnel reason to the W5 finding and to the campaign row's reason/action (`server/engine.ts`).
-- [ ] T014 [US1] Add `account_funnel_cta: {...} | null` to `AccountSummary` (`shared/qarar.ts`) and populate it in `buildSummary` when any row has a step-5/6 finding OR campaign W5 fired (`server/engine.ts`).
-- [ ] T015 [US1] Migrate `DiagnosisSection` to render `findings` — primary bold/highlighted, secondaries muted beneath; any finding with `ctaUrl` renders an «احجز مكالمة استكشافية» button (`target="_blank" rel="noopener noreferrer"`) (`client/src/pages/Dashboard.tsx`).
-- [ ] T016 [US1] Render the prominent account-level funnel booking card from `account_funnel_cta` at the top of the diagnosis area (`client/src/pages/Dashboard.tsx`).
-- [ ] T017 [US1] Update existing engine tests that asserted the old `diagnosis` string to assert `findings.length >= 1` and `findings.some(f => f.primary)` (`server/engine.test.ts`).
+- [x] T010 [US1] Add the `Finding` interface and change `EngineRow.diagnosis: string | null` → `findings: Finding[]` (`shared/qarar.ts`).
+- [x] T011 [US1] Refactor `diagnosisLadder` → `diagnose(o, baselines, archetype): Finding[]` in `server/engine.ts`: evaluate every rung (link-CTR/hook, CTR-all-vs-link, LP-view-rate, page-CVR, post-conversion), push a `Finding` per broken rung, mark the first `primary: true`; **remove the account-wide CPM rung**; attach `ctaUrl` on step-5 and step-6 findings. Keep existing Arabic rung copy as `text_ar`.
+- [x] T012 [US1] Update `toRow` to set `findings` from `diagnose(...)` (`server/engine.ts`).
+- [x] T013 [US1] In `evaluateCampaign`, attach the discovery-call `ctaUrl` and funnel reason to the W5 finding and to the campaign row's reason/action (`server/engine.ts`).
+- [x] T014 [US1] Add `account_funnel_cta: {...} | null` to `AccountSummary` (`shared/qarar.ts`) and populate it in `buildSummary` when any row has a step-5/6 finding OR campaign W5 fired (`server/engine.ts`).
+- [x] T015 [US1] Migrate `DiagnosisSection` to render `findings` — primary bold/highlighted, secondaries muted beneath; any finding with `ctaUrl` renders an «احجز مكالمة استكشافية» button (`target="_blank" rel="noopener noreferrer"`) (`client/src/pages/Dashboard.tsx`).
+- [x] T016 [US1] Render the prominent account-level funnel booking card from `account_funnel_cta` at the top of the diagnosis area (`client/src/pages/Dashboard.tsx`).
+- [x] T017 [US1] Update existing engine tests that asserted the old `diagnosis` string to assert `findings.length >= 1` and `findings.some(f => f.primary)` (`server/engine.test.ts`).
 
 **Checkpoint**: Diagnosis is complete and reaches the booking; engine suite green.
 
@@ -78,12 +78,12 @@ description: "Task list for Decision Dashboard Fixes & Next-Step Features"
 
 ### Tests for User Story 2
 
-- [ ] T018 [P] [US2] Engine test: `cpmNow > 1.3×cpmAvg14` sets `summary.account_alert` once with `cpmNow/cpmAvg14/deltaPct` and no per-row CPM finding exists; null `cpmAvg14` ⇒ `account_alert === null` (`server/engine.test.ts`).
+- [x] T018 [P] [US2] Engine test: `cpmNow > 1.3×cpmAvg14` sets `summary.account_alert` once with `cpmNow/cpmAvg14/deltaPct` and no per-row CPM finding exists; null `cpmAvg14` ⇒ `account_alert === null` (`server/engine.test.ts`).
 
 ### Implementation for User Story 2
 
-- [ ] T019 [US2] Add `account_alert: {...} | null` to `AccountSummary` (`shared/qarar.ts`) and populate it in `buildSummary` with `cpmNow`, `cpmAvg14`, `deltaPct = round((cpmNow/cpmAvg14 − 1)×100)` when above threshold, else null (`server/engine.ts`).
-- [ ] T020 [US2] Render a single account-level CPM banner (numbers + simple-Arabic market/season/competition copy) near the attribution banner (`client/src/pages/Dashboard.tsx`).
+- [x] T019 [US2] Add `account_alert: {...} | null` to `AccountSummary` (`shared/qarar.ts`) and populate it in `buildSummary` with `cpmNow`, `cpmAvg14`, `deltaPct = round((cpmNow/cpmAvg14 − 1)×100)` when above threshold, else null (`server/engine.ts`).
+- [x] T020 [US2] Render a single account-level CPM banner (numbers + simple-Arabic market/season/competition copy) near the attribution banner (`client/src/pages/Dashboard.tsx`).
 
 **Checkpoint**: Cost claim is auditable and shown once.
 
@@ -99,14 +99,14 @@ description: "Task list for Decision Dashboard Fixes & Next-Step Features"
 
 ### Tests for User Story 3
 
-- [ ] T021 [P] [US3] Add `parentId` / `campaignId` to `TopAction` (`shared/qarar.ts`) and populate them in the kill/rescue/scale action builders in `buildSummary` (`server/engine.ts`); assert presence in an engine test (`server/engine.test.ts`).
+- [x] T021 [P] [US3] Add `parentId` / `campaignId` to `TopAction` (`shared/qarar.ts`) and populate them in the kill/rescue/scale action builders in `buildSummary` (`server/engine.ts`); assert presence in an engine test (`server/engine.test.ts`).
 
 ### Implementation for User Story 3
 
-- [ ] T022 [US3] In the `visible` memo, when `q.trim()` is non-empty or verdict chips are active, search across ALL `rows` (ignore drill-down scope) instead of the current level only (`client/src/components/DecisionTable.tsx`).
-- [ ] T023 [US3] Render a small level pill (campaign / ad set / ad, simple Arabic) next to the name on cross-level result rows (`client/src/components/DecisionTable.tsx`).
-- [ ] T024 [US3] Lift a focus callback to `Dashboard`: make each `TodayActions` card a button that sets the table search `q` to the object name and scrolls the table into view (`client/src/pages/Dashboard.tsx` + `client/src/components/DecisionTable.tsx`).
-- [ ] T025 [US3] Show an empty state (no rows) when search matches nothing; clearing search restores the normal drill-down view with a valid path (`client/src/components/DecisionTable.tsx`).
+- [x] T022 [US3] In the `visible` memo, when `q.trim()` is non-empty or verdict chips are active, search across ALL `rows` (ignore drill-down scope) instead of the current level only (`client/src/components/DecisionTable.tsx`).
+- [x] T023 [US3] Render a small level pill (campaign / ad set / ad, simple Arabic) next to the name on cross-level result rows (`client/src/components/DecisionTable.tsx`).
+- [x] T024 [US3] Lift a focus callback to `Dashboard`: make each `TodayActions` card a button that sets the table search `q` to the object name and scrolls the table into view (`client/src/pages/Dashboard.tsx` + `client/src/components/DecisionTable.tsx`).
+- [x] T025 [US3] Show an empty state (no rows) when search matches nothing; clearing search restores the normal drill-down view with a valid path (`client/src/components/DecisionTable.tsx`).
 
 **Checkpoint**: Recommendations are findable and clickable. **All P1 (MVP) stories complete.**
 
@@ -122,12 +122,12 @@ description: "Task list for Decision Dashboard Fixes & Next-Step Features"
 
 ### Tests for User Story 4
 
-- [ ] T026 [P] [US4] Engine test: a paused object returns the paused message (not "needs 2,000 more") and keeps a five-set verdict; an active object with 300 impressions (threshold 2000) states "1,700 more" (`server/engine.test.ts`).
+- [x] T026 [P] [US4] Engine test: a paused object returns the paused message (not "needs 2,000 more") and keeps a five-set verdict; an active object with 300 impressions (threshold 2000) states "1,700 more" (`server/engine.test.ts`).
 
 ### Implementation for User Story 4
 
-- [ ] T027 [US4] At the top of `gateVerdict`, branch on delivery status (`effectiveStatus ?? status`): if not ACTIVE → paused reason/action ("موقوف الآن… شغّله أو احذفه", verdict stays `too_early`); active under-data keeps the exact-remaining message (threshold − `impressions_3d`) (`server/engine.ts`).
-- [ ] T028 [US4] Surface impressions as a column: add `"impressions"` to `ColKey` and `ALL_COLUMNS`, add `case "impressions"` to `cellValue`, neutral `cellClass` (`client/src/components/DecisionTable.tsx`).
+- [x] T027 [US4] At the top of `gateVerdict`, branch on delivery status (`effectiveStatus ?? status`): if not ACTIVE → paused reason/action ("موقوف الآن… شغّله أو احذفه", verdict stays `too_early`); active under-data keeps the exact-remaining message (threshold − `impressions_3d`) (`server/engine.ts`).
+- [x] T028 [US4] Surface impressions as a column: add `"impressions"` to `ColKey` and `ALL_COLUMNS`, add `case "impressions"` to `cellValue`, neutral `cellClass` (`client/src/components/DecisionTable.tsx`).
 
 **Checkpoint**: "Too early" is honest and status-aware.
 
@@ -143,13 +143,13 @@ description: "Task list for Decision Dashboard Fixes & Next-Step Features"
 
 ### Tests for User Story 5
 
-- [ ] T029 [P] [US5] Extract a pure `applyFilters(rows, filters, join, aggs)` predicate (own module under `client/src/lib/`) and unit-test it: `objective is X AND spend>=100`, OR broadening, `between`, objective-inheritance match, and missing-objective handling (excluded from `is`, included from `is_not`) (`client/src/lib/*.test.ts`).
+- [x] T029 [P] [US5] Extract a pure `applyFilters(rows, filters, join, aggs)` predicate (own module under `client/src/lib/`) and unit-test it: `objective is X AND spend>=100`, OR broadening, `between`, objective-inheritance match, and missing-objective handling (excluded from `is`, included from `is_not`) (`client/src/lib/*.test.ts`).
 
 ### Implementation for User Story 5
 
-- [ ] T030 [US5] Define the `FilterRule` model + `filterJoin` ("AND"/"OR") state and the field→type metadata map (text/enum/numeric) in `client/src/components/DecisionTable.tsx` (importing the predicate from T029). **The `status` field's allowed values (ACTIVE/PAUSED) must be derived with the same paused predicate as US4/US10 — `(effectiveStatus ?? status) === "ACTIVE"` — never the raw `status` field, so filter, message (T027), and hide-toggle (T062) agree.**
-- [ ] T031 [US5] Build the filter UI: a "فلتر" dropdown adding rule rows (field select → operator select by type → value input / enum select / two inputs for `between`), removable chips, and an AND/OR toggle, all labels simple Arabic (`client/src/components/DecisionTable.tsx`).
-- [ ] T032 [US5] Apply the predicate in the `visible` memo (numeric values from `aggs` so they honor the date range; objective uses inherited value; enums compared directly), composing with the existing `q` search (empty filters = match all) (`client/src/components/DecisionTable.tsx`). **For the `status` filter, compare against the derived paused state `(effectiveStatus ?? status) === "ACTIVE"` (same logic as T027/T062), not the raw `status` string.**
+- [x] T030 [US5] Define the `FilterRule` model + `filterJoin` ("AND"/"OR") state and the field→type metadata map (text/enum/numeric) in `client/src/components/DecisionTable.tsx` (importing the predicate from T029). **The `status` field's allowed values (ACTIVE/PAUSED) must be derived with the same paused predicate as US4/US10 — `(effectiveStatus ?? status) === "ACTIVE"` — never the raw `status` field, so filter, message (T027), and hide-toggle (T062) agree.**
+- [x] T031 [US5] Build the filter UI: a "فلتر" dropdown adding rule rows (field select → operator select by type → value input / enum select / two inputs for `between`), removable chips, and an AND/OR toggle, all labels simple Arabic (`client/src/components/DecisionTable.tsx`).
+- [x] T032 [US5] Apply the predicate in the `visible` memo (numeric values from `aggs` so they honor the date range; objective uses inherited value; enums compared directly), composing with the existing `q` search (empty filters = match all) (`client/src/components/DecisionTable.tsx`). **For the `status` filter, compare against the derived paused state `(effectiveStatus ?? status) === "ACTIVE"` (same logic as T027/T062), not the raw `status` string.**
 
 **Checkpoint**: Real multi-condition filtering works at every level.
 
@@ -165,12 +165,12 @@ description: "Task list for Decision Dashboard Fixes & Next-Step Features"
 
 ### Tests for User Story 6
 
-- [ ] T033 [P] [US6] Unit-test `aggregateTotals`: footer link-CTR equals Σlinkclicks/Σimps for two differing-volume rows (not the mean of row CTRs); zero-denominator rate returns dash (`client/src/lib/*.test.ts`).
+- [x] T033 [P] [US6] Unit-test `aggregateTotals`: footer link-CTR equals Σlinkclicks/Σimps for two differing-volume rows (not the mean of row CTRs); zero-denominator rate returns dash (`client/src/lib/*.test.ts`).
 
 ### Implementation for User Story 6
 
-- [ ] T034 [US6] Refactor `aggregate()` to expose an internal `rawSums()` helper, then add `aggregateTotals(visibleRows, seriesMap, range, from, to)` accumulating raw components and recomputing ratios from sums (`client/src/components/DecisionTable.tsx` + extracted lib if needed for T033).
-- [ ] T035 [US6] Render a `<tfoot>` row over `visible`: `الإجمالي ({n})`, summed spend/impressions/results, recomputed rate cells, `—` for zero-denominator and for spendShare/frequency; bordered/bolder styling (`client/src/components/DecisionTable.tsx`).
+- [x] T034 [US6] Refactor `aggregate()` to expose an internal `rawSums()` helper, then add `aggregateTotals(visibleRows, seriesMap, range, from, to)` accumulating raw components and recomputing ratios from sums (`client/src/components/DecisionTable.tsx` + extracted lib if needed for T033).
+- [x] T035 [US6] Render a `<tfoot>` row over `visible`: `الإجمالي ({n})`, summed spend/impressions/results, recomputed rate cells, `—` for zero-denominator and for spendShare/frequency; bordered/bolder styling (`client/src/components/DecisionTable.tsx`).
 
 **Checkpoint**: Totals are type-correct and filter-aware.
 

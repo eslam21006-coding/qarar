@@ -664,9 +664,10 @@ export function DecisionTable({
                     }}
                     className="rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
                   >
-                    {Object.entries(FILTER_FIELDS).map(([key, m]) => (
-                      <option key={key} value={key}>{m.label}</option>
-                    ))}
+                    {Object.entries(FILTER_FIELDS).map(([key, m]) => {
+                      const fieldMeta = m as { label: string };
+                      return <option key={key} value={key}>{fieldMeta.label}</option>;
+                    })}
                   </select>
 
                   <select
@@ -686,7 +687,7 @@ export function DecisionTable({
                       className="rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
                     >
                       <option value="">— اختر —</option>
-                      {meta.options.map(o => (
+                      {meta.options.map((o: string) => (
                         <option key={o} value={o}>{o}</option>
                       ))}
                     </select>
@@ -806,7 +807,7 @@ export function DecisionTable({
                     className="px-4 py-8 text-center text-muted-foreground"
                   >
                     {q || verdicts.size > 0
-                      ? "لا توجد نتائج مطابقة للفلتر — جرّب توسيع البحث"
+                      ? "لا توجد نتائج — امسح البحث للعودة"
                       : "لا توجد عناصر نشطة في هذا المستوى"}
                   </td>
                 </tr>
