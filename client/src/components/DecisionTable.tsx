@@ -213,6 +213,16 @@ const LEVEL_LABELS_AR: Record<string, string> = {
   ad: "إعلان",
 };
 
+// Arabic labels for enum filter VALUE options (US5 / Gate 3-III).
+const VERDICT_FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: "kill", label: "🔴 أوقف" },
+  { value: "watch", label: "🟡 راقب" },
+  { value: "continue", label: "🟢 كمّل" },
+  { value: "rescue", label: "🛟 أنقذ" },
+  { value: "too_early", label: "⏳ مبكر" },
+];
+const STATUS_FILTER_LABELS: Record<string, string> = { ACTIVE: "نشط", PAUSED: "موقوف" };
+
 const OP_LABELS_AR: Record<FilterOp, string> = {
   is: "يساوي",
   is_not: "لا يساوي",
@@ -333,6 +343,17 @@ export function DecisionTable({
     const s = seriesMap.get(r.id);
     return (s?.effectiveStatus ?? s?.status ?? r.status) === "ACTIVE" ? "ACTIVE" : "PAUSED";
   };
+
+  // Distinct objectives present in the rows → dropdown options for the objective
+  // filter (US5 / Gate 3-III), so users select instead of typing. Meta's own enum
+  // strings are kept as-is; empty → the caller falls back to a text input.
+  const objectiveOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(rows.map(r => r.objective).filter((o): o is string => !!o))
+      ).sort(),
+    [rows]
+  );
 
   // aggregate metrics per row for the selected range (all rows, for filter support)
   const aggs = useMemo(() => {
@@ -653,6 +674,17 @@ export function DecisionTable({
             {filterRules.map((rule, idx) => {
               const meta = FILTER_FIELDS[rule.field];
               const ops = meta ? OPS_BY_TYPE[meta.type] : [];
+              // Localized value options for enum fields. `level` intentionally
+              // keeps Meta's English values (no dropdown). `objective` uses the
+              // distinct values present in the rows, else falls back to a text input.
+              const enumOpts: { value: string; label: string }[] | null =
+                rule.field === "status"
+                  ? (meta?.options ?? []).map(v => ({ value: v, label: STATUS_FILTER_LABELS[v] ?? v }))
+                  : rule.field === "verdict"
+                    ? VERDICT_FILTER_OPTIONS
+                    : rule.field === "objective" && objectiveOptions.length > 0
+                      ? objectiveOptions.map(v => ({ value: v, label: v }))
+                      : null;
               return (
                 <div key={rule.id} className="flex flex-wrap items-center gap-1.5">
                   <select
@@ -681,15 +713,15 @@ export function DecisionTable({
                     ))}
                   </select>
 
-                  {meta?.type === "enum" && meta.options ? (
+                  {enumOpts ? (
                     <select
                       value={rule.value}
                       onChange={e => setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, value: e.target.value } : r))}
                       className="rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
                     >
                       <option value="">— اختر —</option>
-                      {meta.options.map((o: string) => (
-                        <option key={o} value={o}>{o}</option>
+                      {enumOpts.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
                     </select>
                   ) : rule.op === "between" ? (

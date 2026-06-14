@@ -149,4 +149,34 @@ describe("applyFilters — US5 predicate", () => {
     const isNotResult = applyFilters(rows, isNotFilters, "AND", aggs);
     expect(isNotResult.map(r => r.id)).toEqual(["b"]);
   });
+
+  it(">= on spend returns rows at or above the threshold", () => {
+    const rows = [makeRow({ id: "a" }), makeRow({ id: "b" }), makeRow({ id: "c" })];
+    const aggs = new Map<string, FilterAgg | null>([
+      ["a", makeAgg({ spend: 50 })],
+      ["b", makeAgg({ spend: 100 })],
+      ["c", makeAgg({ spend: 150 })],
+    ]);
+    const filters: FilterRule[] = [
+      { id: "f1", field: "spend", op: ">=", value: "100" },
+    ];
+
+    const result = applyFilters(rows, filters, "AND", aggs);
+    expect(result.map(r => r.id)).toEqual(["b", "c"]);
+  });
+
+  it("<= on spend returns rows at or below the threshold", () => {
+    const rows = [makeRow({ id: "a" }), makeRow({ id: "b" }), makeRow({ id: "c" })];
+    const aggs = new Map<string, FilterAgg | null>([
+      ["a", makeAgg({ spend: 50 })],
+      ["b", makeAgg({ spend: 100 })],
+      ["c", makeAgg({ spend: 150 })],
+    ]);
+    const filters: FilterRule[] = [
+      { id: "f1", field: "spend", op: "<=", value: "100" },
+    ];
+
+    const result = applyFilters(rows, filters, "AND", aggs);
+    expect(result.map(r => r.id)).toEqual(["a", "b"]);
+  });
 });
