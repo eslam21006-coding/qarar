@@ -171,10 +171,16 @@ export async function listAccounts(userId: number) {
 }
 
 /** US11 — list every user id. Used by the daily refresh to enumerate
- *  (user, account) pairs. Returns empty when there's no DB. */
+ *  (user, account) pairs. As a scheduler entrypoint this must fail loudly
+ *  on a DB outage rather than masking it as "no users" (which would mark the
+ *  run successful while silently skipping everyone). runDailyRefresh already
+ *  short-circuits when DATABASE_URL is unset, so reaching here with no db
+ *  handle means a genuine connection failure that monitoring should catch. */
 export async function listAllUsers(): Promise<{ id: number }[]> {
   const db = await getDb();
-  if (!db) return [];
+  if (!db) {
+    throw new Error("Database unavailable — cannot enumerate users for daily refresh");
+  }
   return db
     .select({ id: users.id })
     .from(users);

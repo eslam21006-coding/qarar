@@ -171,7 +171,10 @@ export async function setDailyBudget(
     const e: any = new Error(err.message || `Meta API error ${res.status}`);
     e.isAuthError = err.code === 190 || err.type === "OAuthException";
     e.needsPermission = err.code === 200 || err.code === 10;
-    e.belowMinimum = err.code === 4 || err.error_subcode === 1885994;
+    // Meta code 4 is "Application request limit reached" (a rate limit), not a
+    // minimum-budget violation — keep it out of belowMinimum so routers map it
+    // to TOO_MANY_REQUESTS instead of BUDGET_BELOW_MINIMUM (checked first).
+    e.belowMinimum = err.error_subcode === 1885994;
     e.isRateLimit = err.code === 17 || err.code === 4 || err.code === 32 || err.error_subcode === 2443279;
     throw e;
   }

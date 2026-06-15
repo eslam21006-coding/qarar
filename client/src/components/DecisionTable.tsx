@@ -413,7 +413,7 @@ export function DecisionTable({
     if (verdicts.size > 0) list = list.filter(r => verdicts.has(r.verdict));
     if (hasFilters) list = applyFilters(list, filterRules, filterJoin, aggs, getStatus);
     return list;
-  }, [rows, level, path, q, verdicts, isSearching, hasFilters, filterRules, filterJoin, aggs]);
+  }, [rows, level, path, q, verdicts, isSearching, hasFilters, filterRules, filterJoin, aggs, getStatus]);
 
   const verdictOrder: Record<Verdict, number> = {
     kill: 0,
@@ -874,7 +874,7 @@ export function DecisionTable({
                     className="px-4 py-8 text-center text-muted-foreground"
                   >
                     {q || verdicts.size > 0 || hasFilters
-                      ? "لا توجد نتائج — امسح البحث للعودة"
+                      ? "لا توجد نتائج — امسح عوامل التصفية للعودة"
                       : "لا توجد عناصر نشطة في هذا المستوى"}
                   </td>
                 </tr>

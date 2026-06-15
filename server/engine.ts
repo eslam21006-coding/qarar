@@ -890,14 +890,22 @@ export function runEngine(
     let findings: Finding[] = [];
     if (fired.verdict === "kill" || fired.verdict === "watch") {
       findings = diagnose(c, baselines, funnel.archetype);
-      // W5 campaign: ensure discovery-call ctaUrl is present on findings
+      // W5 campaign: ensure the discovery-call ctaUrl is present. If diagnose()
+      // already produced a step-6 fallback, attach the CTA to it instead of
+      // appending a second step-6 (which would render a duplicate post-sale
+      // message in the diagnosis list).
       if (fired.ctaUrl && !findings.some(f => f.ctaUrl === fired.ctaUrl)) {
-        findings.push({
-          step: 6,
-          text_ar: "المشكلة في العرض أو مسار الفانل — الإعلانات تجلب عملاء بسعر جيد لكن التحويل بعد البيع يحتاج إصلاح",
-          primary: false,
-          ctaUrl: fired.ctaUrl,
-        });
+        const existingStep6 = findings.find(f => f.step === 6);
+        if (existingStep6) {
+          existingStep6.ctaUrl = fired.ctaUrl;
+        } else {
+          findings.push({
+            step: 6,
+            text_ar: "المشكلة في العرض أو مسار الفانل — الإعلانات تجلب عملاء بسعر جيد لكن التحويل بعد البيع يحتاج إصلاح",
+            primary: false,
+            ctaUrl: fired.ctaUrl,
+          });
+        }
       }
     }
     rows.push(toRow(c, fired, findings));

@@ -10,6 +10,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+
     services:
       mysql:
         image: mysql:8
@@ -26,8 +29,6 @@ jobs:
 
     env:
       DATABASE_URL: mysql://root:root@127.0.0.1:3306/qarar_test
-      FACEBOOK_APP_ID: ${{ secrets.FACEBOOK_APP_ID }}
-      FACEBOOK_APP_SECRET: ${{ secrets.FACEBOOK_APP_SECRET }}
 
     steps:
       - uses: actions/checkout@v4
@@ -48,3 +49,6 @@ jobs:
       - run: pnpm run db:push
 
       - run: pnpm test
+        env:
+          FACEBOOK_APP_ID: ${{ secrets.FACEBOOK_APP_ID }}
+          FACEBOOK_APP_SECRET: ${{ secrets.FACEBOOK_APP_SECRET }}
