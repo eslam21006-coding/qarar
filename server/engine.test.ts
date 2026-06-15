@@ -116,7 +116,7 @@ describe("runEngine — demo snapshot verdicts (hand-computed)", () => {
     expect(s1Row.promotion_note!).toContain("الاختبار");
     expect(s1Row.promotion_note!).toContain("التوسيع");
     // social proof / CPM rationale — copy mentions "CPM" and engagement transfer
-    expect(s1Row.promotion_note!).toMatch(/CPM|لايكات|كومنتات|تفاعل/);
+    expect(s1Row.promotion_note!).toMatch(/CPM|تفاعل|إعجاب|تعليق/);
 
     // A non-S1 ad has neither field populated
     const nonS1 = result.rows.find(

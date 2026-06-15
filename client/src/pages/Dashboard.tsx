@@ -584,13 +584,13 @@ function PromotionList({ rows }: { rows: EngineRow[] }) {
         <CardTitle className="flex items-center gap-2 text-lg font-extrabold">
           <span className="text-emerald-600">🚀</span>
           <span>إعلانات جاهزة للتوسيع</span>
-          <span className="num text-xs font-normal text-muted-foreground">
-            PROMOTION LIST
+          <span className="text-xs font-normal text-muted-foreground">
+            قائمة الترقيات
           </span>
         </CardTitle>
         <p className="text-xs text-muted-foreground">
-          إعلانات حققت هدفها 3 أيام متتالية وتفاعلها فوق المعتاد — انسخها
-          لحملة التوسيع مع Post ID عشان اللايكات والكومنتات تنتقل وتخفض الـ CPM
+          إعلانات حققت هدفها 3 أيام متتالية وتفاعلها فوق المعتاد — انسخها إلى
+          حملة التوسيع باستخدام Post ID حتى تنتقل الإعجابات والتعليقات ويقل سعر الظهور (CPM).
         </p>
       </CardHeader>
       <CardContent className="space-y-2">
