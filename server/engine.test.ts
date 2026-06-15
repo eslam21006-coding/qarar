@@ -409,3 +409,53 @@ describe("paused + under-data messaging (US4 / T026)", () => {
     expect(r.reason_ar).toContain("1,700");
   });
 });
+
+describe("SOP-specific creative action copy (US7 / T036)", () => {
+  const result = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs);
+  const row = (id: string) => {
+    const r = result.rows.find(x => x.id === id);
+    if (!r) throw new Error(`row ${id} not found`);
+    return r;
+  };
+
+  it("K3: action_ar mentions new CONCEPT and discovery-call routing", () => {
+    const r = row("ad_k3");
+    expect(r.rule).toBe("K3");
+    expect(r.action_ar).toContain("كونسبت");
+    expect(r.action_ar).toContain("مكالمة");
+  });
+
+  it("K4: action_ar names collapse + don't raise budget + prepare next concept", () => {
+    const r = row("ad_flash");
+    expect(r.rule).toBe("K4");
+    expect(r.action_ar).toContain("ميزانية");
+    expect(r.action_ar.toLowerCase()).toMatch(/تاني|جديد|تالى|قادم/);
+  });
+
+  it("F1: action_ar says audience healthy / don't touch ad set / 3–5 day test", () => {
+    const r = row("ad_fatigue");
+    expect(r.rule).toBe("F1");
+    expect(r.action_ar).toContain("جمهور");
+    expect(r.action_ar).toMatch(/\d|٣|٥/);
+  });
+
+  it("F2: action_ar explains auction penalty + fresh-creative diagnostic", () => {
+    const snap = buildDemoSnapshot();
+    const obj = snap.objects.find(o => o.id === "ad_fatigue")!;
+    obj.daily7 = [
+      { spend: 75, impressions: 5600, date: obj.daily7[0]!.date, ctrLink: 2.3, cpm: 18, clicks: 129, linkClicks: 129, ctrAll: 2.3, reach: 5000, frequency: 1.1, conversions: 2, conversionValue: 86, lpViews: 110, videoViews3s: null, thruplays: null, cpa: 37.5, cpc: 0.58 },
+      { spend: 75, impressions: 5000, date: obj.daily7[1]!.date, ctrLink: 2.3, cpm: 19, clicks: 115, linkClicks: 115, ctrAll: 2.3, reach: 4500, frequency: 1.1, conversions: 2, conversionValue: 86, lpViews: 98, videoViews3s: null, thruplays: null, cpa: 37.5, cpc: 0.65 },
+      { spend: 76, impressions: 4500, date: obj.daily7[2]!.date, ctrLink: 2.3, cpm: 21, clicks: 104, linkClicks: 104, ctrAll: 2.3, reach: 4000, frequency: 1.1, conversions: 1, conversionValue: 43, lpViews: 88, videoViews3s: null, thruplays: null, cpa: 76, cpc: 0.73 },
+      { spend: 76, impressions: 4000, date: obj.daily7[3]!.date, ctrLink: 2.3, cpm: 24, clicks: 92, linkClicks: 92, ctrAll: 2.3, reach: 3600, frequency: 1.1, conversions: 1, conversionValue: 43, lpViews: 78, videoViews3s: null, thruplays: null, cpa: 76, cpc: 0.83 },
+      { spend: 77, impressions: 3500, date: obj.daily7[4]!.date, ctrLink: 2.3, cpm: 27, clicks: 81, linkClicks: 81, ctrAll: 2.3, reach: 3100, frequency: 1.1, conversions: 1, conversionValue: 43, lpViews: 69, videoViews3s: null, thruplays: null, cpa: 77, cpc: 0.95 },
+      { spend: 77, impressions: 3000, date: obj.daily7[5]!.date, ctrLink: 2.3, cpm: 30, clicks: 69, linkClicks: 69, ctrAll: 2.3, reach: 2700, frequency: 1.1, conversions: 2, conversionValue: 86, lpViews: 59, videoViews3s: null, thruplays: null, cpa: 38.5, cpc: 1.12 },
+      { spend: 76, impressions: 2800, date: obj.daily7[6]!.date, ctrLink: 2.3, cpm: 32, clicks: 64, linkClicks: 64, ctrAll: 2.3, reach: 2500, frequency: 1.1, conversions: 1, conversionValue: 43, lpViews: 54, videoViews3s: null, thruplays: null, cpa: 76, cpc: 1.19 },
+    ];
+
+    const f2Result = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+    const r = f2Result.rows.find(x => x.id === "ad_fatigue")!;
+    expect(r.rule).toBe("F2");
+    expect(r.action_ar).toMatch(/مزاد|فيسبوك|سعر|ظهور/);
+    expect(r.action_ar).toMatch(/تصميم|كونسبت|جديد|اختبار/);
+  });
+});

@@ -233,7 +233,7 @@ function killK3(o: NormalizedObject): Fired | null {
       verdict: "kill",
       rule: "K3",
       reason: `من كل 1000 شخص شاهدوا الإعلان، أقل من 5 ضغطوا عليه (${o.w3d.ctrLink.toFixed(2)}%) بعد ${nf(o.w3d.impressions)} مشاهدة`,
-      action: "أوقِف الإعلان وجهّز تصميمًا جديدًا",
+      action: "الهوك مش واقف أحد — المشكلة في المفهوم مش في الشكل. غيّر المفهوم كامل، مش لون أو حجم. لو محتاج تبني مفهوم جديد من الصفر، احجز مكالمة: https://eslamsalah.com/team-discovery-call",
     };
   }
   return null;
@@ -321,7 +321,7 @@ function decayMap(ad: NormalizedObject, baselines: Baselines): Fired | null {
       verdict: "kill",
       rule: "K4",
       reason: `اليوم الأول كان ممتازًا ثم هبط الأداء ${dropPct.toFixed(0)}% خلال 3 أيام — نجاح لم يدُم`,
-      action: "أوقِفه — ولا تزد الميزانية محاولًا استرجاع اليوم الأول؛ فقد انتهى",
+      action: "يوم أول قوي ثم انهيار — ده flash creative، الشريحة اتحرقت. لا ترفع الميزانية تحاول ترجع يوم 1، رفعها يكسر الـ learning ويسرّع الانهيار. المصنع يجهّز المفهوم الجاي دلوقتي.",
     };
   }
   if (dropPct > 0 && dropPct <= 30) {
@@ -381,7 +381,7 @@ function fatigueSignals(ad: NormalizedObject, baselines: Baselines): Fired | nul
         verdict: "watch",
         rule: "F1",
         reason: `الجمهور بدأ يملّ التصميم: ضغط الناس على الإعلان نزل ${ctrDrop.toFixed(0)}% (من ${peak.toFixed(2)}% إلى ${recent.toFixed(2)}%) بينما سعر الظهور ثابت`,
-        action: "جهّز تصميمًا جديدًا — الجمهور ممتاز، لا تغيّر شيئًا في المجموعة",
+        action: "الجمهور ممتاز — متلمسش الـ ad set خالص. الكريتف هو المتعب. حط variation جديدة في نفس الـ ad set وانتظر 3 لـ 5 أيام: لو الأداء رجع كان إنهاك، لو فضل ضعيف المشكلة هيكلية.",
       };
     }
   }
@@ -394,7 +394,7 @@ function fatigueSignals(ad: NormalizedObject, baselines: Baselines): Fired | nul
         verdict: "watch",
         rule: "F2",
         reason: `سعر ظهور هذا الإعلان يرتفع (${money(cpmRecent)}) عن متوسط حسابك (${money(baselines.cpmAvg14)}) — فيسبوك لم يعد يفضّل هذا التصميم`,
-        action: "جهّز تصميمًا بديلًا وأدخله بجانبه",
+        action: "الخوارزمية بتعاقب الكريتف ده تحديدًا في المزاد — بتعتبره تجربة مستخدم ضعيفة. حط كريتف جديد جنبه في نفس الـ ad set كتشخيص: لو الجديد اشتغل كان المشكلة في الكريتف مش في الجمهور.",
       };
     }
   }
