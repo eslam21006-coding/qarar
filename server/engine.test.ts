@@ -429,14 +429,14 @@ describe("SOP-specific creative action copy (US7 / T036)", () => {
     const r = row("ad_flash");
     expect(r.rule).toBe("K4");
     expect(r.action_ar).toContain("ميزانية");
-    expect(r.action_ar).toContain("الجاي");
+    expect(r.action_ar).toContain("التالي");
   });
 
   it("F1: action_ar says audience healthy / don't touch ad set / 3–5 day test", () => {
     const r = row("ad_fatigue");
     expect(r.rule).toBe("F1");
-    expect(r.action_ar).toContain("جمهور");
-    expect(r.action_ar).toMatch(/\d|٣|٥/);
+    expect(r.action_ar).toContain("الجمهور");
+    expect(r.action_ar).toContain("المجموعة الإعلانية");
   });
 
   it("F2: action_ar explains auction penalty + fresh-creative diagnostic", () => {
@@ -455,7 +455,7 @@ describe("SOP-specific creative action copy (US7 / T036)", () => {
     const f2Result = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
     const r = f2Result.rows.find(x => x.id === "ad_fatigue")!;
     expect(r.rule).toBe("F2");
-    expect(r.action_ar).toMatch(/مزاد|فيسبوك|سعر|ظهور/);
-    expect(r.action_ar).toMatch(/تصميم|كونسبت|جديد|اختبار/);
+    expect(r.action_ar).toContain("المزاد");
+    expect(r.action_ar).toContain("تصميمًا جديدًا");
   });
 });
