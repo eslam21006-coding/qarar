@@ -108,6 +108,23 @@ describe("runEngine — demo snapshot verdicts (hand-computed)", () => {
     expect(r.promotion_eligible).toBe(true);
   });
 
+  it("S1 (US8 / T038): promotion_eligible is true and promotion_note mentions Post ID copy, test→scale move, and social proof / CPM rationale; a non-S1 ad has neither", () => {
+    const s1Row = row("ad_s1");
+    expect(s1Row.promotion_eligible).toBe(true);
+    expect(s1Row.promotion_note).not.toBeNull();
+    expect(s1Row.promotion_note!).toContain("Post ID");
+    expect(s1Row.promotion_note!).toContain("الاختبار");
+    expect(s1Row.promotion_note!).toContain("التوسيع");
+    // social proof / CPM rationale — copy mentions "CPM" and engagement transfer
+    expect(s1Row.promotion_note!).toMatch(/CPM|لايكات|كومنتات|تفاعل/);
+
+    // A non-S1 ad has neither field populated
+    const nonS1 = result.rows.find(
+      x => x.rule !== "S1" && x.promotion_eligible
+    );
+    expect(nonS1).toBeUndefined();
+  });
+
   it("F1: previously-winning ad, CTR peak 2.3 → 1.45 (-37%) with stable CPM → fatigue watch", () => {
     const r = row("ad_fatigue");
     expect(r.verdict).toBe("watch");

@@ -341,7 +341,9 @@ function decayMap(ad: NormalizedObject, baselines: Baselines): Fired | null {
       reason: `أداؤه ثابت أو يتحسن منذ 3 أيام${beatsMedian ? " والناس تضغط عليه أكثر من المعتاد" : ""} — إعلان قوي`,
       action: "مرشح للتوسيع — جهّز نسخه لجمهور أوسع بعد أن يثبت 3 أيام تحت الهدف",
       promotionEligible: beatsMedian,
-      promotionNote: beatsMedian ? "🔁 مرشح للتوسيع — ثابت منذ 3 أيام وتفاعله فوق المعتاد" : null,
+      promotionNote: beatsMedian
+        ? "انسخ الإعلان ده بالـ Post ID عشان اللايكات والكومنتات تنتقل معاه وتخفض الـ CPM. انقله من حملة الاختبار لحملة التوسيع. انسخ الـ Post ID مش الإعلان نفسه — الـ Post ID بيشيل معاه كل التفاعل المتراكم."
+        : null,
     };
   }
   // between 30% and 50% — middle zone: watch
@@ -524,7 +526,7 @@ function continueRules(
       reason: `حقق هدفك (تكلفة ${money(cpa!)}) ثلاثة أيام متتالية والناس تتفاعل معه أكثر من المعتاد (${ctrLink.toFixed(2)}%)`,
       action: "جاهز للتوسيع — انسخه لمرحلة أعلى مع الحفاظ على تفاعلاته (واترك الأصل يعمل)",
       promotionEligible: true,
-      promotionNote: "🔁 جاهز للتوسيع — نجاحه مُثبَت",
+      promotionNote: "انسخ الإعلان ده بالـ Post ID عشان اللايكات والكومنتات تنتقل معاه وتخفض الـ CPM. انقله من حملة الاختبار لحملة التوسيع. انسخ الـ Post ID مش الإعلان نفسه — الـ Post ID بيشيل معاه كل التفاعل المتراكم.",
     };
   }
 

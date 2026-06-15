@@ -222,6 +222,9 @@ export default function Dashboard() {
           onFocusObject={focusObject}
         />
 
+        {/* US8 — dedicated promotion list for S1-eligible ads */}
+        <PromotionList rows={rows} />
+
         {/* Decision table with drill-down */}
         <div ref={tableRef}>
           <DecisionTable
@@ -565,5 +568,45 @@ function FindingRow({ finding }: { finding: Finding }) {
         </Button>
       )}
     </div>
+  );
+}
+
+// ============================================================
+// US8 — dedicated promotion list for S1-eligible ads
+// ============================================================
+
+function PromotionList({ rows }: { rows: EngineRow[] }) {
+  const eligible = rows.filter(r => r.promotion_eligible && r.promotion_note);
+  if (eligible.length === 0) return null;
+  return (
+    <Card className="border-emerald-500/40 bg-gradient-to-b from-emerald-500/10 to-transparent">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-lg font-extrabold">
+          <span className="text-emerald-600">🚀</span>
+          <span>إعلانات جاهزة للتوسيع</span>
+          <span className="num text-xs font-normal text-muted-foreground">
+            PROMOTION LIST
+          </span>
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          إعلانات حققت هدفها 3 أيام متتالية وتفاعلها فوق المعتاد — انسخها
+          لحملة التوسيع مع Post ID عشان اللايكات والكومنتات تنتقل وتخفض الـ CPM
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {eligible.map(r => (
+          <div
+            key={r.id}
+            className="rounded-lg border border-emerald-500/30 bg-background/70 p-3"
+          >
+            <div className="mb-1 flex flex-wrap items-center gap-2">
+              <VerdictBadge verdict={r.verdict} rule={r.rule} />
+              <span className="truncate text-sm font-extrabold">{r.name}</span>
+            </div>
+            <p className="text-sm leading-relaxed">{r.promotion_note}</p>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
