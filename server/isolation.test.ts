@@ -20,6 +20,7 @@ const OPEN_B = `iso-test-b-${SUFFIX}`;
 let userAId = 0;
 let userBId = 0;
 let accountAId = 0;
+let accountBId = 0;
 
 /**
  * Isolation requires a real database. Skip cleanly where DATABASE_URL is absent
@@ -56,9 +57,14 @@ beforeAll(async () => {
   await d.insert(users).values({ openId: OPEN_B, name: "B" });
   userAId = (await db.getUserByOpenId(OPEN_A))!.id;
   userBId = (await db.getUserByOpenId(OPEN_B))!.id;
-  // User A owns a demo account with funnel settings
-  const acc = await db.ensureDemoAccount(userAId);
-  accountAId = acc.id;
+  // User A and User B each own their own demo account. The isolation tests
+  // verify that user B cannot see user A's data even when they know the
+  // objectId — the router enforces ownership via requireAccount, and the
+  // db functions filter by userId.
+  const accA = await db.ensureDemoAccount(userAId);
+  const accB = await db.ensureDemoAccount(userBId);
+  accountAId = accA.id;
+  accountBId = accB.id;
 });
 
 afterAll(async () => {
@@ -174,20 +180,30 @@ describe.skipIf(!hasDatabase)("verdictHistory (US12 / T049)", () => {
   }
 
   it("User B cannot read user A's verdictHistory rows", async () => {
-    // User A records a verdict
+    // User A records a verdict under their own account
     await db.recordVerdicts(userAId, accountAId, [
       makeRow({ id: "obj-iso", rule: "K1", verdict: "kill" }),
     ]);
-    // User B's getVerdictHistory for the same objectId returns nothing
+    // User B's getVerdictHistory for the same objectId scoped to A's
+    // account returns nothing (strict per-user isolation)
     const historyB = await db.getVerdictHistory(userBId, accountAId, "obj-iso");
     expect(historyB.length).toBe(0);
-    // The tRPC query also rejects / returns empty
+    // The tRPC query called from user B's session against user A's
+    // accountId rejects with NOT_FOUND (requireAccount ownership check)
     const callerB = appRouter.createCaller(ctxFor(userBId, OPEN_B));
-    const result = await callerB.history.getForObject({
-      adAccountId: accountAId,
+    await expect(
+      callerB.history.getForObject({
+        adAccountId: accountAId,
+        objectId: "obj-iso",
+      })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    // And from user B's own account, the same objectId returns no rows
+    // (user B never recorded any verdict for obj-iso)
+    const resultB = await callerB.history.getForObject({
+      adAccountId: accountBId,
       objectId: "obj-iso",
     });
-    expect(result.entries.length).toBe(0);
+    expect(resultB.entries.length).toBe(0);
   });
 
   it("recording the same verdict+rule twice inserts only one row", async () => {
@@ -212,6 +228,12 @@ describe.skipIf(!hasDatabase)("verdictHistory (US12 / T049)", () => {
     await db.recordVerdicts(userAId, accountAId, [
       makeRow({ id: obj, rule: "K1", verdict: "kill" }),
     ]);
+    // The two inserts can land in the same `evaluatedAt` second (MySQL
+    // CURRENT_TIMESTAMP has 1-second precision by default), so we add a
+    // small delay to make the timestamps strictly ordered. The `desc(id)`
+    // secondary sort below is the real deterministic guard for the
+    // test — both layers of defense.
+    await new Promise(r => setTimeout(r, 1100));
     await db.recordVerdicts(userAId, accountAId, [
       makeRow({ id: obj, rule: "S2", verdict: "continue" }),
     ]);
@@ -225,7 +247,7 @@ describe.skipIf(!hasDatabase)("verdictHistory (US12 / T049)", () => {
           eq(verdictHistory.objectId, obj)
         )
       )
-      .orderBy(desc(verdictHistory.evaluatedAt));
+      .orderBy(desc(verdictHistory.evaluatedAt), desc(verdictHistory.id));
     expect(rows.length).toBe(2);
     expect(rows[0]!.rule).toBe("S2");
     expect(rows[0]!.verdict).toBe("continue");
