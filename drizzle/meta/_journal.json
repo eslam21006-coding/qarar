@@ -22,6 +22,13 @@
       "when": 1781283386153,
       "tag": "0002_special_speedball",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1781547396467,
+      "tag": "0003_natural_speedball",
+      "breakpoints": true
     }
   ]
 }
