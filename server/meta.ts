@@ -172,6 +172,7 @@ export async function setDailyBudget(
     e.isAuthError = err.code === 190 || err.type === "OAuthException";
     e.needsPermission = err.code === 200 || err.code === 10;
     e.belowMinimum = err.code === 4 || err.error_subcode === 1885994;
+    e.isRateLimit = err.code === 17 || err.code === 4 || err.code === 32 || err.error_subcode === 2443279;
     throw e;
   }
 }

@@ -48,7 +48,7 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 // ---------- series payload from dashboard.get ----------
@@ -368,10 +368,10 @@ export function DecisionTable({
   };
 
   // effective-status-aware status resolver for filters
-  const getStatus = (r: EngineRow) => {
+  const getStatus = useCallback((r: EngineRow) => {
     const s = seriesMap.get(r.id);
     return (s?.effectiveStatus ?? s?.status ?? r.status) === "ACTIVE" ? "ACTIVE" : "PAUSED";
-  };
+  }, [seriesMap]);
 
   // Distinct objectives present in the rows → dropdown options for the objective
   // filter (US5 / Gate 3-III), so users select instead of typing. Meta's own enum

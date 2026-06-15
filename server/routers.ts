@@ -413,19 +413,32 @@ export const appRouter = router({
         if (obj.dailyBudget === null) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "NO_DAILY_BUDGET" });
         }
+        // Normalize the requested budget to 2-decimal units (Meta's minor units
+        // are cents; we accept dollars-in from the client and convert).
+        const normalized = Math.round(input.newBudget * 100) / 100;
+        const currentMinor = Math.round(obj.dailyBudget * 100);
+        const nextMinor = Math.round(normalized * 100);
         // Meta's per-object daily-budget floor: $1 = 100 minor units.
-        if (Math.round(input.newBudget * 100) < 100) {
+        if (nextMinor < 100) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "BUDGET_BELOW_MINIMUM" });
+        }
+        // Server-side ±20% guard: this endpoint is for ±20% nudges only.
+        // Larger jumps must go through a different (future) workflow.
+        if (nextMinor > currentMinor * 1.2 || nextMinor < currentMinor * 0.8) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "BUDGET_DELTA_OUT_OF_RANGE",
+          });
         }
         if (account.isDemo) {
           // simulate in the cached demo snapshot
-          obj.dailyBudget = input.newBudget;
+          obj.dailyBudget = normalized;
           await db.saveSnapshot(ctx.user.id, account.id, payload!);
-          return { success: true, simulated: true, newBudget: input.newBudget };
+          return { success: true, simulated: true, newBudget: normalized };
         }
         const token = await getUserToken(ctx.user.id);
         try {
-          await setDailyBudget(token, input.objectId, Math.round(input.newBudget * 100));
+          await setDailyBudget(token, input.objectId, nextMinor);
         } catch (e: any) {
           if (e.isAuthError) {
             await db.markConnectionStatus(ctx.user.id, "expired");
@@ -437,12 +450,15 @@ export const appRouter = router({
           if (e.belowMinimum) {
             throw new TRPCError({ code: "BAD_REQUEST", message: "BUDGET_BELOW_MINIMUM" });
           }
+          if (e.isRateLimit) {
+            throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "RATE_LIMITED" });
+          }
           throw new TRPCError({ code: "BAD_GATEWAY", message: e.message });
         }
         // reflect the change in the cached snapshot immediately
-        obj.dailyBudget = input.newBudget;
+        obj.dailyBudget = normalized;
         await db.saveSnapshot(ctx.user.id, account.id, payload!);
-        return { success: true, simulated: false, newBudget: input.newBudget };
+        return { success: true, simulated: false, newBudget: normalized };
       }),
   }),
 });

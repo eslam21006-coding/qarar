@@ -151,14 +151,16 @@ describe("control.setBudget (US13 / T041)", () => {
     mockSnap = makeSnap();
     const caller = appRouter.createCaller(ctxFor());
 
+    // The endpoint enforces ±20% server-side. From a base of $45/day,
+    // +20% rounds to $54.
     const result = await caller.control.setBudget({
       adAccountId: 100,
       objectId: "as_with_budget",
-      newBudget: 100, // $100/day
+      newBudget: 54, // $45 × 1.2 = $54
     });
 
-    expect(result).toMatchObject({ success: true });
-    expect(mockSnap.objects.find(o => o.id === "as_with_budget")!.dailyBudget).toBe(100);
+    expect(result).toMatchObject({ success: true, newBudget: 54 });
+    expect(mockSnap.objects.find(o => o.id === "as_with_budget")!.dailyBudget).toBe(54);
   });
 
   it("rejects an object with no daily_budget with BAD_REQUEST", async () => {
