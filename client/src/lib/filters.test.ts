@@ -185,4 +185,35 @@ describe("applyFilters — US5 predicate", () => {
     const result = applyFilters(rows, filters, "AND", aggs);
     expect(result.map(r => r.id)).toEqual(["a", "b"]);
   });
+
+  it("between with missing value2 returns no rows", () => {
+    const rows = [makeRow({ id: "a" }), makeRow({ id: "b" })];
+    const aggs = new Map<string, FilterAgg | null>([
+      ["a", makeAgg({ cpa: 50 })],
+      ["b", makeAgg({ cpa: 60 })],
+    ]);
+    // value2 omitted → incomplete range must match nothing, not silently default to 0
+    const filters: FilterRule[] = [
+      { id: "f1", field: "cpa", op: "between", value: "40" },
+    ];
+
+    const result = applyFilters(rows, filters, "AND", aggs);
+    expect(result).toHaveLength(0);
+  });
+
+  it("between with reversed bounds (80 → 40) still matches value 60", () => {
+    const rows = [makeRow({ id: "a" }), makeRow({ id: "b" }), makeRow({ id: "c" })];
+    const aggs = new Map<string, FilterAgg | null>([
+      ["a", makeAgg({ cpa: 30 })],
+      ["b", makeAgg({ cpa: 60 })],
+      ["c", makeAgg({ cpa: 90 })],
+    ]);
+    // bounds entered high→low; Math.min/Math.max normalizes to [40, 80]
+    const filters: FilterRule[] = [
+      { id: "f1", field: "cpa", op: "between", value: "80", value2: "40" },
+    ];
+
+    const result = applyFilters(rows, filters, "AND", aggs);
+    expect(result.map(r => r.id)).toEqual(["b"]);
+  });
 });
