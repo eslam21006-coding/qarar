@@ -81,14 +81,15 @@ describe("aggregateTotals — US6", () => {
     expect(result.lpRate).toBeCloseTo(73.33, 1);
   });
 
-  it("lpRate is non-null for the render path when linkClicks and lpViews are both non-zero", () => {
+  it("lpRate is a real 0 (not null/dash) when linkClicks > 0 but lpViews is 0", () => {
+    // Boundary distinct from the zero-denominator case: a real denominator with
+    // a zero numerator is a genuine 0%, not a missing value.
     const aggs = new Map<string, FilterAgg | null>([
-      ["a", agg({ linkClicks: 100, lpViews: 80 })],
+      ["a", agg({ linkClicks: 100, lpViews: 0 })],
     ]);
 
     const result = aggregateTotals(["a"], aggs);
 
-    expect(result.lpRate).not.toBeNull();
-    expect(result.lpRate!).toBeGreaterThan(0);
+    expect(result.lpRate).toBe(0);
   });
 });
