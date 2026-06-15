@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { deriveTargets, runEngine } from "./engine";
 import { buildDemoSnapshot, DEMO_FUNNEL } from "./demo";
-import { FunnelInputs } from "../shared/qarar";
+import { FunnelInputs, type AccountSnapshotPayload } from "../shared/qarar";
 
 const baseFunnel: FunnelInputs = {
   archetype: "paid_lto",
@@ -474,5 +474,53 @@ describe("SOP-specific creative action copy (US7 / T036)", () => {
     expect(r.rule).toBe("F2");
     expect(r.action_ar).toContain("المزاد");
     expect(r.action_ar).toContain("تصميمًا جديدًا");
+  });
+});
+
+describe("cadence indicator (US9 / T055)", () => {
+  function snapWithAdAge(daysAgo: number | null): AccountSnapshotPayload {
+    const snap = buildDemoSnapshot();
+    if (daysAgo === null) {
+      // Strip createdTime from every ad
+      for (const obj of snap.objects) {
+        if (obj.level === "ad") obj.createdTime = null;
+      }
+    } else {
+      // Set every ad's createdTime to N days ago
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - daysAgo);
+      const iso = d.toISOString();
+      for (const obj of snap.objects) {
+        if (obj.level === "ad") obj.createdTime = iso;
+      }
+    }
+    return snap;
+  }
+
+  it("last ad created 16 days ago → state 'stall'", () => {
+    const result = runEngine(snapWithAdAge(16), DEMO_FUNNEL as FunnelInputs);
+    expect(result.summary.cadence).not.toBeNull();
+    expect(result.summary.cadence!.state).toBe("stall");
+    expect(result.summary.cadence!.daysSinceLast).toBe(16);
+    expect(result.summary.cadence!.message_ar).toContain("16");
+  });
+
+  it("last ad created 9 days ago → state 'reminder'", () => {
+    const result = runEngine(snapWithAdAge(9), DEMO_FUNNEL as FunnelInputs);
+    expect(result.summary.cadence).not.toBeNull();
+    expect(result.summary.cadence!.state).toBe("reminder");
+    expect(result.summary.cadence!.daysSinceLast).toBe(9);
+  });
+
+  it("last ad created 3 days ago → state 'ok' (cadence is null)", () => {
+    const result = runEngine(snapWithAdAge(3), DEMO_FUNNEL as FunnelInputs);
+    expect(result.summary.cadence).toBeNull();
+  });
+
+  it("no ad has a createdTime (null) → state 'unknown'", () => {
+    const result = runEngine(snapWithAdAge(null), DEMO_FUNNEL as FunnelInputs);
+    expect(result.summary.cadence).not.toBeNull();
+    expect(result.summary.cadence!.state).toBe("unknown");
+    expect(result.summary.cadence!.daysSinceLast).toBeNull();
   });
 });

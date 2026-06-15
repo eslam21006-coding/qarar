@@ -930,6 +930,45 @@ export function runEngine(
   return { rows, summary, targets };
 }
 
+function computeCadence(snapshot: AccountSnapshotPayload): AccountSummary["cadence"] {
+  // Find the most recent createdTime across every ad. We treat any
+  // createdTime string as comparable; missing/null values are ignored.
+  let mostRecent: number | null = null;
+  for (const obj of snapshot.objects) {
+    if (obj.level !== "ad") continue;
+    if (!obj.createdTime) continue;
+    const t = Date.parse(obj.createdTime);
+    if (Number.isNaN(t)) continue;
+    if (mostRecent === null || t > mostRecent) mostRecent = t;
+  }
+  if (mostRecent === null) {
+    return {
+      state: "unknown",
+      daysSinceLast: null,
+      message_ar: "مش عارف آخر إعلان امتى — تأكد من تواريخ الإنشاء.",
+    };
+  }
+  const daysSinceLast = Math.max(
+    0,
+    Math.floor((Date.now() - mostRecent) / (1000 * 60 * 60 * 24))
+  );
+  if (daysSinceLast > 14) {
+    return {
+      state: "stall",
+      daysSinceLast,
+      message_ar: `المصنع واقف — آخر إعلان جديد قبل ${daysSinceLast} يوم. الحد الأدنى 5 لـ 10 مفاهيم كل أسبوعين وإلا الحساب يتزعزع.`,
+    };
+  }
+  if (daysSinceLast > 7) {
+    return {
+      state: "reminder",
+      daysSinceLast,
+      message_ar: `مرّ ${daysSinceLast} يوم من غير إعلان جديد — ابدأ تجهّز المفاهيم الجايّة.`,
+    };
+  }
+  return null; // ok
+}
+
 function weeklyConversions(o: NormalizedObject): number {
   if (o.daily7.length === 0) return o.w3d.conversions * 2.33;
   return o.daily7.reduce((s, d) => s + d.conversions, 0);
@@ -1085,5 +1124,10 @@ function buildSummary(
             ),
           }
         : null,
+    // US9 / T056 — creative-factory cadence. Find the most recent
+    // createdTime across every ad in the snapshot. If none, state is
+    // "unknown". Otherwise bucket by days since last new ad: stall
+    // (>14), reminder (>7), ok (≤7 → null).
+    cadence: computeCadence(snapshot),
   };
 }

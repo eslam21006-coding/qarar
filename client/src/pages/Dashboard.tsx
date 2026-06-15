@@ -176,6 +176,40 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* US9 / T057 — creative-factory cadence indicator (account-level signal,
+          clearly separated from any verdict). */}
+      {summary.cadence && (
+        <div
+          className={`border-b py-2 text-xs ${
+            summary.cadence.state === "stall"
+              ? "border-v-kill/40 bg-v-kill/10 text-v-kill"
+              : summary.cadence.state === "reminder"
+              ? "border-v-watch/30 bg-v-watch/10 text-amber-700"
+              : "border-border/40 bg-muted/20 text-muted-foreground"
+          }`}
+          data-testid="cadence_indicator"
+          data-cadence-state={summary.cadence.state}
+        >
+          <div className="container flex items-center gap-2">
+            <span className="text-base leading-none" aria-hidden>
+              {summary.cadence.state === "stall"
+                ? "🛑"
+                : summary.cadence.state === "reminder"
+                ? "⏰"
+                : "❔"}
+            </span>
+            <span className="font-bold">
+              {summary.cadence.state === "stall"
+                ? "المصنع واقف"
+                : summary.cadence.state === "reminder"
+                ? "تذكير"
+                : "غير معروف"}
+            </span>
+            <span>{summary.cadence.message_ar}</span>
+          </div>
+        </div>
+      )}
+
       {settingsReviewDue && (
         <div className="border-b border-primary/20 bg-primary/5">
           <div className="container flex items-center justify-between gap-2 py-2 text-xs">

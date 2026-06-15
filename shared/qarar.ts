@@ -287,6 +287,12 @@ export interface TopAction {
   impactValue: number;
 }
 
+export interface Cadence {
+  state: "stall" | "reminder" | "ok" | "unknown";
+  daysSinceLast: number | null;
+  message_ar: string;
+}
+
 export interface AccountSummary {
   total_spend_3d: number;
   total_spend_today: number;
@@ -303,6 +309,12 @@ export interface AccountSummary {
     cpmAvg14: number;
     deltaPct: number;
   } | null;
+  /**
+   * US9 — creative-factory cadence. Null when state is "ok" (≤7 days since
+   * the most recent ad was created). Otherwise carries the state, days since
+   * last new ad, and a simple-Arabic message for the account-level signal.
+   */
+  cadence: Cadence | null;
 }
 
 export interface EngineResult {
