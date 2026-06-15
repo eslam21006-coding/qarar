@@ -118,11 +118,18 @@ export function applyFilters(
         const val = getNumericValue(f.field, row, aggs.get(row.id));
         if (val === null) return false;
         const v = parseFloat(f.value);
+        if (Number.isNaN(v)) return false;
         if (f.op === ">=") return val >= v;
         if (f.op === "<=") return val <= v;
         if (f.op === "between") {
-          const v2 = parseFloat(f.value2 ?? "0");
-          return val >= v && val <= v2;
+          // between requires BOTH bounds; a missing or non-numeric value2
+          // would otherwise silently default to 0 and mis-evaluate
+          if (f.value2 === undefined || f.value2 === "") return false;
+          const v2 = parseFloat(f.value2);
+          if (Number.isNaN(v2)) return false;
+          const lo = Math.min(v, v2);
+          const hi = Math.max(v, v2);
+          return val >= lo && val <= hi;
         }
         return true;
       }

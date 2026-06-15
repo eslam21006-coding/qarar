@@ -48,7 +48,7 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 // ---------- series payload from dashboard.get ----------
@@ -329,15 +329,19 @@ export function DecisionTable({
   });
 
   // US13 — setBudget mutation (mirrors setStatus pattern)
+  // Captures the row name in a ref at mutate() time so the success/error
+  // toasts don't depend on `budgetRow` (which is cleared the moment the
+  // user confirms).
+  const lastBudgetRowName = useRef<string>("");
   const setBudgetMut = trpc.control.setBudget.useMutation({
     onSuccess: (res, vars) => {
       utils.dashboard.get.invalidate({ adAccountId: accountId });
       toast.success(
-        `تم تعديل ميزانية "${budgetRow?.row.name ?? ""}" إلى ${money(vars.newBudget)}/يوم ${res.simulated ? "(محاكاة تجريبية)" : "في ميتا ✓"}`
+        `تم تعديل ميزانية "${lastBudgetRowName.current}" إلى ${money(vars.newBudget)}/يوم ${res.simulated ? "(محاكاة تجريبية)" : "في ميتا ✓"}`
       );
-      setBudgetRow(null);
     },
     onError: e => {
+      const rowName = lastBudgetRowName.current;
       if (e.message === "RECONNECT_REQUIRED") {
         toast.error("انتهت صلاحية الاتصال — أعد توصيل حساب ميتا");
       } else if (e.message === "NEEDS_RECONNECT_PERMISSION") {
@@ -345,11 +349,10 @@ export function DecisionTable({
       } else if (e.message === "BUDGET_BELOW_MINIMUM") {
         toast.error("الميزانية أقل من الحد الأدنى المسموح به في ميتا (1$/يوم)");
       } else if (e.message === "NO_DAILY_BUDGET") {
-        toast.error("هذا العنصر لا يحمل ميزانية يومية مباشرة");
+        toast.error(`هذا العنصر (${rowName}) لا يحمل ميزانية يومية مباشرة`);
       } else {
         toast.error(`فشل تعديل الميزانية: ${e.message}`);
       }
-      setBudgetRow(null);
     },
   });
 
@@ -1111,8 +1114,9 @@ export function DecisionTable({
                       {isDemo && " (في الوضع التجريبي هذه محاكاة فقط)"}
                     </p>
                     <p>
-                      زيادة 20% كل 48 إلى 72 ساعة تحافظ على مرحلة تعلّم الخوارزمية
-                      ولا تكسرها. القفزات الكبيرة ترفع التكلفة.
+                      {budgetRow.direction === 1
+                        ? "زيادة 20% كل 48 إلى 72 ساعة تحافظ على مرحلة تعلّم الخوارزمية ولا تكسرها. القفزات الكبيرة ترفع التكلفة."
+                        : "خفض 20% يحافظ على مرحلة تعلّم الخوارزمية ويساعد على إعادة الضبط. التخفيض الأكبر من 20% يضر بأداء الإعلان قبل أن يستفيد منه."}
                     </p>
                   </>
                 );
@@ -1129,6 +1133,8 @@ export function DecisionTable({
                 const next = budgetRow.direction === 1
                   ? Math.round(current * 1.2)
                   : Math.round(current * 0.8);
+                // capture the name before the dialog state is cleared
+                lastBudgetRowName.current = budgetRow.row.name;
                 setBudgetMut.mutate({
                   adAccountId: accountId,
                   objectId: budgetRow.row.id,

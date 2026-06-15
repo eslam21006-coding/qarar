@@ -1034,13 +1034,15 @@ function buildSummary(
   }
   const top3 = actions.slice(0, 3).map((a, i) => ({ ...a, rank: i + 1 }));
 
-  // Account-level funnel CTA: only a genuine page-CVR (step 5) finding or a
-  // campaign W5 counts as funnel evidence. The step-6 fallback fires for ANY
-  // clean kill/watch row (including delivery-timing rules like CB1/CB2/W2), so
-  // it must NOT trigger the account funnel CTA — that would be a false alarm.
-  const hasFunnelFinding = rows.some(
-    r => r.findings.some(f => f.step === 5)
-  );
+  // Account-level funnel CTA: only count a step-5 finding as funnel evidence
+  // when the row has NO earlier 1–4 finding (otherwise the "ads are good"
+  // headline contradicts the per-row verdict). Campaign W5 still counts.
+  const hasFunnelFinding = rows.some(r => {
+    const step5 = r.findings.find(f => f.step === 5);
+    if (!step5) return false;
+    const hasEarlierIssue = r.findings.some(f => f.step >= 1 && f.step <= 4);
+    return !hasEarlierIssue;
+  });
   const hasW5 = rows.some(r => r.rule === "W5");
   const account_funnel_cta =
     hasFunnelFinding || hasW5
