@@ -421,7 +421,7 @@ describe("SOP-specific creative action copy (US7 / T036)", () => {
   it("K3: action_ar mentions new CONCEPT and discovery-call routing", () => {
     const r = row("ad_k3");
     expect(r.rule).toBe("K3");
-    expect(r.action_ar).toContain("كونسبت");
+    expect(r.action_ar).toContain("المفهوم");
     expect(r.action_ar).toContain("مكالمة");
   });
 
@@ -429,7 +429,7 @@ describe("SOP-specific creative action copy (US7 / T036)", () => {
     const r = row("ad_flash");
     expect(r.rule).toBe("K4");
     expect(r.action_ar).toContain("ميزانية");
-    expect(r.action_ar.toLowerCase()).toMatch(/تاني|جديد|تالى|قادم/);
+    expect(r.action_ar).toContain("الجاي");
   });
 
   it("F1: action_ar says audience healthy / don't touch ad set / 3–5 day test", () => {
