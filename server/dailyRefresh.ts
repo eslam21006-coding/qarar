@@ -265,7 +265,7 @@ export async function runDailyRefresh(): Promise<{ processed: number; notified: 
           await notifyOwner({
             title: "انتهت صلاحية الاتصال — يلزم إعادة التوصيل",
             content:
-              "فشل التحديث اليومي لأن توكن ميتا انتهت صلاحيته. أعد توصيل الحساب من صفحة الإعدادات.",
+              "فشل التحديث اليومي لأن صلاحية الاتصال بحساب ميتا قد انتهت. أعد توصيل الحساب من صفحة الإعدادات.",
           });
         } catch {
           // best effort — continue with the next account
