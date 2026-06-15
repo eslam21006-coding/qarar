@@ -152,3 +152,28 @@ export const actionChecks = mysqlTable("actionChecks", {
 });
 
 export type ActionCheck = typeof actionChecks.$inferSelect;
+
+/**
+ * US12 — verdict history log. Transitions-only: a new row is inserted only
+ * when an object's verdict OR rule changes from the last logged row.
+ * Strictly per-user: every query filters by userId (constitution IV).
+ * The composite index (userId, adAccountId, objectId, evaluatedAt) is added
+ * via the Drizzle migration (db:push) — Drizzle's MySQL builder does not
+ * expose index() on the table-builder callback in this version.
+ */
+export const verdictHistory = mysqlTable("verdictHistory", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  adAccountId: int("adAccountId").notNull(),
+  objectId: varchar("objectId", { length: 64 }).notNull(),
+  objectName: text("objectName"),
+  level: mysqlEnum("level", ["campaign", "adset", "ad"]).notNull(),
+  verdict: varchar("verdict", { length: 16 }).notNull(),
+  rule: varchar("rule", { length: 8 }).notNull(),
+  cpa: double("cpa"),
+  spend3d: double("spend3d"),
+  ctrLink: double("ctrLink"),
+  evaluatedAt: timestamp("evaluatedAt").defaultNow().notNull(),
+});
+
+export type VerdictHistory = typeof verdictHistory.$inferSelect;

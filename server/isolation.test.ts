@@ -1,10 +1,11 @@
 import "dotenv/config";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
-import { adAccounts, funnelSettings, users } from "../drizzle/schema";
+import { and, desc, eq } from "drizzle-orm";
+import { adAccounts, funnelSettings, users, verdictHistory } from "../drizzle/schema";
 import * as db from "./db";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
+import type { EngineRow } from "../shared/qarar";
 
 /**
  * Hard requirement: strict per-user data isolation.
@@ -136,5 +137,98 @@ describe.skipIf(!hasDatabase)("cross-user data isolation", () => {
       .from(adAccounts)
       .where(eq(adAccounts.userId, userAId));
     expect(rowsA.length).toBeGreaterThan(0);
+  });
+});
+
+describe.skipIf(!hasDatabase)("verdictHistory (US12 / T049)", () => {
+  function makeRow(overrides: Partial<EngineRow> = {}): EngineRow {
+    return {
+      id: "obj-1",
+      name: "Test Object",
+      status: "ACTIVE",
+      level: "ad",
+      parentId: null,
+      campaignId: "c1",
+      daily_budget: null,
+      objective: null,
+      spend_3d: 100,
+      spend_today: 30,
+      impressions_3d: 5000,
+      cpa_3d: 43,
+      ctr_link: 1.5,
+      ctr_all: 2.0,
+      conversions_3d: 2,
+      frequency_3d: 1.5,
+      spend_share_pct: null,
+      age_days: 10,
+      verdict: "kill",
+      rule: "K1",
+      reason_ar: "reason",
+      action_ar: "action",
+      findings: [],
+      promotion_eligible: false,
+      promotion_note: null,
+      learning_phase: false,
+      ...overrides,
+    };
+  }
+
+  it("User B cannot read user A's verdictHistory rows", async () => {
+    // User A records a verdict
+    await db.recordVerdicts(userAId, accountAId, [
+      makeRow({ id: "obj-iso", rule: "K1", verdict: "kill" }),
+    ]);
+    // User B's getVerdictHistory for the same objectId returns nothing
+    const historyB = await db.getVerdictHistory(userBId, accountAId, "obj-iso");
+    expect(historyB.length).toBe(0);
+    // The tRPC query also rejects / returns empty
+    const callerB = appRouter.createCaller(ctxFor(userBId, OPEN_B));
+    const result = await callerB.history.getForObject({
+      adAccountId: accountAId,
+      objectId: "obj-iso",
+    });
+    expect(result.entries.length).toBe(0);
+  });
+
+  it("recording the same verdict+rule twice inserts only one row", async () => {
+    const obj = makeRow({ id: "obj-dup", rule: "K1", verdict: "kill" });
+    await db.recordVerdicts(userAId, accountAId, [obj]);
+    await db.recordVerdicts(userAId, accountAId, [obj]);
+    const d = await db.getDb();
+    const rows = await d!
+      .select()
+      .from(verdictHistory)
+      .where(
+        and(
+          eq(verdictHistory.userId, userAId),
+          eq(verdictHistory.objectId, "obj-dup")
+        )
+      );
+    expect(rows.length).toBe(1);
+  });
+
+  it("recording a changed verdict inserts exactly one new row", async () => {
+    const obj = "obj-change";
+    await db.recordVerdicts(userAId, accountAId, [
+      makeRow({ id: obj, rule: "K1", verdict: "kill" }),
+    ]);
+    await db.recordVerdicts(userAId, accountAId, [
+      makeRow({ id: obj, rule: "S2", verdict: "continue" }),
+    ]);
+    const d = await db.getDb();
+    const rows = await d!
+      .select()
+      .from(verdictHistory)
+      .where(
+        and(
+          eq(verdictHistory.userId, userAId),
+          eq(verdictHistory.objectId, obj)
+        )
+      )
+      .orderBy(desc(verdictHistory.evaluatedAt));
+    expect(rows.length).toBe(2);
+    expect(rows[0]!.rule).toBe("S2");
+    expect(rows[0]!.verdict).toBe("continue");
+    expect(rows[1]!.rule).toBe("K1");
   });
 });

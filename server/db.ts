@@ -8,6 +8,7 @@ import {
   funnelSettings,
   snapshots,
   actionChecks,
+  verdictHistory,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
@@ -401,4 +402,113 @@ export async function setCheck(
   } else {
     await db.insert(actionChecks).values({ userId, adAccountId, actionKey, day, done });
   }
+}
+
+// ============================================================
+// US12 — Verdict history (transitions-only log)
+// ============================================================
+
+/**
+ * US12 / T051 — record verdict transitions. For each row, look up the most
+ * recent verdictHistory entry for that (userId, adAccountId, objectId) and
+ * insert a new row ONLY if the (verdict, rule) pair differs. This keeps the
+ * timeline meaningful and storage small (constitution IV: transitions-only).
+ *
+ * Never writes a "paused" verdict — the five-verdict set is the only valid set.
+ * All queries are strictly scoped by userId.
+ */
+export async function recordVerdicts(
+  userId: number,
+  adAccountId: number,
+  rows: Array<{
+    id: string;
+    name: string | null;
+    level: "campaign" | "adset" | "ad";
+    verdict: string;
+    rule: string;
+    cpa_3d: number | null;
+    spend_3d: number | null;
+    ctr_link: number | null;
+  }>
+): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  for (const r of rows) {
+    // Read the most recent entry for this object, scoped by userId
+    const last = await db
+      .select()
+      .from(verdictHistory)
+      .where(
+        and(
+          eq(verdictHistory.userId, userId),
+          eq(verdictHistory.adAccountId, adAccountId),
+          eq(verdictHistory.objectId, r.id)
+        )
+      )
+      .orderBy(desc(verdictHistory.evaluatedAt))
+      .limit(1);
+    const lastRow = last[0];
+    if (
+      lastRow &&
+      lastRow.verdict === r.verdict &&
+      lastRow.rule === r.rule
+    ) {
+      continue; // no change — do not insert
+    }
+    await db.insert(verdictHistory).values({
+      userId,
+      adAccountId,
+      objectId: r.id,
+      objectName: r.name,
+      level: r.level,
+      verdict: r.verdict,
+      rule: r.rule,
+      cpa: r.cpa_3d,
+      spend3d: r.spend_3d,
+      ctrLink: r.ctr_link,
+    });
+  }
+}
+
+/**
+ * US12 / T051 — read the verdict timeline for one object. Returns rows ordered
+ * by evaluatedAt ASC (oldest first) per the contract. Strictly per-user.
+ */
+export async function getVerdictHistory(
+  userId: number,
+  adAccountId: number,
+  objectId: string
+): Promise<Array<{
+  verdict: string;
+  rule: string;
+  objectName: string | null;
+  level: "campaign" | "adset" | "ad";
+  cpa: number | null;
+  spend3d: number | null;
+  ctrLink: number | null;
+  evaluatedAt: Date;
+}>> {
+  const database = await getDb();
+  if (!database) return [];
+  const rows = await database
+    .select()
+    .from(verdictHistory)
+    .where(
+      and(
+        eq(verdictHistory.userId, userId),
+        eq(verdictHistory.adAccountId, adAccountId),
+        eq(verdictHistory.objectId, objectId)
+      )
+    )
+    .orderBy(verdictHistory.evaluatedAt);
+  return rows.map(r => ({
+    verdict: r.verdict,
+    rule: r.rule,
+    objectName: r.objectName,
+    level: r.level as "campaign" | "adset" | "ad",
+    cpa: r.cpa,
+    spend3d: r.spend3d,
+    ctrLink: r.ctrLink,
+    evaluatedAt: r.evaluatedAt,
+  }));
 }

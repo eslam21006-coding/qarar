@@ -293,8 +293,10 @@ export const appRouter = router({
       .input(z.object({ adAccountId: z.number() }))
       .mutation(async ({ ctx, input }) => {
         const account = await requireAccount(ctx.user.id, input.adAccountId);
+        let savedPayload: AccountSnapshotPayload | null = null;
         if (account.isDemo) {
-          await db.saveSnapshot(ctx.user.id, account.id, buildDemoSnapshot());
+          savedPayload = buildDemoSnapshot();
+          await db.saveSnapshot(ctx.user.id, account.id, savedPayload);
           return { success: true };
         }
         const token = await getUserToken(ctx.user.id);
@@ -305,6 +307,7 @@ export const appRouter = router({
             account.currency ?? "USD"
           );
           await db.saveSnapshot(ctx.user.id, account.id, payload);
+          savedPayload = payload;
         } catch (e: any) {
           if (e.isAuthError) {
             await db.markConnectionStatus(ctx.user.id, "expired");
@@ -318,6 +321,35 @@ export const appRouter = router({
           }
           await db.saveSnapshot(ctx.user.id, account.id, null, "error", e.message);
           throw new TRPCError({ code: "BAD_GATEWAY", message: e.message });
+        }
+        // US12 / T052 — record verdict transitions. Best-effort; never block
+        // the refresh on a history write.
+        if (savedPayload) {
+          try {
+            const funnel = await db.getFunnel(ctx.user.id, account.id);
+            const funnelInputs: FunnelInputs = funnel
+              ? {
+                  archetype: funnel.archetype,
+                  liveComponent: funnel.liveComponent,
+                  offerDescription: funnel.offerDescription,
+                  ticketPrice: funnel.ticketPrice,
+                  aov: funnel.aov,
+                  htoPrice: funnel.htoPrice,
+                  htoConversionRate: funnel.htoConversionRate,
+                  frontEndRoas: funnel.frontEndRoas,
+                  dailyBudget: funnel.dailyBudget,
+                  marketCplBenchmark: funnel.marketCplBenchmark,
+                  htoUnderperforming: funnel.htoUnderperforming,
+                  arena: funnel.arena,
+                  bestInterest: funnel.bestInterest,
+                  geoTiers: (funnel.geoTiers as string[] | null) ?? null,
+                }
+              : DEMO_FUNNEL;
+            const result = runEngine(savedPayload, funnelInputs);
+            await db.recordVerdicts(ctx.user.id, account.id, result.rows);
+          } catch {
+            // best-effort — never block the refresh on a history write
+          }
         }
         return { success: true };
       }),
@@ -459,6 +491,40 @@ export const appRouter = router({
         obj.dailyBudget = normalized;
         await db.saveSnapshot(ctx.user.id, account.id, payload!);
         return { success: true, simulated: false, newBudget: normalized };
+      }),
+  }),
+
+  // US12 / T053 — verdict history (per-object timeline). Strictly per-user:
+  // every query filters by ctx.user.id from the session, never by a
+  // client-supplied userId.
+  history: router({
+    getForObject: protectedProcedure
+      .input(
+        z.object({
+          adAccountId: z.number(),
+          objectId: z.string().max(64),
+        })
+      )
+      .query(async ({ ctx, input }) => {
+        // Ownership check on the account — fails for other users' accounts.
+        await requireAccount(ctx.user.id, input.adAccountId);
+        const entries = await db.getVerdictHistory(
+          ctx.user.id,
+          input.adAccountId,
+          input.objectId
+        );
+        return {
+          entries: entries.map(e => ({
+            verdict: e.verdict as "kill" | "watch" | "continue" | "rescue" | "too_early",
+            rule: e.rule as "K1" | "K2" | "K3" | "K4" | "K5" | "K6" | "K7" | "CB1" | "CB2" | "F1" | "F2" | "W1" | "W2" | "W3" | "W4" | "W5" | "W6" | "S1" | "S2" | "S3" | "S4" | "GATE",
+            objectName: e.objectName,
+            level: e.level,
+            cpa: e.cpa,
+            spend3d: e.spend3d,
+            ctrLink: e.ctrLink,
+            evaluatedAt: e.evaluatedAt.toISOString(),
+          })),
+        };
       }),
   }),
 });

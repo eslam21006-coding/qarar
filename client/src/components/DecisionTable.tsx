@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { VerdictBadge } from "@/components/Verdict";
+import { VerdictHistoryDialog } from "@/components/VerdictHistoryDialog";
 import { cpaColorClass, ctrColorClass, money, num, pct } from "@/lib/format";
 import { applyFilters, FILTER_FIELDS, type FilterAgg, type FilterField, type FilterJoin, type FilterOp, type FilterRule } from "@/lib/filters";
 import { aggregateTotals } from "@/lib/aggregate";
@@ -40,6 +41,7 @@ import {
   Columns3,
   ExternalLink,
   Filter,
+  History,
   ImageOff,
   Loader2,
   Pause,
@@ -304,6 +306,8 @@ export function DecisionTable({
 
   // pause/resume
   const [confirmRow, setConfirmRow] = useState<EngineRow | null>(null);
+  // US12 / T054 — per-row verdict history dialog state
+  const [historyRow, setHistoryRow] = useState<EngineRow | null>(null);
   // ±20% budget adjust (US13)
   const [budgetRow, setBudgetRow] = useState<{ row: EngineRow; direction: 1 | -1 } | null>(null);
   const setStatus = trpc.control.setStatus.useMutation({
@@ -934,6 +938,18 @@ export function DecisionTable({
                                 <ExternalLink className="h-3 w-3" />
                               </a>
                             )}
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                setHistoryRow(r);
+                              }}
+                              title="سجل الحكم"
+                              aria-label="سجل الحكم"
+                              className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-primary"
+                            >
+                              <History className="h-3.5 w-3.5" />
+                            </button>
                           </div>
                           <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                             {paused && <span className="font-bold text-v-watch">موقوف</span>}
@@ -1148,6 +1164,17 @@ export function DecisionTable({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* US12 / T054 — verdict history dialog */}
+      {historyRow && (
+        <VerdictHistoryDialog
+          open={!!historyRow}
+          onOpenChange={open => !open && setHistoryRow(null)}
+          adAccountId={accountId}
+          objectId={historyRow.id}
+          objectName={historyRow.name}
+        />
+      )}
     </Card>
   );
 }
