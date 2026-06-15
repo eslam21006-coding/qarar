@@ -328,22 +328,7 @@ export const appRouter = router({
           try {
             const funnel = await db.getFunnel(ctx.user.id, account.id);
             const funnelInputs: FunnelInputs = funnel
-              ? {
-                  archetype: funnel.archetype,
-                  liveComponent: funnel.liveComponent,
-                  offerDescription: funnel.offerDescription,
-                  ticketPrice: funnel.ticketPrice,
-                  aov: funnel.aov,
-                  htoPrice: funnel.htoPrice,
-                  htoConversionRate: funnel.htoConversionRate,
-                  frontEndRoas: funnel.frontEndRoas,
-                  dailyBudget: funnel.dailyBudget,
-                  marketCplBenchmark: funnel.marketCplBenchmark,
-                  htoUnderperforming: funnel.htoUnderperforming,
-                  arena: funnel.arena,
-                  bestInterest: funnel.bestInterest,
-                  geoTiers: (funnel.geoTiers as string[] | null) ?? null,
-                }
+              ? funnelToInputs(funnel)
               : DEMO_FUNNEL;
             const result = runEngine(savedPayload, funnelInputs);
             await db.recordVerdicts(ctx.user.id, account.id, result.rows);
