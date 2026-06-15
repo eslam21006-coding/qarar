@@ -170,6 +170,16 @@ export async function listAccounts(userId: number) {
   return db.select().from(adAccounts).where(eq(adAccounts.userId, userId));
 }
 
+/** US11 — list every user id. Used by the daily refresh to enumerate
+ *  (user, account) pairs. Returns empty when there's no DB. */
+export async function listAllUsers(): Promise<{ id: number }[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select({ id: users.id })
+    .from(users);
+}
+
 export async function getAccount(userId: number, id: number) {
   const db = await getDb();
   if (!db) return undefined;
