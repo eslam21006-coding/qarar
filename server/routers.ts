@@ -11,6 +11,7 @@ import {
   buildSnapshot,
   fetchAdAccounts,
   revokeToken,
+  setDailyBudget,
   setObjectStatus,
   META_APP_ID,
 } from "./meta";
@@ -384,6 +385,64 @@ export const appRouter = router({
         obj.effectiveStatus = input.status;
         await db.saveSnapshot(ctx.user.id, account.id, payload!);
         return { success: true, simulated: false };
+      }),
+
+    /**
+     * US13 — adjust the daily_budget on a campaign / ad set by ±20%.
+     * Mirrors setStatus scaffold (ownership → object presence → demo/live
+     * branch → reflect in cache → saveSnapshot). Requires ads_management
+     * (enforced server-side; the call below fails with needsPermission
+     * if the token lacks the scope).
+     */
+    setBudget: protectedProcedure
+      .input(
+        z.object({
+          adAccountId: z.number(),
+          objectId: z.string().max(64),
+          newBudget: z.number().min(0),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        const account = await requireAccount(ctx.user.id, input.adAccountId);
+        const snap = await db.getLatestSnapshot(ctx.user.id, input.adAccountId);
+        const payload = snap?.payload as AccountSnapshotPayload | null;
+        const obj = payload?.objects.find(o => o.id === input.objectId);
+        if (!obj) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "العنصر غير موجود في هذا الحساب" });
+        }
+        if (obj.dailyBudget === null) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "NO_DAILY_BUDGET" });
+        }
+        // Meta's per-object daily-budget floor: $1 = 100 minor units.
+        if (Math.round(input.newBudget * 100) < 100) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "BUDGET_BELOW_MINIMUM" });
+        }
+        if (account.isDemo) {
+          // simulate in the cached demo snapshot
+          obj.dailyBudget = input.newBudget;
+          await db.saveSnapshot(ctx.user.id, account.id, payload!);
+          return { success: true, simulated: true, newBudget: input.newBudget };
+        }
+        const token = await getUserToken(ctx.user.id);
+        try {
+          await setDailyBudget(token, input.objectId, Math.round(input.newBudget * 100));
+        } catch (e: any) {
+          if (e.isAuthError) {
+            await db.markConnectionStatus(ctx.user.id, "expired");
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "RECONNECT_REQUIRED" });
+          }
+          if (e.needsPermission) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "NEEDS_RECONNECT_PERMISSION" });
+          }
+          if (e.belowMinimum) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "BUDGET_BELOW_MINIMUM" });
+          }
+          throw new TRPCError({ code: "BAD_GATEWAY", message: e.message });
+        }
+        // reflect the change in the cached snapshot immediately
+        obj.dailyBudget = input.newBudget;
+        await db.saveSnapshot(ctx.user.id, account.id, payload!);
+        return { success: true, simulated: false, newBudget: input.newBudget };
       }),
   }),
 });

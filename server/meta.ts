@@ -146,6 +146,36 @@ export async function setObjectStatus(
   }
 }
 
+/**
+ * US13 — update the daily_budget on a campaign / ad set.
+ * Meta stores budgets in minor units (cents). The caller passes the value
+ * already rounded to minor units; do not re-multiply.
+ */
+export async function setDailyBudget(
+  token: string,
+  objectId: string,
+  newBudgetMinorUnits: number
+): Promise<void> {
+  const body = new URLSearchParams({
+    daily_budget: String(Math.round(newBudgetMinorUnits)),
+    access_token: token,
+  });
+  const res = await fetch(`${GRAPH}/${objectId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) {
+    const err = json.error || {};
+    const e: any = new Error(err.message || `Meta API error ${res.status}`);
+    e.isAuthError = err.code === 190 || err.type === "OAuthException";
+    e.needsPermission = err.code === 200 || err.code === 10;
+    e.belowMinimum = err.code === 4 || err.error_subcode === 1885994;
+    throw e;
+  }
+}
+
 /** Revoke the app's permissions for this user (disconnect). */
 export async function revokeToken(token: string): Promise<void> {
   try {

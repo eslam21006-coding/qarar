@@ -304,6 +304,8 @@ export function DecisionTable({
 
   // pause/resume
   const [confirmRow, setConfirmRow] = useState<EngineRow | null>(null);
+  // ±20% budget adjust (US13)
+  const [budgetRow, setBudgetRow] = useState<{ row: EngineRow; direction: 1 | -1 } | null>(null);
   const setStatus = trpc.control.setStatus.useMutation({
     onSuccess: (res, vars) => {
       utils.dashboard.get.invalidate({ adAccountId: accountId });
@@ -323,6 +325,31 @@ export function DecisionTable({
         toast.error(`فشل تنفيذ الأمر: ${e.message}`);
       }
       setConfirmRow(null);
+    },
+  });
+
+  // US13 — setBudget mutation (mirrors setStatus pattern)
+  const setBudgetMut = trpc.control.setBudget.useMutation({
+    onSuccess: (res, vars) => {
+      utils.dashboard.get.invalidate({ adAccountId: accountId });
+      toast.success(
+        `تم تعديل ميزانية "${budgetRow?.row.name ?? ""}" إلى ${money(vars.newBudget)}/يوم ${res.simulated ? "(محاكاة تجريبية)" : "في ميتا ✓"}`
+      );
+      setBudgetRow(null);
+    },
+    onError: e => {
+      if (e.message === "RECONNECT_REQUIRED") {
+        toast.error("انتهت صلاحية الاتصال — أعد توصيل حساب ميتا");
+      } else if (e.message === "NEEDS_RECONNECT_PERMISSION") {
+        toast.error("تلزم صلاحية إضافية — أعد توصيل الحساب لمنح صلاحية ads_management");
+      } else if (e.message === "BUDGET_BELOW_MINIMUM") {
+        toast.error("الميزانية أقل من الحد الأدنى المسموح به في ميتا (1$/يوم)");
+      } else if (e.message === "NO_DAILY_BUDGET") {
+        toast.error("هذا العنصر لا يحمل ميزانية يومية مباشرة");
+      } else {
+        toast.error(`فشل تعديل الميزانية: ${e.message}`);
+      }
+      setBudgetRow(null);
     },
   });
 
@@ -938,22 +965,52 @@ export function DecisionTable({
                       )}
                     </td>
                     <td className="px-2 py-2.5 text-center">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className={`h-7 gap-1 px-2 text-[11px] font-bold ${
-                          paused
-                            ? "border-v-continue/40 text-v-continue hover:bg-v-continue/10"
-                            : "border-v-kill/40 text-v-kill hover:bg-v-kill/10"
-                        }`}
-                        onClick={e => {
-                          e.stopPropagation();
-                          setConfirmRow(r);
-                        }}
-                      >
-                        {paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
-                        {paused ? "تشغيل" : "إيقاف"}
-                      </Button>
+                      <div className="flex flex-col items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className={`h-7 w-full gap-1 px-2 text-[11px] font-bold ${
+                            paused
+                              ? "border-v-continue/40 text-v-continue hover:bg-v-continue/10"
+                              : "border-v-kill/40 text-v-kill hover:bg-v-kill/10"
+                          }`}
+                          onClick={e => {
+                            e.stopPropagation();
+                            setConfirmRow(r);
+                          }}
+                        >
+                          {paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
+                          {paused ? "تشغيل" : "إيقاف"}
+                        </Button>
+                        {r.daily_budget !== null && (
+                          <div className="flex w-full gap-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-6 flex-1 px-1 text-[10px] font-bold text-primary"
+                              title="زيادة 20%"
+                              onClick={e => {
+                                e.stopPropagation();
+                                setBudgetRow({ row: r, direction: 1 });
+                              }}
+                            >
+                              +20%
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-6 flex-1 px-1 text-[10px] font-bold text-amber-700"
+                              title="خفض 20%"
+                              onClick={e => {
+                                e.stopPropagation();
+                                setBudgetRow({ row: r, direction: -1 });
+                              }}
+                            >
+                              −20%
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1028,6 +1085,59 @@ export function DecisionTable({
             >
               {setStatus.isPending && <Loader2 className="ml-1 h-3.5 w-3.5 animate-spin" />}
               {confirmRow && isPaused(confirmRow) ? "نعم، شغّل" : "نعم، أوقف"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* US13 — budget adjust confirmation */}
+      <AlertDialog open={!!budgetRow} onOpenChange={open => !open && setBudgetRow(null)}>
+        <AlertDialogContent dir="rtl" className="text-right">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {budgetRow?.direction === 1 ? "زيادة" : "خفض"} ميزانية «{budgetRow?.row.name}» بنسبة 20%؟
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 leading-relaxed">
+              {budgetRow && budgetRow.row.daily_budget !== null && (() => {
+                const current = budgetRow.row.daily_budget;
+                const next = budgetRow.direction === 1
+                  ? Math.round(current * 1.2)
+                  : Math.round(current * 0.8);
+                return (
+                  <>
+                    <p>
+                      من <span className="num font-bold">{money(current)}</span>/يوم
+                      إلى <span className="num font-bold">{money(next)}</span>/يوم
+                      {isDemo && " (في الوضع التجريبي هذه محاكاة فقط)"}
+                    </p>
+                    <p>
+                      زيادة 20% كل 48 لـ 72 ساعة تحافظ على الـ learning ولا تكسره. القفزات
+                      الكبيرة بترفع التكلفة.
+                    </p>
+                  </>
+                );
+              })()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={setBudgetMut.isPending}
+              onClick={() => {
+                if (!budgetRow || budgetRow.row.daily_budget === null) return;
+                const current = budgetRow.row.daily_budget;
+                const next = budgetRow.direction === 1
+                  ? Math.round(current * 1.2)
+                  : Math.round(current * 0.8);
+                setBudgetMut.mutate({
+                  adAccountId: accountId,
+                  objectId: budgetRow.row.id,
+                  newBudget: next,
+                });
+              }}
+            >
+              {setBudgetMut.isPending && <Loader2 className="ml-1 h-3.5 w-3.5 animate-spin" />}
+              نعم، {budgetRow?.direction === 1 ? "زيادة" : "خفض"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
