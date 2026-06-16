@@ -116,6 +116,8 @@ function aggFromWindow(w: WindowMetrics): FilterAgg {
     lpRate: w.linkClicks > 0 && w.lpViews > 0 ? (w.lpViews / w.linkClicks) * 100 : null,
     frequency: null,
     spendShare: null,
+    // Hotfix T9: ROAS input for the footer.
+    conversionValue: w.conversionValue,
   };
 }
 
@@ -128,7 +130,7 @@ function aggregate(s: SeriesObj | undefined, range: RangeKey, from: string, to: 
   const since = range === "custom" ? from : dateStr(days - 1);
   const until = range === "custom" ? to : dateStr(0);
   if (!since || !until) return null;
-  let spend = 0, imps = 0, clicks = 0, linkClicks = 0, conv = 0, lp = 0, v3 = 0, tp = 0;
+  let spend = 0, imps = 0, clicks = 0, linkClicks = 0, conv = 0, lp = 0, v3 = 0, tp = 0, value = 0;
   for (const d of s.daily30) {
     if (d.date < since || d.date > until) continue;
     spend += d.spend;
@@ -139,6 +141,7 @@ function aggregate(s: SeriesObj | undefined, range: RangeKey, from: string, to: 
     lp += d.lpViews;
     v3 += d.videoViews3s ?? 0;
     tp += d.thruplays ?? 0;
+    value += d.conversionValue ?? 0;
   }
   return {
     spend,
@@ -157,6 +160,7 @@ function aggregate(s: SeriesObj | undefined, range: RangeKey, from: string, to: 
     lpRate: linkClicks > 0 && lp > 0 ? (lp / linkClicks) * 100 : null,
     frequency: null,
     spendShare: null,
+    conversionValue: value,
   };
 }
 
@@ -165,6 +169,7 @@ type ColKey =
   | "spend"
   | "results"
   | "cpa"
+  | "roas"
   | "ctrLink"
   | "ctrAll"
   | "cpm"
@@ -180,6 +185,10 @@ const ALL_COLUMNS: { key: ColKey; label: string; adOnly?: boolean }[] = [
   { key: "spend", label: "Spend" },
   { key: "results", label: "Results" },
   { key: "cpa", label: "CPA" },
+  // Hotfix T9: ROAS column placed right after CPA so ad buyers see
+  // "how much I spent → how much each result cost → how much came back"
+  // in a single glance.
+  { key: "roas", label: "ROAS" },
   { key: "ctrLink", label: "Link CTR" },
   { key: "ctrAll", label: "CTR (All)" },
   { key: "cpm", label: "CPM" },
@@ -256,6 +265,7 @@ export function DecisionTable({
   searchTerm,
   onSearchTermChange,
   summary,
+  currencySymbol = "$",
 }: {
   rows: EngineRow[];
   series: SeriesObj[];
@@ -266,6 +276,8 @@ export function DecisionTable({
   searchTerm: string;
   onSearchTermChange: (q: string) => void;
   summary: AccountSummary | null;
+  /** Hotfix T2: account currency symbol used by every money() call below. */
+  currencySymbol?: string;
 }) {
   const utils = trpc.useUtils();
 
@@ -346,7 +358,7 @@ export function DecisionTable({
     onSuccess: (res, vars) => {
       utils.dashboard.get.invalidate({ adAccountId: accountId });
       toast.success(
-        `تم تعديل ميزانية "${lastBudgetRowName.current}" إلى ${money(vars.newBudget)}/يوم ${res.simulated ? "(محاكاة تجريبية)" : "في ميتا ✓"}`
+        `تم تعديل ميزانية "${lastBudgetRowName.current}" إلى ${money(vars.newBudget, currencySymbol)}/يوم ${res.simulated ? "(محاكاة تجريبية)" : "في ميتا ✓"}`
       );
     },
     onError: e => {
@@ -477,19 +489,21 @@ export function DecisionTable({
   const totalCell = (key: ColKey): string => {
     switch (key) {
       case "spend":
-        return money(totals.spend);
+        return money(totals.spend, currencySymbol);
       case "results":
         return num(totals.results);
       case "cpa":
-        return totals.cpa === null ? "—" : money(totals.cpa);
+        return totals.cpa === null ? "—" : money(totals.cpa, currencySymbol);
+      case "roas":
+        return totals.roas === null ? "—" : `${totals.roas.toFixed(2)}x`;
       case "ctrLink":
         return totals.ctrLink === null ? "—" : pct(totals.ctrLink);
       case "ctrAll":
         return totals.ctrAll === null ? "—" : pct(totals.ctrAll);
       case "cpm":
-        return totals.cpm === null ? "—" : money(totals.cpm);
+        return totals.cpm === null ? "—" : money(totals.cpm, currencySymbol);
       case "cpc":
-        return totals.cpc === null ? "—" : money(totals.cpc);
+        return totals.cpc === null ? "—" : money(totals.cpc, currencySymbol);
       case "lpRate":
         return totals.lpRate === null ? "—" : pct(totals.lpRate, 0);
       case "impressions":
@@ -503,7 +517,7 @@ export function DecisionTable({
     const a = aggs.get(r.id);
     switch (key) {
       case "spend":
-        return money(a?.spend ?? 0);
+        return money(a?.spend ?? 0, currencySymbol);
       case "results":
         return num(a?.results ?? 0);
       case "cpa":
@@ -512,15 +526,18 @@ export function DecisionTable({
           results: a?.results ?? 0,
           cpa: a?.cpa ?? null,
           target: unitTarget,
+          currency: currencySymbol,
         }).value;
+      case "roas":
+        return r.roas_3d === null ? "—" : `${r.roas_3d.toFixed(2)}x`;
       case "ctrLink":
         return a?.ctrLink == null ? "—" : pct(a.ctrLink);
       case "ctrAll":
         return a?.ctrAll == null ? "—" : pct(a.ctrAll);
       case "cpm":
-        return a?.cpm == null ? "—" : money(a.cpm);
+        return a?.cpm == null ? "—" : money(a.cpm, currencySymbol);
       case "cpc":
-        return a?.cpc == null ? "—" : money(a.cpc);
+        return a?.cpc == null ? "—" : money(a.cpc, currencySymbol);
       case "hookRate":
         return a?.hookRate == null ? "—" : pct(a.hookRate, 1);
       case "holdRate":
@@ -544,9 +561,20 @@ export function DecisionTable({
         results: a?.results ?? 0,
         cpa: a?.cpa ?? null,
         target: unitTarget,
+        currency: currencySymbol,
       }).className;
     }
     if (key === "ctrLink") return `font-bold ${a?.ctrLink == null ? "" : ctrColorClass(a.ctrLink, summary?.baselines.ctrLinkMedian90 ?? null)}`;
+    // Hotfix T9 — ROAS row coloring matches the buyer-side convention:
+    //   ≥ 1.0  → emerald (profitable)
+    //   0.5–1 → amber   (break-even / marginal)
+    //   < 0.5  → red     (losing money)
+    if (key === "roas") {
+      if (r.roas_3d === null) return "";
+      if (r.roas_3d >= 1.0) return "text-v-continue";
+      if (r.roas_3d >= 0.5) return "text-v-watch";
+      return "text-v-kill";
+    }
     if (key === "spendShare" && r.spend_share_pct !== null && r.spend_share_pct < 10)
       return "text-v-rescue";
     if (key === "impressions") return ""; // neutral — no color
@@ -925,7 +953,14 @@ export function DecisionTable({
                       canDrillDown ? "cursor-pointer" : ""
                     } ${paused ? "opacity-50" : ""}`}
                     onClick={() => {
-                      if (isSearching) return;
+                      // Hotfix T3: in search/filter mode the table is a flat
+                      // cross-level list — clicking a row would set a path
+                      // that the visible filter no longer matches. Surface
+                      // an explicit hint instead of silently no-op.
+                      if (isSearching) {
+                        toast.info("امسح الفلتر للتصفح داخل هذه الحملة");
+                        return;
+                      }
                       if (level === "campaign") setPath({ campaign: r });
                       else if (level === "adset") setPath({ campaign: path.campaign, adset: r });
                     }}
@@ -987,7 +1022,7 @@ export function DecisionTable({
                               <span className="text-v-rescue">في مرحلة التعلم</span>
                             )}
                             {r.daily_budget !== null && (
-                              <span className="num">{money(r.daily_budget)}/يوم</span>
+                              <span className="num">{money(r.daily_budget, currencySymbol)}/يوم</span>
                             )}
                           </div>
                         </div>
@@ -1155,8 +1190,8 @@ export function DecisionTable({
                 return (
                   <>
                     <p>
-                      من <span className="num font-bold">{money(current)}</span>/يوم
-                      إلى <span className="num font-bold">{money(next)}</span>/يوم
+                      من <span className="num font-bold">{money(current, currencySymbol)}</span>/يوم
+                      إلى <span className="num font-bold">{money(next, currencySymbol)}</span>/يوم
                       {isDemo && " (في الوضع التجريبي هذه محاكاة فقط)"}
                     </p>
                     <p>

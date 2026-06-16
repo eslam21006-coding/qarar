@@ -12,7 +12,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { money } from "@/lib/format";
+import { currencySymbol, money } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 import { deriveTargets, type FunnelInputs } from "@shared/qarar";
 import { AlertTriangle, ArrowRight, Calculator, ChevronDown, Loader2, Save } from "lucide-react";
@@ -66,6 +66,15 @@ export default function Settings() {
   const utils = trpc.useUtils();
 
   const funnel = trpc.funnel.get.useQuery({ adAccountId: accountId }, { enabled: accountId > 0 });
+  // Hotfix T2: pull the account's currency from the connected account list
+  // (the summary is also a source, but it's only available after the user
+  // saves funnel settings — accounts is always available per-user).
+  const accounts = trpc.meta.accounts.useQuery(undefined, { enabled: accountId > 0 });
+  const accountCurrency = useMemo(
+    () => accounts.data?.find(a => a.id === accountId)?.currency ?? "USD",
+    [accounts.data, accountId]
+  );
+  const sym = currencySymbol(accountCurrency);
   const [form, setForm] = useState<FormState>(DEFAULTS);
   const [loadedFromServer, setLoadedFromServer] = useState(false);
 
@@ -218,7 +227,7 @@ export default function Settings() {
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
               <Field
-                label="متوسط قيمة الطلب الواحد ($)"
+                label={`متوسط قيمة الطلب الواحد (${sym})`}
                 hint="كم يدفع العميل في المتوسط عند أول شراء؟"
                 value={form.aov}
                 onChange={v => set("aov", v)}
@@ -231,7 +240,7 @@ export default function Settings() {
                 step="0.05"
               />
               <Field
-                label="سعر المنتج الغالي ($)"
+                label={`سعر المنتج الغالي (${sym})`}
                 hint="العرض الكبير الذي تبيعه بعد المنتج الرخيص"
                 value={form.htoPrice}
                 onChange={v => set("htoPrice", v)}
@@ -244,13 +253,13 @@ export default function Settings() {
                 step="0.5"
               />
               <Field
-                label="ميزانيتك اليومية للإعلانات ($) — اختياري"
+                label={`ميزانيتك اليومية للإعلانات (${sym}) — اختياري`}
                 value={form.dailyBudget}
                 onChange={v => set("dailyBudget", v)}
               />
               {form.archetype === "free_lead" && (
                 <Field
-                  label="سعر العميل المحتمل المعتاد في مجالك ($) — اختياري"
+                  label={`سعر العميل المحتمل المعتاد في مجالك (${sym}) — اختياري`}
                   hint="إن كان حسابك جديدًا ولا يوجد تاريخ نقيس عليه"
                   value={form.marketCplBenchmark}
                   onChange={v => set("marketCplBenchmark", v)}
@@ -330,7 +339,7 @@ export default function Settings() {
                   <div className="rounded-lg border border-primary/40 bg-primary/10 p-4 text-center">
                     <p className="text-sm font-bold">هدف تكلفة العميل</p>
                     <p className="num my-1 text-3xl font-extrabold text-primary">
-                      {money(targets.effectiveCPA)}
+                      {money(targets.effectiveCPA, sym)}
                     </p>
                     <p className="text-[11px] leading-relaxed text-muted-foreground">
                       إن كلفك العميل أقل من هذا الرقم = جيد، وأكثر منه = خسارة.
@@ -351,7 +360,7 @@ export default function Settings() {
                     <TargetRow
                       label="أقصى تكلفة للعميل المحتمل"
                       sub="إن دفعت أكثر من ذلك للعميل المحتمل الواحد فأنت تخسر"
-                      value={money(targets.cplCeiling)}
+                      value={money(targets.cplCeiling, sym)}
                     />
                   )}
 
@@ -365,17 +374,17 @@ export default function Settings() {
                       <TargetRow
                         label="تكلفة العميل من البيع الأول"
                         sub="متوسط قيمة الطلب ÷ العائد المطلوب"
-                        value={money(targets.rawTargetCPA)}
+                        value={money(targets.rawTargetCPA, sym)}
                       />
                       <TargetRow
                         label="القيمة الكاملة للعميل"
                         sub="البيع الأول + نصيبه من المنتج الغالي"
-                        value={money(targets.fullBuyerValue)}
+                        value={money(targets.fullBuyerValue, sym)}
                       />
                       <TargetRow
                         label="أقصى تكلفة مسموحة"
                         sub="نصف القيمة الكاملة — لتربح الضعف دائمًا"
-                        value={money(targets.maxCPA)}
+                        value={money(targets.maxCPA, sym)}
                       />
                       <p className="text-[11px] leading-relaxed text-muted-foreground">
                         هدفك = الأصغر بين الرقم الأول والثالث، لنبقى دائمًا في الجانب الآمن.
@@ -386,7 +395,7 @@ export default function Settings() {
                     <p className="rounded-lg bg-background/60 p-2 text-[11px] text-muted-foreground">
                       ميزانية مقترحة لكل مجموعة إعلانية جديدة:{" "}
                       <span className="num">
-                        {money(targets.effectiveCPA)}–{money(1.5 * targets.effectiveCPA)}
+                        {money(targets.effectiveCPA, sym)}–{money(1.5 * targets.effectiveCPA, sym)}
                       </span>{" "}
                       في اليوم
                     </p>

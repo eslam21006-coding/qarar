@@ -17,6 +17,8 @@ export interface CpaCellInput {
   /** True when the row has not met the gate threshold (e.g. pre-gate under-data). */
   preGate?: boolean;
   target: number;
+  /** Hotfix T2: account currency symbol. Defaults to "$" for backward compat. */
+  currency?: string;
 }
 
 export interface CpaCellOutput {
@@ -25,7 +27,7 @@ export interface CpaCellOutput {
 }
 
 export function cpaCell(input: CpaCellInput): CpaCellOutput {
-  const { verdict, results, cpa, preGate, target } = input;
+  const { verdict, results, cpa, preGate, target, currency = "$" } = input;
   // Pre-gate / too_early: neutral dash, no color
   if (verdict === "too_early" || preGate) {
     return { value: "—", className: "font-bold" };
@@ -37,7 +39,7 @@ export function cpaCell(input: CpaCellInput): CpaCellOutput {
   // Default: money(cpa) with target-relative color
   const displayCpa = results === 0 ? null : cpa;
   return {
-    value: money(displayCpa ?? undefined),
+    value: money(displayCpa ?? undefined, currency),
     className: `font-bold ${cpaColorClass(displayCpa, target)}`,
   };
 }

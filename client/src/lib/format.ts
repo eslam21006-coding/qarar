@@ -1,5 +1,26 @@
 /** Formatting helpers — all numeric output is LTR monospace via the .num class. */
 
+/**
+ * Map a Meta account currency code to its display symbol.
+ * Default = the code itself (e.g. "JPY" → "JPY") so unsupported codes
+ * still render something readable.
+ */
+export function currencySymbol(code: string | null | undefined): string {
+  switch ((code ?? "").toUpperCase()) {
+    case "AED": return "د.إ";
+    case "SAR": return "ر.س";
+    case "EGP": return "ج.م";
+    case "USD": return "$";
+    case "GBP": return "£";
+    case "EUR": return "€";
+    case "KWD": return "د.ك";
+    case "QAR": return "ر.ق";
+    case "BHD": return "د.ب";
+    case "OMR": return "ر.ع";
+    default: return code ?? "$";
+  }
+}
+
 export function money(n: number | null | undefined, currency = "$"): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return "∞";
   return `${currency}${n.toLocaleString("en-US", { maximumFractionDigits: n >= 100 ? 0 : 1 })}`;

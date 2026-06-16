@@ -446,7 +446,8 @@ describe("SOP-specific creative action copy (US7 / T036)", () => {
     const r = row("ad_flash");
     expect(r.rule).toBe("K4");
     expect(r.action_ar).toContain("ميزانية");
-    expect(r.action_ar).toContain("التالي");
+    // Hotfix T6: المصنع يجهّز المفهوم التالي → جهّز إعلانًا جديدًا بمفهوم مختلف
+    expect(r.action_ar).toContain("مفهوم");
   });
 
   it("F1: action_ar says audience healthy / don't touch ad set / 3–5 day test", () => {

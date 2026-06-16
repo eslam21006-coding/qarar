@@ -40,6 +40,8 @@ export interface FilterAgg {
   lpRate: number | null;
   frequency: number | null;
   spendShare: number | null;
+  /** Hotfix T9: sum of conversion value across the selected window — for ROAS. */
+  conversionValue: number;
 }
 
 export const FILTER_FIELDS: Record<

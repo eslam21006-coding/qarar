@@ -45,7 +45,30 @@ export { deriveTargets };
 const nf = (n: number, d = 0) =>
   n.toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: 0 });
 
-const money = (n: number) => `$${nf(n, n < 10 ? 2 : 0)}`;
+// Hotfix T2: every money() call in the engine uses the account's currency
+// symbol (e.g. "د.إ" for AED, "$" for USD). _currency is reset at the top
+// of runEngine() so all evaluations within a single run share one symbol.
+let _currency = "$";
+const money = (n: number) => `${_currency}${nf(n, n < 10 ? 2 : 0)}`;
+
+// Symbol map — kept in sync with client/src/lib/format.ts#currencySymbol.
+// Server code doesn't import the client helper to avoid a cycle.
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  AED: "د.إ",
+  SAR: "ر.س",
+  EGP: "ج.م",
+  USD: "$",
+  GBP: "£",
+  EUR: "€",
+  KWD: "د.ك",
+  QAR: "ر.ق",
+  BHD: "د.ب",
+  OMR: "ر.ع",
+};
+function currencySymbolFor(code: string | null | undefined): string {
+  if (!code) return "$";
+  return CURRENCY_SYMBOLS[code.toUpperCase()] ?? code;
+}
 
 // ============================================================
 // Internal evaluation result
@@ -114,7 +137,7 @@ function gateVerdict(o: NormalizedObject, target: number): Fired | null {
     return {
       verdict: "too_early",
       rule: "GATE",
-      reason: `ما زال مبكرًا — يحتاج ${nf(needImp)} مشاهدة إضافية أو صرف ${money(target)} قبل الحكم`,
+      reason: `في آخر 3 أيام: ما زال مبكرًا — يحتاج ${nf(needImp)} مشاهدة إضافية أو صرف ${money(target)} قبل الحكم`,
       action: "اترك البيانات تكتمل — لا قرار الآن",
     };
   }
@@ -132,7 +155,7 @@ function circuitBreaker(o: NormalizedObject, target: number): Fired | null {
     return {
       verdict: "kill",
       rule: "CB2",
-      reason: `صرف اليوم ${money(o.today.spend)} (أكثر من ضعفين ونصف هدفك ${money(target)}) بدون أي نتيجة`,
+      reason: `اليوم: صرف ${money(o.today.spend)} (أكثر من ضعفين ونصف هدفك ${money(target)}) بدون أي نتيجة`,
       action: "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى",
     };
   }
@@ -140,7 +163,7 @@ function circuitBreaker(o: NormalizedObject, target: number): Fired | null {
     return {
       verdict: "watch",
       rule: "CB1",
-      reason: `صرف اليوم ${money(o.today.spend)} (أكثر من هدفك بكثير) بدون أي نتيجة`,
+      reason: `اليوم: صرف ${money(o.today.spend)} (أكثر من هدفك بكثير) بدون أي نتيجة`,
       action: "راجعه غدًا صباحًا قبل أن يصرف من جديد",
     };
   }
@@ -185,7 +208,7 @@ function killRulesAdset(
     return {
       verdict: "kill",
       rule: "K1",
-      reason: `صرف ${money(spend)} (ضعف هدفك ${money(target)}) بدون أي نتيجة — لا يبيع أصلًا`,
+      reason: `في آخر 3 أيام: صرف ${money(spend)} (ضعف هدفك ${money(target)}) بدون أي نتيجة — لا يبيع أصلًا`,
       action: "أوقِف هذه المجموعة",
     };
   }
@@ -196,7 +219,7 @@ function killRulesAdset(
     return {
       verdict: "kill",
       rule: "K2",
-      reason: `صرف ${money(spend)} وتكلفة العميل ${money(cpa)} أعلى بكثير من هدفك (${money(target)}) — خسارة مستمرة وليست يومًا سيئًا`,
+      reason: `في آخر 3 أيام: صرف ${money(spend)} وتكلفة العميل ${money(cpa)} أعلى بكثير من هدفك (${money(target)}) — خسارة مستمرة وليست يومًا سيئًا`,
       action: "أوقِف هذه المجموعة",
     };
   }
@@ -212,7 +235,7 @@ function killRulesAdset(
       return {
         verdict: "kill",
         rule: "K7",
-        reason: `تكلفة العميل المحتمل ${money(cpa)} وصلت للحد الذي تخسر بعده (${money(t.cplCeiling)})`,
+        reason: `في آخر 3 أيام: تكلفة العميل المحتمل ${money(cpa)} وصلت للحد الذي تخسر بعده (${money(t.cplCeiling)})`,
         action: "أوقِفها وراجع عرضك وأسعارك — المشكلة أكبر من الإعلانات",
       };
     }
@@ -221,7 +244,7 @@ function killRulesAdset(
       return {
         verdict: "kill",
         rule: "K6",
-        reason: `تكلفة العميل المحتمل ${money(cpa)} أصبحت ضعف متوسطك المعتاد (${money(baseline)})`,
+        reason: `في آخر 3 أيام: تكلفة العميل المحتمل ${money(cpa)} أصبحت ضعف متوسطك المعتاد (${money(baseline)})`,
         action: "أوقِف هذه المجموعة",
       };
     }
@@ -236,7 +259,7 @@ function killK3(o: NormalizedObject): Fired | null {
     return {
       verdict: "kill",
       rule: "K3",
-      reason: `من كل 1000 شخص شاهدوا الإعلان، أقل من 5 ضغطوا عليه (${o.w3d.ctrLink.toFixed(2)}%) بعد ${nf(o.w3d.impressions)} مشاهدة`,
+      reason: `في آخر 3 أيام: من كل 1000 شاهدوا الإعلان، أقل من 5 ضغطوا (${o.w3d.ctrLink.toFixed(2)}%) بعد ${nf(o.w3d.impressions)} مشاهدة — الهوك لا يوقف أحدًا`,
       action: "الجملة الافتتاحية لم توقف أحدًا — المشكلة في المفهوم لا في الشكل. غيّر المفهوم كاملًا، لا تكتفِ بتغيير اللون أو الحجم. إذا احتجت إلى بناء مفهوم جديد من الصفر، احجز مكالمة: https://eslamsalah.com/team-discovery-call",
     };
   }
@@ -247,11 +270,27 @@ function killK3(o: NormalizedObject): Fired | null {
 // Starved-ad matrix — K5 (5.0)
 // ============================================================
 
+// Hotfix T7: same step-6 preconditions as diagnose(). The K5 kill branch
+// detects this and swaps in a coherent "the ad is fine, the funnel/page
+// is the real problem" message instead of the contradictory "turn it off".
+function isStep6Candidate(
+  ad: NormalizedObject,
+  archetype: FunnelInputs["archetype"]
+): boolean {
+  const w = ad.w3d;
+  if (w.lpViews < 100) return false;
+  if (w.linkClicks <= 0) return false;
+  if (w.lpViews / w.linkClicks < 0.75) return false;
+  const cvr = (w.conversions / w.lpViews) * 100;
+  return archetype === "free_lead" ? cvr < 15 : cvr < 2;
+}
+
 function starvedAdMatrix(
   ad: NormalizedObject,
   parent: NormalizedObject | undefined,
   t: DerivedTargets,
-  baselines: Baselines
+  baselines: Baselines,
+  archetype: FunnelInputs["archetype"]
 ): Fired | null {
   // Trigger: < 10% of ad-set spend for 3 days, age > 48h
   if (ad.spendSharePct === null || ad.spendSharePct >= 10 || ad.ageDays <= 2) return null;
@@ -266,7 +305,7 @@ function starvedAdMatrix(
     return {
       verdict: "rescue",
       rule: "K5",
-      reason: `يأخذ ${ad.spendSharePct.toFixed(1)}% فقط من مصروف المجموعة لكنه ممتاز في القليل الذي يصرفه — ناجح مخنوق`,
+      reason: `تمنحه ميتا ${ad.spendSharePct.toFixed(1)}% فقط من ميزانية المجموعة لكنه ممتاز في القليل الذي يصرفه — ناجح مخنوق`,
       action: "انسخه لمجموعة جديدة وحده ليأخذ فرصته (مع الحفاظ على تفاعلاته)، ثم أوقِف الأصل بعد استقرار النسخة",
     };
   }
@@ -281,17 +320,28 @@ function starvedAdMatrix(
     return {
       verdict: "continue",
       rule: "K5",
-      reason: `يأخذ ${ad.spendSharePct.toFixed(1)}% فقط من المصروف، لكن المجموعة كلها تحقق هدفك`,
+      reason: `تمنحه ميتا ${ad.spendSharePct.toFixed(1)}% فقط من ميزانية المجموعة، لكن المجموعة كلها تحقق هدفك`,
       action: "اتركه كما هو — لا تلمس شيئًا في مجموعة ناجحة",
     };
   }
 
   const weak = ad.w3d.ctrLink < ctrMedian && ad.w3d.conversions === 0;
   if (weak) {
+    // Hotfix T7: if the ad's diagnosis will be step 6 (ad+page clean, weak
+    // CVR), kill with the funnel message instead of the generic "turn it
+    // off" — those two are contradictory together.
+    if (isStep6Candidate(ad, archetype)) {
+      return {
+        verdict: "kill",
+        rule: "K5",
+        reason: `تمنحه ميتا ${ad.spendSharePct.toFixed(1)}% فقط من ميزانية المجموعة — أوقفه الآن لأن مشكلتك الأساسية في العرض أو الفانل بعد البيع، وليس في هذا الإعلان تحديدًا. أصلح الفانل أولًا ثم أعد اختباره.`,
+        action: "أوقِف الإعلان ثم أصلح صفحة البيع والعرض — ثم أَعِد اختبار مفهوم جديد",
+      };
+    }
     return {
       verdict: "kill",
       rule: "K5",
-      reason: `يأخذ ${ad.spendSharePct.toFixed(1)}% فقط وأداؤه ضعيف (ضغط قليل وبدون نتائج) داخل مجموعة متعثرة`,
+      reason: `تمنحه ميتا ${ad.spendSharePct.toFixed(1)}% فقط من ميزانية المجموعة وأداؤه ضعيف (ضغط قليل وبدون نتائج) داخل مجموعة متعثرة`,
       action: "أوقِفه — ركّز الميزانية على الأفضل",
     };
   }
@@ -299,7 +349,7 @@ function starvedAdMatrix(
   return {
     verdict: "watch",
     rule: "K5",
-    reason: `يأخذ ${ad.spendSharePct.toFixed(1)}% فقط من المصروف — أداؤه متوسط والمجموعة تحت الهدف`,
+    reason: `تمنحه ميتا ${ad.spendSharePct.toFixed(1)}% فقط من ميزانية المجموعة — أداؤه متوسط والمجموعة تحت الهدف`,
     action: "راقبه — إن بقي محرومًا بنفس الأداء فأوقِفه",
   };
 }
@@ -324,15 +374,15 @@ function decayMap(ad: NormalizedObject, baselines: Baselines): Fired | null {
     return {
       verdict: "kill",
       rule: "K4",
-      reason: `اليوم الأول كان ممتازًا ثم هبط الأداء ${dropPct.toFixed(0)}% خلال 3 أيام — نجاح لم يدُم`,
-      action: "يوم أول قوي ثم انهيار — هذا إعلان برّاق استُنفدت شريحته. لا ترفع الميزانية محاولًا استعادة اليوم الأول، رفعها يكسر تعلّم الخوارزمية ويسرّع الانهيار. المصنع يُجهّز المفهوم التالي الآن.",
+      reason: `في آخر 3 أيام: اليوم الأول كان ممتازًا ثم هبط الأداء ${dropPct.toFixed(0)}% — نجاح لم يدُم`,
+      action: "يوم أول قوي ثم انهيار — هذا إعلان برّاق استُنفدت شريحته. لا ترفع الميزانية محاولًا استعادة اليوم الأول، رفعها يكسر تعلّم الخوارزمية ويسرّع الانهيار. جهّز إعلانًا جديدًا بمفهوم مختلف كليًا.",
     };
   }
   if (dropPct > 0 && dropPct <= 30) {
     return {
       verdict: "continue",
       rule: "W2",
-      reason: `نزل قليلًا (${dropPct.toFixed(0)}%) بعد حماس اليوم الأول — هذا طبيعي وهو يستقر الآن`,
+      reason: `في آخر 3 أيام: نزل قليلًا (${dropPct.toFixed(0)}%) بعد حماس اليوم الأول — هذا طبيعي وهو يستقر الآن`,
       action: "واصل — هذا مستواه الحقيقي، احكم عليه بمتوسط الأيام التالية لا باليوم الأول",
     };
   }
@@ -342,7 +392,7 @@ function decayMap(ad: NormalizedObject, baselines: Baselines): Fired | null {
     return {
       verdict: "continue",
       rule: "S1",
-      reason: `أداؤه ثابت أو يتحسن منذ 3 أيام${beatsMedian ? " والناس تضغط عليه أكثر من المعتاد" : ""} — إعلان قوي`,
+      reason: `في آخر 3 أيام: أداؤه ثابت أو يتحسن${beatsMedian ? " والناس تضغط عليه أكثر من المعتاد" : ""} — إعلان قوي`,
       action: "مرشح للتوسيع — جهّز نسخه لجمهور أوسع بعد أن يثبت 3 أيام تحت الهدف",
       promotionEligible: beatsMedian,
       promotionNote: beatsMedian
@@ -354,7 +404,7 @@ function decayMap(ad: NormalizedObject, baselines: Baselines): Fired | null {
   return {
     verdict: "watch",
     rule: "W1",
-    reason: `نزل ${dropPct.toFixed(0)}% خلال 3 أيام — لم يتضح بعد هل سيستقر أم سيستمر في الهبوط`,
+    reason: `في آخر 3 أيام: نزل ${dropPct.toFixed(0)}% — لم يتضح بعد هل سيستقر أم سيستمر في الهبوط`,
     action: "راقبه يومًا أو يومين إضافيين بدون أي تعديل",
   };
 }
@@ -386,7 +436,7 @@ function fatigueSignals(ad: NormalizedObject, baselines: Baselines): Fired | nul
       return {
         verdict: "watch",
         rule: "F1",
-        reason: `الجمهور بدأ يملّ التصميم: ضغط الناس على الإعلان نزل ${ctrDrop.toFixed(0)}% (من ${peak.toFixed(2)}% إلى ${recent.toFixed(2)}%) بينما سعر الظهور ثابت`,
+        reason: `في آخر 3 أيام: الجمهور بدأ يملّ التصميم — ضغط الناس على الإعلان نزل ${ctrDrop.toFixed(0)}% (من ${peak.toFixed(2)}% إلى ${recent.toFixed(2)}%) بينما سعر الظهور ثابت`,
         action: "الجمهور ممتاز — لا تلمس المجموعة الإعلانية إطلاقًا. التصميم هو المنتهي. أضف نسخة بديلة جديدة في نفس المجموعة الإعلانية وانتظر 3 إلى 5 أيام: إذا عاد الأداء فالمشكلة كانت إنهاكًا، إذا بقي ضعيفًا فالمشكلة هيكلية.",
       };
     }
@@ -399,7 +449,7 @@ function fatigueSignals(ad: NormalizedObject, baselines: Baselines): Fired | nul
       return {
         verdict: "watch",
         rule: "F2",
-        reason: `سعر ظهور هذا الإعلان يرتفع (${money(cpmRecent)}) عن متوسط حسابك (${money(baselines.cpmAvg14)}) — فيسبوك لم يعد يفضّل هذا التصميم`,
+        reason: `في آخر 3 أيام: سعر ظهور هذا الإعلان يرتفع (${money(cpmRecent)}) عن متوسط حسابك (${money(baselines.cpmAvg14)}) — فيسبوك لم يعد يفضّل هذا التصميم`,
         action: "الخوارزمية تعاقب هذا التصميم تحديدًا في المزاد — تعتبره تجربة مستخدم ضعيفة. أضف تصميمًا جديدًا بجانبه في نفس المجموعة الإعلانية كاختبار تشخيصي: إذا نجح الجديد فالمشكلة في التصميم لا في الجمهور.",
       };
     }
@@ -427,7 +477,7 @@ function watchRules(
     return {
       verdict: "watch",
       rule: "W1",
-      reason: `تكلفة العميل ${money(cpa)} أعلى من هدفك (${money(target)}) بقليل — ليست كارثة`,
+      reason: `في آخر 3 أيام: تكلفة العميل ${money(cpa)} أعلى من هدفك (${money(target)}) بقليل — ليست كارثة`,
       action: "راقبه يومين أو ثلاثة بدون أي تعديل",
     };
   }
@@ -448,7 +498,7 @@ function watchRules(
         return {
           verdict: "watch",
           rule: "W2",
-          reason: `يوم سيئ واحد بعد ${prior.length} أيام جيدة — أمر طبيعي جدًا`,
+          reason: `في آخر 3 أيام: يوم سيئ واحد بعد ${prior.length} أيام جيدة — أمر طبيعي جدًا`,
           action: "لا تلمسه — أي تعديل الآن سيخرب تعلّم فيسبوك ويزيد التكلفة",
         };
       }
@@ -463,7 +513,7 @@ function watchRules(
       return {
         verdict: "watch",
         rule: "W3",
-        reason: `الناس تضغط على الإعلان أكثر من المعتاد (${ctrLink.toFixed(2)}%) لكن الصفحة لا تقنعهم بالشراء (${cvr.toFixed(1)}% فقط) — الإعلان بريء`,
+        reason: `في آخر 3 أيام: الناس تضغط على الإعلان أكثر من المعتاد (${ctrLink.toFixed(2)}%) لكن الصفحة لا تقنعهم بالشراء (${cvr.toFixed(1)}% فقط) — الإعلان بريء`,
         action: "⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا",
       };
     }
@@ -474,7 +524,7 @@ function watchRules(
     return {
       verdict: "watch",
       rule: "W4",
-      reason: `من كل 100 شخص ضغطوا على الإعلان، ${((lpViews / linkClicks) * 100).toFixed(0)} فقط وصلوا للصفحة (المفترض 75 أو أكثر)`,
+      reason: `في آخر 3 أيام: من كل 100 شخص ضغطوا على الإعلان، ${((lpViews / linkClicks) * 100).toFixed(0)} فقط وصلوا للصفحة (المفترض 75 أو أكثر)`,
       action: "افحص سرعة تحميل صفحتك أولًا؛ إن كانت سريعة فتأكد أن الصفحة تطابق وعد الإعلان",
     };
   }
@@ -486,7 +536,7 @@ function watchRules(
       return {
         verdict: "continue",
         rule: "W6",
-        reason: `تكلفة العميل ${money(cpa)} أعلى من هدفك، لكن عند حساب كل ما سيشتريه العميل لاحقًا (${money(t.fullBuyerValue)}) فأنت رابح`,
+        reason: `في آخر 3 أيام: تكلفة العميل ${money(cpa)} أعلى من هدفك، لكن عند حساب كل ما سيشتريه العميل لاحقًا (${money(t.fullBuyerValue)}) فأنت رابح (full-funnel ROAS ${fullRoas.toFixed(1)}x)`,
         action: "واصل بحذر — وإن استمر هذا النمط ففكّر في رفع هدفك قليلًا",
       };
     }
@@ -527,7 +577,7 @@ function continueRules(
     return {
       verdict: "continue",
       rule: "S1",
-      reason: `حقق هدفك (تكلفة ${money(cpa!)}) ثلاثة أيام متتالية والناس تتفاعل معه أكثر من المعتاد (${ctrLink.toFixed(2)}%)`,
+      reason: `في آخر 3 أيام: حقق هدفك (تكلفة ${money(cpa!)}) ثلاثة أيام متتالية والناس تتفاعل معه أكثر من المعتاد (${ctrLink.toFixed(2)}%)`,
       action: "جاهز للتوسيع — انسخه لمرحلة أعلى مع الحفاظ على تفاعلاته (واترك الأصل يعمل)",
       promotionEligible: true,
       promotionNote: "انسخ هذا الإعلان باستخدام Post ID حتى تنتقل معه الإعجابات والتعليقات ويقل سعر الظهور (CPM). انقله من حملة الاختبار إلى حملة التوسيع. انسخ الـ Post ID لا الإعلان نفسه — فالـ Post ID يحمل معه كل التفاعل المتراكم.",
@@ -540,7 +590,7 @@ function continueRules(
       return {
         verdict: "continue",
         rule: "S2",
-        reason: `تكلفة العميل ${money(cpa!)} أقل من هدفك، لكن فيسبوك ما زال يتعلّم على هذه المجموعة`,
+        reason: `في آخر 3 أيام: تكلفة العميل ${money(cpa!)} أقل من هدفك، لكن فيسبوك ما زال يتعلّم على هذه المجموعة`,
         action: "واصل بدون أي تعديل — أي تغيير الآن يعيد تعلّم فيسبوك من الصفر؛ وسّع بعد خروجه من مرحلة التعلّم",
       };
     }
@@ -553,21 +603,21 @@ function continueRules(
         return {
           verdict: "continue",
           rule: "S3",
-          reason: `رابح بفارق كبير — تكلفة العميل ${money(cpa)} أقل بوضوح من هدفك (${money(target)}) وباستقرار`,
+          reason: `في آخر 3 أيام: رابح بفارق كبير — تكلفة العميل ${money(cpa)} أقل بوضوح من هدفك (${money(target)}) وباستقرار`,
           action: "انسخه لجمهور جديد مع الحفاظ على تفاعلاته — أفضل من رفع الميزانية كثيرًا",
         };
       }
       return {
         verdict: "continue",
         rule: "S4",
-        reason: `رابح ثابت — تكلفة العميل ${money(cpa!)} أقل من هدفك باستمرار`,
+        reason: `في آخر 3 أيام: رابح ثابت — تكلفة العميل ${money(cpa!)} أقل من هدفك باستمرار`,
         action: "لا تلمسه — أضف بجانبه نسخًا معدّلة خفيفة لتطيل عمره",
       };
     }
     return {
       verdict: "continue",
       rule: "S2",
-      reason: `تكلفة العميل ${money(cpa!)} أقل من هدفك (${money(target)})`,
+      reason: `في آخر 3 أيام: تكلفة العميل ${money(cpa!)} أقل من هدفك (${money(target)})`,
       action: "إن أردت التوسيع: زد الميزانية 20% فقط كل يومين أو ثلاثة — الزيادة الكبيرة تخرب التعلّم",
     };
   }
@@ -576,7 +626,7 @@ function continueRules(
     return {
       verdict: "continue",
       rule: "S2",
-      reason: `تكلفة العميل ${money(cpa!)} أقل من هدفك (${money(target)}) — لكن عدد النتائج ما زال قليلًا`,
+      reason: `في آخر 3 أيام: تكلفة العميل ${money(cpa!)} أقل من هدفك (${money(target)}) — لكن عدد النتائج ما زال قليلًا`,
       action: "واصل بنفس الميزانية — ووسّع بعد ثبات 3 أيام",
     };
   }
@@ -585,7 +635,7 @@ function continueRules(
   return {
     verdict: "continue",
     rule: "S2",
-    reason: `الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان ${ctrLink.toFixed(2)}%${ctrMedian !== null ? ` (متوسط حسابك ${ctrMedian.toFixed(2)}%)` : ""}`,
+    reason: `في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان ${ctrLink.toFixed(2)}%${ctrMedian !== null ? ` (متوسط حسابك ${ctrMedian.toFixed(2)}%)` : ""}`,
     action: "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام",
   };
 }
@@ -662,15 +712,16 @@ export function diagnose(
     }
   }
 
-  // 6. post-conversion (fallback — ad and page look fine). This is a catch-all
-  // for any clean kill/watch row, including delivery-timing rules (CB1/CB2/W2)
-  // whose 3-day metrics are clean, so it carries NO discovery-call CTA — a
-  // booking prompt here would be a false funnel signal.
+  // 6. post-conversion (fallback — ad and page look fine). Hotfix T8: now
+  // carries the discovery-call CTA so a clean ad + bad funnel still points
+  // the user to the right next step (matching the step-5 "page is broken"
+  // booking CTA logic, but for the "everything looks clean" case).
   if (findings.length === 0) {
     findings.push({
       step: 6,
-      text_ar: "الخطوة 6 — الإعلان والصفحة سليمان — إن كانت النتائج النهائية ضعيفة فالمشكلة فيما بعد البيع: الرسائل والمتابعة والمكالمات",
+      text_ar: "الخطوة 6 — المشكلة ليست بالاعلانات حالياً. المشكلة في العرض أو المسار التسويقي — احجز مكالمة تشخيصية مجانية.",
       primary: false,
+      ctaUrl: DISCOVERY_CALL_URL,
     });
   }
 
@@ -697,7 +748,7 @@ function evaluateCampaign(
     return {
       verdict: "too_early",
       rule: "GATE",
-      reason: "صرف الحملة أقل من تكلفة عميل واحد — لا يمكن الحكم عليها بعد",
+      reason: "في آخر 3 أيام: صرف الحملة أقل من تكلفة عميل واحد — لا يمكن الحكم عليها بعد",
       action: "اترك البيانات تتجمع",
     };
   }
@@ -711,7 +762,7 @@ function evaluateCampaign(
     return {
       verdict: "watch",
       rule: "W5",
-      reason: `الإعلانات تجلب عملاء بسعر جيد (${money(o.w3d.cpa)}) لكن المشكلة في العرض أو مسار الفانل — الإعلان بريء`,
+      reason: `في آخر 3 أيام: الإعلانات تجلب عملاء بسعر جيد (${money(o.w3d.cpa)}) لكن المشكلة في العرض أو مسار الفانل — الإعلان بريء`,
       action: "لا تغيّر شيئًا في الإعلانات — راجع العرض ومسار التحويل بعد البيع الأول، واحجز مكالمة تشخيصية",
       ctaUrl: DISCOVERY_CALL_URL,
     };
@@ -721,7 +772,7 @@ function evaluateCampaign(
     return {
       verdict: "continue",
       rule: "S2",
-      reason: `الحملة تربح: كل دولار تصرفه يرجع ${fullRoas.toFixed(1)} دولار عند حساب قيمة العميل الكاملة (${money(t.fullBuyerValue)})${killChildren ? ` — مع ${killChildren} إعلان/مجموعة تحتاج إيقافًا بالداخل` : ""}`,
+      reason: `في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع ${fullRoas.toFixed(1)}x عند حساب قيمة العميل الكاملة (${money(t.fullBuyerValue)})${killChildren ? ` — مع ${killChildren} إعلان/مجموعة تحتاج إيقافًا بالداخل` : ""}`,
       action: killChildren
         ? "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك"
         : "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة",
@@ -731,7 +782,7 @@ function evaluateCampaign(
     return {
       verdict: "watch",
       rule: "W6",
-      reason: `الحملة تغطي تكلفتها بالكاد (كل دولار يرجع ${fullRoas.toFixed(1)}) — فوق التعادل لكن الربح قليل`,
+      reason: `في آخر 3 أيام: الحملة تغطي تكلفتها بالكاد (full-funnel ROAS ${fullRoas.toFixed(1)}x) — فوق التعادل لكن الربح قليل`,
       action: "راقبها وأوقِف الإعلانات الحمراء بالداخل أولًا",
     };
   }
@@ -739,14 +790,14 @@ function evaluateCampaign(
     return {
       verdict: "kill",
       rule: "K1",
-      reason: `الحملة صرفت ${money(spend)} (ضعف هدفك) بدون أي نتيجة`,
+      reason: `في آخر 3 أيام: الحملة صرفت ${money(spend)} (ضعف هدفك) بدون أي نتيجة`,
       action: "أوقِف الحملة — لا تبيع أصلًا",
     };
   }
   return {
     verdict: "watch",
     rule: "W6",
-    reason: `الحملة تخسر حاليًا: كل دولار تصرفه يرجع ${fullRoas.toFixed(1)} فقط`,
+    reason: `في آخر 3 أيام: الحملة تخسر حاليًا — full-funnel ROAS ${fullRoas.toFixed(1)}x فقط`,
     action: "أوقِف الإعلانات الحمراء بالداخل وراجع عرضك وصفحتك قبل أي ميزانية إضافية",
   };
 }
@@ -770,7 +821,7 @@ function evaluateAd(
   // "الإعلان المحروم من الصرف لا يُحكم عليه بالـ CPA" — a starved ad can
   // never satisfy spend/impression gates precisely because it is starved,
   // so gating it would hide the rescue/kill decision the matrix exists for.
-  const starved = starvedAdMatrix(ad, parent, t, baselines);
+  const starved = starvedAdMatrix(ad, parent, t, baselines, archetype);
   if (starved) return starved;
 
   // 1. Gates
@@ -831,6 +882,10 @@ export function runEngine(
 ): EngineResult {
   const baselines = snapshot.baselines;
   const targets = deriveTargets(funnel, baselines);
+  // Hotfix T2: bind the currency symbol for this run so every money() call
+  // in this file (K1–K7, CB1/CB2, F1/F2, W1–W6, S1–S4, campaign reasons,
+  // buildSummary) renders the account's currency, not a hardcoded "$".
+  _currency = currencySymbolFor(snapshot.currency);
 
   const byId = new Map(snapshot.objects.map(o => [o.id, o]));
   const rows: EngineRow[] = [];
@@ -862,6 +917,11 @@ export function runEngine(
     promotion_eligible: !!fired.promotionEligible,
     promotion_note: fired.promotionNote ?? null,
     learning_phase: !!o.learningPhase || weeklyConversions(o) < 50,
+    // Hotfix T9: 3-day ROAS = conversionValue / spend. null when either
+    // is 0 — surfaces an explicit "—" in the column instead of 0.00x.
+    roas_3d: o.w3d.spend > 0 && o.w3d.conversionValue > 0
+      ? round2(o.w3d.conversionValue / o.w3d.spend)
+      : null,
   });
 
   // Evaluate ads first (needed for nothing), then adsets, then campaigns (need children)
@@ -931,7 +991,7 @@ export function runEngine(
   }
 
   const summary = buildSummary(rows, snapshot, targets);
-  return { rows, summary, targets };
+  return { rows, summary, targets, currencySymbol: _currency };
 }
 
 function computeCadence(snapshot: AccountSnapshotPayload): AccountSummary["cadence"] {

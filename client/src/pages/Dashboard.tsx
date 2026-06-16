@@ -139,7 +139,7 @@ export default function Dashboard() {
   const { result, checks, isDemo, settingsReviewDue } = d;
   const accountExternalId = (d as { accountExternalId?: string }).accountExternalId;
   const series = ((d as { series?: SeriesObj[] }).series ?? []) as SeriesObj[];
-  const { rows, summary, targets } = result;
+  const { rows, summary, targets, currencySymbol } = result;
 
   return (
     <Shell
@@ -170,8 +170,8 @@ export default function Dashboard() {
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
             <span>
               سعر الظهور على حسابك ارتفع {summary.account_alert.deltaPct}% مقارنة
-              بمتوسط آخر 14 يومًا ({money(summary.account_alert.cpmNow)} مقابل{" "}
-              {money(summary.account_alert.cpmAvg14)}). السبب الغالب: المنافسة أو
+              بمتوسط آخر 14 يومًا ({money(summary.account_alert.cpmNow, currencySymbol)} مقابل{" "}
+              {money(summary.account_alert.cpmAvg14, currencySymbol)}). السبب الغالب: المنافسة أو
               الموسم — وليس تصاميمك. توقّع تكلفة أعلى مؤقتًا.
             </span>
           </div>
@@ -226,10 +226,10 @@ export default function Dashboard() {
       {/* Sticky summary strip */}
       <div className="sticky top-0 z-30 border-b border-border/60 bg-background/95 backdrop-blur">
         <div className="container flex gap-4 overflow-x-auto py-3 text-center [scrollbar-width:none]">
-          <Stat label="صرف 3 أيام" value={money(summary.total_spend_3d)} />
+          <Stat label="صرف 3 أيام" value={money(summary.total_spend_3d, currencySymbol)} />
           <Stat
             label="نزيف يومي"
-            value={money(summary.bleed_daily)}
+            value={money(summary.bleed_daily, currencySymbol)}
             cls={summary.bleed_daily > 0 ? "text-v-kill" : "text-v-continue"}
           />
           <Stat label="للإيقاف 🔴" value={String(summary.counts.kill)} cls="text-v-kill" />
@@ -243,9 +243,9 @@ export default function Dashboard() {
           />
           <Stat
             label="متوسط تكلفة العميل (30 يوم)"
-            value={money(summary.baselines.cpaMedian30 ?? undefined)}
+            value={money(summary.baselines.cpaMedian30 ?? undefined, currencySymbol)}
           />
-          <Stat label="هدف تكلفة العميل" value={money(targets.unitTarget)} cls="text-primary" />
+          <Stat label="هدف تكلفة العميل" value={money(targets.unitTarget, currencySymbol)} cls="text-primary" />
         </div>
       </div>
 
@@ -273,6 +273,7 @@ export default function Dashboard() {
             searchTerm={tableSearch}
             onSearchTermChange={setTableSearch}
             summary={summary ?? null}
+            currencySymbol={currencySymbol}
           />
         </div>
 

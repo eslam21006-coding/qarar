@@ -135,6 +135,7 @@ export interface WindowMetrics {
   cpm: number;
   cpc: number;
   conversions: number;
+  /** value of conversions reported by Meta (used for ROAS = value / spend) */
   conversionValue: number;
   /** landing page views (from actions) */
   lpViews: number;
@@ -261,6 +262,8 @@ export interface EngineRow {
   conversions_3d: number;
   frequency_3d: number;
   spend_share_pct: number | null;
+  /** 3-day ROAS = conversionValue / spend. null when either is 0. */
+  roas_3d: number | null;
   age_days: number;
   verdict: Verdict;
   rule: RuleCode;
@@ -321,6 +324,8 @@ export interface EngineResult {
   rows: EngineRow[];
   summary: AccountSummary;
   targets: DerivedTargets;
+  /** Display symbol for the account's currency (e.g. "AED" → "د.إ"). */
+  currencySymbol: string;
 }
 
 // ---------- Helpers shared by client & server ----------

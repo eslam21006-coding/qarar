@@ -301,14 +301,38 @@ export const appRouter = router({
         }
         const token = await getUserToken(ctx.user.id);
         try {
-          const payload = await buildSnapshot(
-            token,
-            account.accountId,
-            account.currency ?? "USD"
-          );
+          // Hotfix T1: race buildSnapshot against a 25s timeout. Cloudflare
+          // returns an HTML 524 page when a worker exceeds 30s; the client
+          // then tries to parse the HTML as JSON and surfaces
+          // "Unexpected token '<'". A clean TRPCError TIMEOUT lets the UI
+          // show a friendly message and try again.
+          const payload = await Promise.race([
+            buildSnapshot(
+              token,
+              account.accountId,
+              account.currency ?? "USD"
+            ),
+            new Promise<never>((_, reject) =>
+              setTimeout(
+                () =>
+                  reject(
+                    new TRPCError({
+                      code: "TIMEOUT",
+                      message:
+                        "استغرق تحميل البيانات وقتًا طويلًا — المرجح أن حسابك كبير. حاول مرة أخرى وستعمل عادةً في المحاولة الثانية.",
+                    })
+                  ),
+                25_000
+              )
+            ),
+          ]);
           await db.saveSnapshot(ctx.user.id, account.id, payload);
           savedPayload = payload;
         } catch (e: any) {
+          if (e?.code === "TIMEOUT") {
+            await db.saveSnapshot(ctx.user.id, account.id, null, "error", e.message);
+            throw e;
+          }
           if (e.isAuthError) {
             await db.markConnectionStatus(ctx.user.id, "expired");
             throw new TRPCError({ code: "PRECONDITION_FAILED", message: "RECONNECT_REQUIRED" });
