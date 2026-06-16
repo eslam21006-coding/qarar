@@ -161,6 +161,7 @@ export interface NormalizedObject {
   campaignId: string | null;
   dailyBudget: number | null; // account currency units
   bidStrategy?: string | null;
+  objective?: string | null;
   createdTime?: string | null;
   ageDays: number;
   w3d: WindowMetrics;
@@ -235,6 +236,13 @@ export interface DerivedTargets {
 
 // ---------- Engine output ----------
 
+export interface Finding {
+  step: 1 | 2 | 3 | 4 | 5 | 6;
+  text_ar: string;
+  primary: boolean;
+  ctaUrl?: string;
+}
+
 export interface EngineRow {
   id: string;
   name: string;
@@ -243,6 +251,7 @@ export interface EngineRow {
   parentId: string | null;
   campaignId: string | null;
   daily_budget: number | null;
+  objective: string | null;
   spend_3d: number;
   spend_today: number;
   impressions_3d: number;
@@ -257,7 +266,7 @@ export interface EngineRow {
   rule: RuleCode;
   reason_ar: string;
   action_ar: string;
-  diagnosis: string | null;
+  findings: Finding[];
   promotion_eligible: boolean;
   promotion_note: string | null;
   learning_phase: boolean;
@@ -269,11 +278,19 @@ export interface TopAction {
   objectId: string;
   objectName: string;
   level: ObjectLevel;
+  parentId: string | null;
+  campaignId: string | null;
   rule: RuleCode;
   verdict: Verdict;
   action_ar: string;
   impact_ar: string;
   impactValue: number;
+}
+
+export interface Cadence {
+  state: "stall" | "reminder" | "ok" | "unknown";
+  daysSinceLast: number | null;
+  message_ar: string;
 }
 
 export interface AccountSummary {
@@ -286,6 +303,18 @@ export interface AccountSummary {
   attributionStraddle: boolean;
   fetchedAt: string;
   currency: string;
+  account_funnel_cta: { reason_ar: string; ctaUrl: string } | null;
+  account_alert: {
+    cpmNow: number;
+    cpmAvg14: number;
+    deltaPct: number;
+  } | null;
+  /**
+   * US9 — creative-factory cadence. Null when state is "ok" (≤7 days since
+   * the most recent ad was created). Otherwise carries the state, days since
+   * last new ad, and a simple-Arabic message for the account-level signal.
+   */
+  cadence: Cadence | null;
 }
 
 export interface EngineResult {

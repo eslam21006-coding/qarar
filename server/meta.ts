@@ -146,6 +146,40 @@ export async function setObjectStatus(
   }
 }
 
+/**
+ * US13 — update the daily_budget on a campaign / ad set.
+ * Meta stores budgets in minor units (cents). The caller passes the value
+ * already rounded to minor units; do not re-multiply.
+ */
+export async function setDailyBudget(
+  token: string,
+  objectId: string,
+  newBudgetMinorUnits: number
+): Promise<void> {
+  const body = new URLSearchParams({
+    daily_budget: String(Math.round(newBudgetMinorUnits)),
+    access_token: token,
+  });
+  const res = await fetch(`${GRAPH}/${objectId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) {
+    const err = json.error || {};
+    const e: any = new Error(err.message || `Meta API error ${res.status}`);
+    e.isAuthError = err.code === 190 || err.type === "OAuthException";
+    e.needsPermission = err.code === 200 || err.code === 10;
+    // Meta code 4 is "Application request limit reached" (a rate limit), not a
+    // minimum-budget violation — keep it out of belowMinimum so routers map it
+    // to TOO_MANY_REQUESTS instead of BUDGET_BELOW_MINIMUM (checked first).
+    e.belowMinimum = err.error_subcode === 1885994;
+    e.isRateLimit = err.code === 17 || err.code === 4 || err.code === 32 || err.error_subcode === 2443279;
+    throw e;
+  }
+}
+
 /** Revoke the app's permissions for this user (disconnect). */
 export async function revokeToken(token: string): Promise<void> {
   try {
@@ -287,7 +321,7 @@ async function graphGetAll(
 
 async function fetchHierarchy(token: string, accountId: string) {
   const campaigns = await graphGetAll(`/${accountId}/campaigns`, {
-    fields: "id,name,status,effective_status,daily_budget,lifetime_budget,bid_strategy,created_time",
+    fields: "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,created_time",
     limit: "200",
     access_token: token,
   });
@@ -423,6 +457,7 @@ export async function buildSnapshot(
       campaignId: c.id,
       dailyBudget: c.daily_budget ? parseInt(c.daily_budget) / 100 : null,
       bidStrategy: c.bid_strategy ?? null,
+      objective: c.objective ?? null,
       createdTime: c.created_time ?? null,
       ageDays: ageDaysFrom(c.created_time),
       w3d: parseInsightsRow(firstRow(w3dMaps.get("campaign")!.get(c.id))),

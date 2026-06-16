@@ -11,6 +11,7 @@ import {
   buildSnapshot,
   fetchAdAccounts,
   revokeToken,
+  setDailyBudget,
   setObjectStatus,
   META_APP_ID,
 } from "./meta";
@@ -292,8 +293,10 @@ export const appRouter = router({
       .input(z.object({ adAccountId: z.number() }))
       .mutation(async ({ ctx, input }) => {
         const account = await requireAccount(ctx.user.id, input.adAccountId);
+        let savedPayload: AccountSnapshotPayload | null = null;
         if (account.isDemo) {
-          await db.saveSnapshot(ctx.user.id, account.id, buildDemoSnapshot());
+          savedPayload = buildDemoSnapshot();
+          await db.saveSnapshot(ctx.user.id, account.id, savedPayload);
           return { success: true };
         }
         const token = await getUserToken(ctx.user.id);
@@ -304,6 +307,7 @@ export const appRouter = router({
             account.currency ?? "USD"
           );
           await db.saveSnapshot(ctx.user.id, account.id, payload);
+          savedPayload = payload;
         } catch (e: any) {
           if (e.isAuthError) {
             await db.markConnectionStatus(ctx.user.id, "expired");
@@ -317,6 +321,20 @@ export const appRouter = router({
           }
           await db.saveSnapshot(ctx.user.id, account.id, null, "error", e.message);
           throw new TRPCError({ code: "BAD_GATEWAY", message: e.message });
+        }
+        // US12 / T052 — record verdict transitions. Best-effort; never block
+        // the refresh on a history write.
+        if (savedPayload) {
+          try {
+            const funnel = await db.getFunnel(ctx.user.id, account.id);
+            const funnelInputs: FunnelInputs = funnel
+              ? funnelToInputs(funnel)
+              : DEMO_FUNNEL;
+            const result = runEngine(savedPayload, funnelInputs);
+            await db.recordVerdicts(ctx.user.id, account.id, result.rows);
+          } catch {
+            // best-effort — never block the refresh on a history write
+          }
         }
         return { success: true };
       }),
@@ -384,6 +402,114 @@ export const appRouter = router({
         obj.effectiveStatus = input.status;
         await db.saveSnapshot(ctx.user.id, account.id, payload!);
         return { success: true, simulated: false };
+      }),
+
+    /**
+     * US13 — adjust the daily_budget on a campaign / ad set by ±20%.
+     * Mirrors setStatus scaffold (ownership → object presence → demo/live
+     * branch → reflect in cache → saveSnapshot). Requires ads_management
+     * (enforced server-side; the call below fails with needsPermission
+     * if the token lacks the scope).
+     */
+    setBudget: protectedProcedure
+      .input(
+        z.object({
+          adAccountId: z.number(),
+          objectId: z.string().max(64),
+          newBudget: z.number().min(0),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        const account = await requireAccount(ctx.user.id, input.adAccountId);
+        const snap = await db.getLatestSnapshot(ctx.user.id, input.adAccountId);
+        const payload = snap?.payload as AccountSnapshotPayload | null;
+        const obj = payload?.objects.find(o => o.id === input.objectId);
+        if (!obj) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "العنصر غير موجود في هذا الحساب" });
+        }
+        if (obj.dailyBudget === null) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "NO_DAILY_BUDGET" });
+        }
+        // Normalize the requested budget to 2-decimal units (Meta's minor units
+        // are cents; we accept dollars-in from the client and convert).
+        const normalized = Math.round(input.newBudget * 100) / 100;
+        const currentMinor = Math.round(obj.dailyBudget * 100);
+        const nextMinor = Math.round(normalized * 100);
+        // Meta's per-object daily-budget floor: $1 = 100 minor units.
+        if (nextMinor < 100) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "BUDGET_BELOW_MINIMUM" });
+        }
+        // Server-side ±20% guard: this endpoint is for ±20% nudges only.
+        // Larger jumps must go through a different (future) workflow.
+        if (nextMinor > currentMinor * 1.2 || nextMinor < currentMinor * 0.8) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "BUDGET_DELTA_OUT_OF_RANGE",
+          });
+        }
+        if (account.isDemo) {
+          // simulate in the cached demo snapshot
+          obj.dailyBudget = normalized;
+          await db.saveSnapshot(ctx.user.id, account.id, payload!);
+          return { success: true, simulated: true, newBudget: normalized };
+        }
+        const token = await getUserToken(ctx.user.id);
+        try {
+          await setDailyBudget(token, input.objectId, nextMinor);
+        } catch (e: any) {
+          if (e.isAuthError) {
+            await db.markConnectionStatus(ctx.user.id, "expired");
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "RECONNECT_REQUIRED" });
+          }
+          if (e.needsPermission) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "NEEDS_RECONNECT_PERMISSION" });
+          }
+          if (e.belowMinimum) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "BUDGET_BELOW_MINIMUM" });
+          }
+          if (e.isRateLimit) {
+            throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "RATE_LIMITED" });
+          }
+          throw new TRPCError({ code: "BAD_GATEWAY", message: e.message });
+        }
+        // reflect the change in the cached snapshot immediately
+        obj.dailyBudget = normalized;
+        await db.saveSnapshot(ctx.user.id, account.id, payload!);
+        return { success: true, simulated: false, newBudget: normalized };
+      }),
+  }),
+
+  // US12 / T053 — verdict history (per-object timeline). Strictly per-user:
+  // every query filters by ctx.user.id from the session, never by a
+  // client-supplied userId.
+  history: router({
+    getForObject: protectedProcedure
+      .input(
+        z.object({
+          adAccountId: z.number(),
+          objectId: z.string().max(64),
+        })
+      )
+      .query(async ({ ctx, input }) => {
+        // Ownership check on the account — fails for other users' accounts.
+        await requireAccount(ctx.user.id, input.adAccountId);
+        const entries = await db.getVerdictHistory(
+          ctx.user.id,
+          input.adAccountId,
+          input.objectId
+        );
+        return {
+          entries: entries.map(e => ({
+            verdict: e.verdict as "kill" | "watch" | "continue" | "rescue" | "too_early",
+            rule: e.rule as "K1" | "K2" | "K3" | "K4" | "K5" | "K6" | "K7" | "CB1" | "CB2" | "F1" | "F2" | "W1" | "W2" | "W3" | "W4" | "W5" | "W6" | "S1" | "S2" | "S3" | "S4" | "GATE",
+            objectName: e.objectName,
+            level: e.level,
+            cpa: e.cpa,
+            spend3d: e.spend3d,
+            ctrLink: e.ctrLink,
+            evaluatedAt: e.evaluatedAt.toISOString(),
+          })),
+        };
       }),
   }),
 });

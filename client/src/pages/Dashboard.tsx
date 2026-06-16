@@ -3,10 +3,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { VerdictBadge } from "@/components/Verdict";
+import { RULES } from "@shared/qarar";
 import { money, pct, timeAgoAr } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import type { EngineRow, TopAction } from "@shared/qarar";
+import type { EngineRow, Finding, TopAction } from "@shared/qarar";
 import {
   Activity,
   AlertTriangle,
@@ -17,7 +19,7 @@ import {
   Settings as SettingsIcon,
   Stethoscope,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useParams } from "wouter";
 
@@ -39,7 +41,7 @@ export default function Dashboard() {
     },
     onError: e => {
       if (e.message === "RECONNECT_REQUIRED") {
-        toast.error("انتهت صلاحية التوكن — أعد توصيل حساب ميتا");
+        toast.error("انتهت صلاحية رمز الوصول — أعد توصيل حساب ميتا");
         navigate("/");
       } else if (e.message === "RATE_LIMITED") {
         toast.error("ميتا قيّدت الطلبات مؤقتًا — حاول بعد دقائق");
@@ -48,6 +50,14 @@ export default function Dashboard() {
       }
     },
   });
+
+  const [tableSearch, setTableSearch] = useState("");
+  const tableRef = useRef<HTMLDivElement>(null);
+
+  const focusObject = (name: string) => {
+    setTableSearch(name);
+    tableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   if (dash.isLoading) return <DashboardSkeleton />;
 
@@ -153,6 +163,55 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Account-level CPM alert (US2) — rendered ONCE from summary.account_alert */}
+      {summary.account_alert && (
+        <div className="border-b border-amber-500/30 bg-amber-500/10">
+          <div className="container flex items-start gap-2 py-2 text-xs">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+            <span>
+              سعر الظهور على حسابك ارتفع {summary.account_alert.deltaPct}% مقارنة
+              بمتوسط آخر 14 يومًا ({money(summary.account_alert.cpmNow)} مقابل{" "}
+              {money(summary.account_alert.cpmAvg14)}). السبب الغالب: المنافسة أو
+              الموسم — وليس تصاميمك. توقّع تكلفة أعلى مؤقتًا.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* US9 / T057 — creative-factory cadence indicator (account-level signal,
+          clearly separated from any verdict). */}
+      {summary.cadence && (
+        <div
+          className={`border-b py-2 text-xs ${
+            summary.cadence.state === "stall"
+              ? "border-v-kill/40 bg-v-kill/10 text-v-kill"
+              : summary.cadence.state === "reminder"
+              ? "border-v-watch/30 bg-v-watch/10 text-amber-700"
+              : "border-border/40 bg-muted/20 text-muted-foreground"
+          }`}
+          data-testid="cadence_indicator"
+          data-cadence-state={summary.cadence.state}
+        >
+          <div className="container flex items-center gap-2">
+            <span className="text-base leading-none" aria-hidden>
+              {summary.cadence.state === "stall"
+                ? "🛑"
+                : summary.cadence.state === "reminder"
+                ? "⏰"
+                : "❔"}
+            </span>
+            <span className="font-bold">
+              {summary.cadence.state === "stall"
+                ? "المصنع متوقف"
+                : summary.cadence.state === "reminder"
+                ? "تذكير"
+                : "غير معروف"}
+            </span>
+            <span>{summary.cadence.message_ar}</span>
+          </div>
+        </div>
+      )}
+
       {settingsReviewDue && (
         <div className="border-b border-primary/20 bg-primary/5">
           <div className="container flex items-center justify-between gap-2 py-2 text-xs">
@@ -196,20 +255,29 @@ export default function Dashboard() {
           actions={summary.top_3_actions}
           checks={checks}
           accountId={accountId}
+          onFocusObject={focusObject}
         />
+
+        {/* US8 — dedicated promotion list for S1-eligible ads */}
+        <PromotionList rows={rows} />
 
         {/* Decision table with drill-down */}
-        <DecisionTable
-          rows={rows}
-          series={series}
-          unitTarget={targets.unitTarget}
-          actId={isDemo ? null : (accountExternalId ?? null)}
-          accountId={accountId}
-          isDemo={!!isDemo}
-        />
+        <div ref={tableRef}>
+          <DecisionTable
+            rows={rows}
+            series={series}
+            unitTarget={targets.unitTarget}
+            actId={isDemo ? null : (accountExternalId ?? null)}
+            accountId={accountId}
+            isDemo={!!isDemo}
+            searchTerm={tableSearch}
+            onSearchTermChange={setTableSearch}
+            summary={summary ?? null}
+          />
+        </div>
 
         {/* Deep diagnosis section */}
-        <DiagnosisSection rows={rows} />
+        <DiagnosisSection rows={rows} summary={summary} />
       </main>
     </Shell>
   );
@@ -349,10 +417,12 @@ function TodayActions({
   actions,
   checks,
   accountId,
+  onFocusObject,
 }: {
   actions: TopAction[];
   checks: { actionKey: string; done: boolean }[];
   accountId: number;
+  onFocusObject: (name: string) => void;
 }) {
   const utils = trpc.useUtils();
   const setCheck = trpc.dashboard.setCheck.useMutation({
@@ -398,43 +468,54 @@ function TodayActions({
           actions.map(a => {
             const done = doneMap.get(a.key) ?? false;
             return (
-              <div
-                key={a.key}
-                className={`flex items-start gap-3 rounded-lg border p-3 transition-opacity ${
-                  done
-                    ? "border-border/40 bg-background/30 opacity-55"
-                    : "border-border/60 bg-background/60"
-                }`}
-              >
-                <Checkbox
-                  checked={done}
-                  onCheckedChange={v =>
-                    setCheck.mutate({
-                      adAccountId: accountId,
-                      actionKey: a.key,
-                      done: v === true,
-                    })
-                  }
-                  className="mt-1"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="num rounded bg-white/10 px-1.5 text-[10px] font-bold">
-                      #{a.rank}
-                    </span>
-                    <VerdictBadge verdict={a.verdict} rule={a.rule} />
-                    <span className={`truncate text-sm font-bold ${done ? "line-through" : ""}`}>
-                      {a.objectName}
-                    </span>
+              <Tooltip key={a.key}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => onFocusObject(a.objectName)}
+                    className={`flex w-full items-start gap-3 rounded-lg border p-3 text-start transition-opacity ${
+                      done
+                        ? "border-border/40 bg-background/30 opacity-55"
+                        : "border-border/60 bg-background/60 hover:border-primary/40 hover:bg-primary/5"
+                    } cursor-pointer`}
+                  >
+                    <Checkbox
+                      checked={done}
+                      onCheckedChange={v =>
+                        setCheck.mutate({
+                          adAccountId: accountId,
+                          actionKey: a.key,
+                          done: v === true,
+                        })
+                      }
+                      onClick={e => e.stopPropagation()}
+                      className="mt-1"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="num rounded bg-white/10 px-1.5 text-[10px] font-bold">
+                          #{a.rank}
+                        </span>
+                        <VerdictBadge verdict={a.verdict} rule={a.rule} />
+                        <span className={`truncate text-sm font-bold ${done ? "line-through" : ""}`}>
+                          {a.objectName}
+                        </span>
+                      </div>
+                      <p className={`mt-1 text-sm ${done ? "line-through opacity-70" : ""}`}>
+                        {a.action_ar}
+                      </p>
+                    </div>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs">
+                  <div className="space-y-1 text-start">
+                    <div className="num text-xs font-semibold">{a.impact_ar}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      قاعدة: {RULES[a.rule]?.titleAr ?? a.rule}
+                    </div>
                   </div>
-                  <p className={`mt-1 text-sm ${done ? "line-through opacity-70" : ""}`}>
-                    {a.action_ar}
-                  </p>
-                  <p className="num mt-0.5 text-[11px] text-muted-foreground" dir="rtl">
-                    {a.impact_ar}
-                  </p>
-                </div>
-              </div>
+                </TooltipContent>
+              </Tooltip>
             );
           })
         )}
@@ -444,38 +525,130 @@ function TodayActions({
 }
 
 // ============================================================
-// Deep diagnosis — ladder output for every 🔴/🟡 unit
+// Deep diagnosis — findings for every 🔴/🟡 unit
 // ============================================================
 
-function DiagnosisSection({ rows }: { rows: EngineRow[] }) {
+function DiagnosisSection({
+  rows,
+  summary,
+}: {
+  rows: EngineRow[];
+  summary: { account_funnel_cta: { reason_ar: string; ctaUrl: string } | null };
+}) {
   const diagRows = rows.filter(
-    r => (r.verdict === "kill" || r.verdict === "watch") && r.diagnosis
+    r => (r.verdict === "kill" || r.verdict === "watch") && r.findings.length > 0
   );
-  if (diagRows.length === 0) return null;
+  if (diagRows.length === 0 && !summary.account_funnel_cta) return null;
   return (
     <Card className="border-border/60">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Stethoscope className="h-4 w-4 text-primary" />
-          فين المشكلة بالظبط؟
+          أين المشكلة تحديداً؟
         </CardTitle>
         <p className="text-xs text-muted-foreground">
-          لكل إعلان عليه علامة 🔴 أو 🟡، بنفحص رحلة العميل خطوة خطوة ونقولك أول حتة بتخسر فيها الناس
+          لكل إعلان عليه علامة 🔴 أو 🟡، نفحص رحلة العميل خطوة بخطوة ونوضح أول مرحلة تفقد فيها العملاء
         </p>
       </CardHeader>
-      <CardContent className="space-y-2">
+      <CardContent className="space-y-3">
+        {/* Account-level funnel CTA card */}
+        {summary.account_funnel_cta && (
+          <div className="rounded-lg border-2 border-primary/40 bg-primary/5 p-4">
+            <p className="text-sm font-bold leading-relaxed">
+              {summary.account_funnel_cta.reason_ar}
+            </p>
+            <Button asChild className="mt-3 font-bold">
+              <a
+                href={summary.account_funnel_cta.ctaUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                احجز مكالمة تشخيصية مجانية
+              </a>
+            </Button>
+          </div>
+        )}
+
         {diagRows.map(r => (
           <div
             key={r.id}
-            className="flex flex-wrap items-start gap-2 rounded-lg border border-border/50 bg-background/50 p-3"
+            className="rounded-lg border border-border/50 bg-background/50 p-3"
           >
-            <VerdictBadge verdict={r.verdict} rule={r.rule} />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-bold">{r.name}</div>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                {r.diagnosis}
-              </p>
+            <div className="mb-2 flex items-center gap-2">
+              <VerdictBadge verdict={r.verdict} rule={r.rule} />
+              <span className="truncate text-sm font-bold">{r.name}</span>
             </div>
+            <div className="space-y-1.5">
+              {r.findings.map((f, i) => (
+                <FindingRow key={i} finding={f} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function FindingRow({ finding }: { finding: Finding }) {
+  return (
+    <div className={finding.primary ? "" : "opacity-60"}>
+      <p
+        className={`text-xs leading-relaxed ${
+          finding.primary ? "font-bold text-foreground" : "text-muted-foreground"
+        }`}
+      >
+        {finding.primary && <span className="ml-1 text-primary">★</span>}
+        {finding.text_ar}
+      </p>
+      {finding.ctaUrl && (
+        <Button asChild size="sm" className="mt-1.5 font-bold">
+          <a
+            href={finding.ctaUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            احجز مكالمة تشخيصية مجانية
+          </a>
+        </Button>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// US8 — dedicated promotion list for S1-eligible ads
+// ============================================================
+
+function PromotionList({ rows }: { rows: EngineRow[] }) {
+  const eligible = rows.filter(r => r.promotion_eligible && r.promotion_note);
+  if (eligible.length === 0) return null;
+  return (
+    <Card className="border-emerald-500/40 bg-gradient-to-b from-emerald-500/10 to-transparent">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-lg font-extrabold">
+          <span className="text-emerald-600">🚀</span>
+          <span>إعلانات جاهزة للتوسيع</span>
+          <span className="text-xs font-normal text-muted-foreground">
+            قائمة الترقيات
+          </span>
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          إعلانات حققت هدفها 3 أيام متتالية وتفاعلها فوق المعتاد — انسخها إلى
+          حملة التوسيع باستخدام Post ID حتى تنتقل الإعجابات والتعليقات ويقل سعر الظهور (CPM).
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {eligible.map(r => (
+          <div
+            key={r.id}
+            className="rounded-lg border border-emerald-500/30 bg-background/70 p-3"
+          >
+            <div className="mb-1 flex flex-wrap items-center gap-2">
+              <VerdictBadge verdict={r.verdict} rule={r.rule} />
+              <span className="truncate text-sm font-extrabold">{r.name}</span>
+            </div>
+            <p className="text-sm leading-relaxed">{r.promotion_note}</p>
           </div>
         ))}
       </CardContent>

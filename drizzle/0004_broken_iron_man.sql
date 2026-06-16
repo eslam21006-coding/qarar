@@ -1,0 +1,1 @@
+CREATE INDEX `idx_verdictHistory_user_account_object` ON `verdictHistory` (`userId`,`adAccountId`,`objectId`,`evaluatedAt`);
