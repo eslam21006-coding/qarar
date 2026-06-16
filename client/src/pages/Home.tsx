@@ -239,7 +239,7 @@ function ConnectScreen({
                     : status.data?.connected
                       ? `متوصل: ${status.data.fbUserName ?? ""}`
                       : status.data?.needsReauth
-                        ? "انتهت صلاحية التوكن — أعد التوصيل"
+                        ? "انتهت صلاحية رمز الوصول — أعد التوصيل"
                         : "غير متوصل — صلاحية القراءة فقط (ads_read)"}
                 </div>
               </div>
@@ -267,7 +267,7 @@ function ConnectScreen({
                     onClick={() => {
                       if (
                         window.confirm(
-                          "هيتم فصل حساب ميتا وحذف كل بياناتك من قرار (التوكن، الإعدادات، الكاش). متأكد؟"
+                          "هيتم فصل حساب ميتا وحذف كل بياناتك من قرار (رمز الوصول، الإعدادات، البيانات المحفوظة). متأكد؟"
                         )
                       )
                         disconnect.mutate();

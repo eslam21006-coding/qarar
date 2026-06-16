@@ -28,23 +28,31 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { VerdictBadge } from "@/components/Verdict";
+import { VerdictHistoryDialog } from "@/components/VerdictHistoryDialog";
 import { cpaColorClass, ctrColorClass, money, num, pct } from "@/lib/format";
+import { cpaCell } from "@/lib/cellFormat";
+import { applyFilters, FILTER_FIELDS, type FilterAgg, type FilterField, type FilterJoin, type FilterOp, type FilterRule } from "@/lib/filters";
+import { aggregateTotals } from "@/lib/aggregate";
 import { trpc } from "@/lib/trpc";
-import type { DailyMetrics, EngineRow, Verdict, WindowMetrics } from "@shared/qarar";
+import type { AccountSummary, DailyMetrics, EngineRow, Verdict, WindowMetrics } from "@shared/qarar";
 import {
   ArrowDown,
   ArrowUp,
   ChevronLeft,
   Columns3,
   ExternalLink,
+  Eye,
+  Filter,
+  History,
   ImageOff,
   Loader2,
   Pause,
   Play,
+  Plus,
   Search,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 // ---------- series payload from dashboard.get ----------
@@ -84,25 +92,14 @@ function dateStr(off: number): string {
   );
 }
 
-interface Agg {
-  spend: number;
-  impressions: number;
-  results: number;
-  cpa: number | null;
-  ctrLink: number | null;
-  ctrAll: number | null;
-  cpm: number | null;
-  cpc: number | null;
-  hookRate: number | null;
-  holdRate: number | null;
-  lpRate: number | null;
-}
-
-function aggFromWindow(w: WindowMetrics): Agg {
+function aggFromWindow(w: WindowMetrics): FilterAgg {
   return {
     spend: w.spend,
     impressions: w.impressions,
     results: w.conversions,
+    linkClicks: w.linkClicks,
+    clicks: w.clicks,
+    lpViews: w.lpViews,
     cpa: w.conversions > 0 ? w.spend / w.conversions : null,
     ctrLink: w.impressions > 0 ? w.ctrLink : null,
     ctrAll: w.impressions > 0 ? w.ctrAll : null,
@@ -117,10 +114,12 @@ function aggFromWindow(w: WindowMetrics): Agg {
         ? ((w.thruplays ?? 0) / (w.videoViews3s ?? 1)) * 100
         : null,
     lpRate: w.linkClicks > 0 && w.lpViews > 0 ? (w.lpViews / w.linkClicks) * 100 : null,
+    frequency: null,
+    spendShare: null,
   };
 }
 
-function aggregate(s: SeriesObj | undefined, range: RangeKey, from: string, to: string): Agg | null {
+function aggregate(s: SeriesObj | undefined, range: RangeKey, from: string, to: string): FilterAgg | null {
   if (!s) return null;
   if (range === "today") return aggFromWindow(s.today);
   // if the daily series is missing entirely, fall back to the engine's 3-day window
@@ -145,6 +144,9 @@ function aggregate(s: SeriesObj | undefined, range: RangeKey, from: string, to: 
     spend,
     impressions: imps,
     results: conv,
+    linkClicks,
+    clicks,
+    lpViews: lp,
     cpa: conv > 0 ? spend / conv : null,
     ctrLink: imps > 0 ? (linkClicks / imps) * 100 : null,
     ctrAll: imps > 0 ? (clicks / imps) * 100 : null,
@@ -153,6 +155,8 @@ function aggregate(s: SeriesObj | undefined, range: RangeKey, from: string, to: 
     hookRate: imps > 0 && v3 > 0 ? (v3 / imps) * 100 : null,
     holdRate: v3 > 0 && tp > 0 ? (tp / v3) * 100 : null,
     lpRate: linkClicks > 0 && lp > 0 ? (lp / linkClicks) * 100 : null,
+    frequency: null,
+    spendShare: null,
   };
 }
 
@@ -169,7 +173,8 @@ type ColKey =
   | "holdRate"
   | "lpRate"
   | "spendShare"
-  | "frequency";
+  | "frequency"
+  | "impressions";
 
 const ALL_COLUMNS: { key: ColKey; label: string; adOnly?: boolean }[] = [
   { key: "spend", label: "Spend" },
@@ -184,6 +189,7 @@ const ALL_COLUMNS: { key: ColKey; label: string; adOnly?: boolean }[] = [
   { key: "lpRate", label: "LP View %" },
   { key: "spendShare", label: "% Spend", adOnly: true },
   { key: "frequency", label: "Frequency" },
+  { key: "impressions", label: "مشاهدات" },
 ];
 
 const DEFAULT_VISIBLE: ColKey[] = ["spend", "results", "cpa", "ctrLink", "spendShare"];
@@ -207,6 +213,37 @@ const VERDICT_CHIPS: { v: Verdict; label: string }[] = [
   { v: "too_early", label: "⏳ مبكّر" },
 ];
 
+const LEVEL_LABELS_AR: Record<string, string> = {
+  campaign: "حملة",
+  adset: "مجموعة",
+  ad: "إعلان",
+};
+
+// Arabic labels for enum filter VALUE options (US5 / Gate 3-III).
+const VERDICT_FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: "kill", label: "🔴 أوقف" },
+  { value: "watch", label: "🟡 راقب" },
+  { value: "continue", label: "🟢 كمّل" },
+  { value: "rescue", label: "🛟 أنقذ" },
+  { value: "too_early", label: "⏳ مبكر" },
+];
+const STATUS_FILTER_LABELS: Record<string, string> = { ACTIVE: "نشط", PAUSED: "موقوف" };
+
+const OP_LABELS_AR: Record<FilterOp, string> = {
+  is: "يساوي",
+  is_not: "لا يساوي",
+  contains: "يحتوي على",
+  ">=": "أكبر من أو يساوي",
+  "<=": "أصغر من أو يساوي",
+  between: "بين",
+};
+
+const OPS_BY_TYPE: Record<string, FilterOp[]> = {
+  text: ["contains"],
+  enum: ["is", "is_not"],
+  numeric: [">=", "<=", "between"],
+};
+
 // ============================================================
 
 export function DecisionTable({
@@ -216,6 +253,9 @@ export function DecisionTable({
   actId,
   accountId,
   isDemo,
+  searchTerm,
+  onSearchTermChange,
+  summary,
 }: {
   rows: EngineRow[];
   series: SeriesObj[];
@@ -223,6 +263,9 @@ export function DecisionTable({
   actId: string | null;
   accountId: number;
   isDemo: boolean;
+  searchTerm: string;
+  onSearchTermChange: (q: string) => void;
+  summary: AccountSummary | null;
 }) {
   const utils = trpc.useUtils();
 
@@ -236,8 +279,13 @@ export function DecisionTable({
   const [to, setTo] = useState(dateStr(0));
 
   // filters
-  const [q, setQ] = useState("");
+  const q = searchTerm;
+  const setQ = onSearchTermChange;
   const [verdicts, setVerdicts] = useState<Set<Verdict>>(new Set());
+  const [hidePaused, setHidePaused] = useState(false);
+  const [filterRules, setFilterRules] = useState<FilterRule[]>([]);
+  const [filterJoin, setFilterJoin] = useState<FilterJoin>("AND");
+  const [showFilters, setShowFilters] = useState(false);
 
   // columns
   const [visibleCols, setVisibleCols] = useState<ColKey[]>(loadVisible);
@@ -263,6 +311,10 @@ export function DecisionTable({
 
   // pause/resume
   const [confirmRow, setConfirmRow] = useState<EngineRow | null>(null);
+  // US12 / T054 — per-row verdict history dialog state
+  const [historyRow, setHistoryRow] = useState<EngineRow | null>(null);
+  // ±20% budget adjust (US13)
+  const [budgetRow, setBudgetRow] = useState<{ row: EngineRow; direction: 1 | -1 } | null>(null);
   const setStatus = trpc.control.setStatus.useMutation({
     onSuccess: (res, vars) => {
       utils.dashboard.get.invalidate({ adAccountId: accountId });
@@ -285,6 +337,34 @@ export function DecisionTable({
     },
   });
 
+  // US13 — setBudget mutation (mirrors setStatus pattern)
+  // Captures the row name in a ref at mutate() time so the success/error
+  // toasts don't depend on `budgetRow` (which is cleared the moment the
+  // user confirms).
+  const lastBudgetRowName = useRef<string>("");
+  const setBudgetMut = trpc.control.setBudget.useMutation({
+    onSuccess: (res, vars) => {
+      utils.dashboard.get.invalidate({ adAccountId: accountId });
+      toast.success(
+        `تم تعديل ميزانية "${lastBudgetRowName.current}" إلى ${money(vars.newBudget)}/يوم ${res.simulated ? "(محاكاة تجريبية)" : "في ميتا ✓"}`
+      );
+    },
+    onError: e => {
+      const rowName = lastBudgetRowName.current;
+      if (e.message === "RECONNECT_REQUIRED") {
+        toast.error("انتهت صلاحية الاتصال — أعد توصيل حساب ميتا");
+      } else if (e.message === "NEEDS_RECONNECT_PERMISSION") {
+        toast.error("تلزم صلاحية إضافية — أعد توصيل الحساب لمنح صلاحية ads_management");
+      } else if (e.message === "BUDGET_BELOW_MINIMUM") {
+        toast.error("الميزانية أقل من الحد الأدنى المسموح به في ميتا (1$/يوم)");
+      } else if (e.message === "NO_DAILY_BUDGET") {
+        toast.error(`هذا العنصر (${rowName}) لا يحمل ميزانية يومية مباشرة`);
+      } else {
+        toast.error(`فشل تعديل الميزانية: ${e.message}`);
+      }
+    },
+  });
+
   const seriesMap = useMemo(() => new Map(series.map(s => [s.id, s])), [series]);
 
   const adsManagerUrl = (r: EngineRow) => {
@@ -299,11 +379,46 @@ export function DecisionTable({
     return `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${act}&${param}`;
   };
 
-  // visible rows at the current drill-down level + filters
+  // effective-status-aware status resolver for filters
+  const getStatus = useCallback((r: EngineRow) => {
+    const s = seriesMap.get(r.id);
+    return (s?.effectiveStatus ?? s?.status ?? r.status) === "ACTIVE" ? "ACTIVE" : "PAUSED";
+  }, [seriesMap]);
+
+  // Distinct objectives present in the rows → dropdown options for the objective
+  // filter (US5 / Gate 3-III), so users select instead of typing. Meta's own enum
+  // strings are kept as-is; empty → the caller falls back to a text input.
+  const objectiveOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(rows.map(r => r.objective).filter((o): o is string => !!o))
+      ).sort(),
+    [rows]
+  );
+
+  // aggregate metrics per row for the selected range (all rows, for filter support)
+  const aggs = useMemo(() => {
+    const m = new Map<string, FilterAgg | null>();
+    for (const r of rows) m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to));
+    return m;
+  }, [rows, seriesMap, range, from, to]);
+
+  // visible rows — when searching/filtering, search across ALL levels
+  const hasFilters = filterRules.length > 0;
+  const isSearching = q.trim() !== "" || verdicts.size > 0 || hasFilters;
+  // Same predicate used by T027/T030 — never the raw status string.
+  const isPaused = (r: EngineRow) => {
+    const s = seriesMap.get(r.id);
+    const st = s?.effectiveStatus ?? s?.status ?? r.status;
+    return st !== "ACTIVE";
+  };
   const visible = useMemo(() => {
     let list: EngineRow[];
-    if (level === "campaign") list = rows.filter(r => r.level === "campaign");
-    else if (level === "adset")
+    if (isSearching) {
+      list = rows;
+    } else if (level === "campaign") {
+      list = rows.filter(r => r.level === "campaign");
+    } else if (level === "adset")
       list = rows.filter(r => r.level === "adset" && r.campaignId === path.campaign!.id);
     else list = rows.filter(r => r.level === "ad" && r.parentId === path.adset!.id);
     if (q.trim()) {
@@ -311,15 +426,10 @@ export function DecisionTable({
       list = list.filter(r => r.name.toLowerCase().includes(needle));
     }
     if (verdicts.size > 0) list = list.filter(r => verdicts.has(r.verdict));
+    if (hidePaused) list = list.filter(r => !isPaused(r));
+    if (hasFilters) list = applyFilters(list, filterRules, filterJoin, aggs, getStatus);
     return list;
-  }, [rows, level, path, q, verdicts]);
-
-  // aggregate metrics per row for the selected range
-  const aggs = useMemo(() => {
-    const m = new Map<string, Agg | null>();
-    for (const r of visible) m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to));
-    return m;
-  }, [visible, seriesMap, range, from, to]);
+  }, [rows, level, path, q, verdicts, isSearching, hasFilters, filterRules, filterJoin, aggs, getStatus, hidePaused]);
 
   const verdictOrder: Record<Verdict, number> = {
     kill: 0,
@@ -342,7 +452,7 @@ export function DecisionTable({
         case "frequency":
           return r.frequency_3d ?? -1;
         default: {
-          const v = a?.[sort.key as keyof Agg];
+          const v = a?.[sort.key as keyof FilterAgg];
           return typeof v === "number" ? v : -1;
         }
       }
@@ -359,6 +469,36 @@ export function DecisionTable({
     c => visibleCols.includes(c.key) && (!c.adOnly || level === "ad")
   );
 
+  const totals = useMemo(
+    () => aggregateTotals(sorted.map(r => r.id), aggs),
+    [sorted, aggs],
+  );
+
+  const totalCell = (key: ColKey): string => {
+    switch (key) {
+      case "spend":
+        return money(totals.spend);
+      case "results":
+        return num(totals.results);
+      case "cpa":
+        return totals.cpa === null ? "—" : money(totals.cpa);
+      case "ctrLink":
+        return totals.ctrLink === null ? "—" : pct(totals.ctrLink);
+      case "ctrAll":
+        return totals.ctrAll === null ? "—" : pct(totals.ctrAll);
+      case "cpm":
+        return totals.cpm === null ? "—" : money(totals.cpm);
+      case "cpc":
+        return totals.cpc === null ? "—" : money(totals.cpc);
+      case "lpRate":
+        return totals.lpRate === null ? "—" : pct(totals.lpRate, 0);
+      case "impressions":
+        return num(totals.impressions);
+      default:
+        return "—";
+    }
+  };
+
   const cellValue = (r: EngineRow, key: ColKey): string => {
     const a = aggs.get(r.id);
     switch (key) {
@@ -367,7 +507,12 @@ export function DecisionTable({
       case "results":
         return num(a?.results ?? 0);
       case "cpa":
-        return (a?.results ?? 0) === 0 ? "∞" : money(a?.cpa ?? undefined);
+        return cpaCell({
+          verdict: r.verdict,
+          results: a?.results ?? 0,
+          cpa: a?.cpa ?? null,
+          target: unitTarget,
+        }).value;
       case "ctrLink":
         return a?.ctrLink == null ? "—" : pct(a.ctrLink);
       case "ctrAll":
@@ -386,22 +531,26 @@ export function DecisionTable({
         return r.spend_share_pct == null ? "—" : pct(r.spend_share_pct, 0);
       case "frequency":
         return r.frequency_3d ? r.frequency_3d.toFixed(2) : "—";
+      case "impressions":
+        return num(a?.impressions ?? 0);
     }
   };
 
   const cellClass = (r: EngineRow, key: ColKey): string => {
     const a = aggs.get(r.id);
-    if (key === "cpa") return `font-bold ${cpaColorClass((a?.results ?? 0) === 0 ? null : (a?.cpa ?? null), unitTarget)}`;
-    if (key === "ctrLink") return `font-bold ${a?.ctrLink == null ? "" : ctrColorClass(a.ctrLink)}`;
+    if (key === "cpa") {
+      return cpaCell({
+        verdict: r.verdict,
+        results: a?.results ?? 0,
+        cpa: a?.cpa ?? null,
+        target: unitTarget,
+      }).className;
+    }
+    if (key === "ctrLink") return `font-bold ${a?.ctrLink == null ? "" : ctrColorClass(a.ctrLink, summary?.baselines.ctrLinkMedian90 ?? null)}`;
     if (key === "spendShare" && r.spend_share_pct !== null && r.spend_share_pct < 10)
       return "text-v-rescue";
+    if (key === "impressions") return ""; // neutral — no color
     return "";
-  };
-
-  const isPaused = (r: EngineRow) => {
-    const s = seriesMap.get(r.id);
-    const st = s?.effectiveStatus ?? s?.status ?? r.status;
-    return st !== "ACTIVE";
   };
 
   return (
@@ -516,6 +665,33 @@ export function DecisionTable({
             ))}
           </div>
 
+          <Button
+            variant={hidePaused ? "default" : "outline"}
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => setHidePaused(p => !p)}
+            aria-pressed={hidePaused}
+            title="إخفاء الإعلانات والحملات الموقوفة"
+          >
+            <Eye className="h-3.5 w-3.5" />
+            {hidePaused ? "إظهار الموقوفة" : "إخفاء الموقوفة"}
+          </Button>
+
+          <Button
+            variant={showFilters || hasFilters ? "default" : "outline"}
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => setShowFilters(s => !s)}
+          >
+            <Filter className="h-3.5 w-3.5" />
+            فلتر
+            {hasFilters && (
+              <span className="num rounded bg-primary-foreground/20 px-1 text-[9px]">
+                {filterRules.length}
+              </span>
+            )}
+          </Button>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
@@ -539,8 +715,152 @@ export function DecisionTable({
                 </DropdownMenuCheckboxItem>
               ))}
             </DropdownMenuContent>
-          </DropdownMenu>
+        </DropdownMenu>
         </div>
+
+        {showFilters && (
+          <div className="space-y-2 rounded-lg border border-border/60 bg-background/40 p-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-muted-foreground">ربط القواعد:</span>
+              <div className="flex rounded-md border border-border/60">
+                {(["AND", "OR"] as FilterJoin[]).map(j => (
+                  <button
+                    key={j}
+                    onClick={() => setFilterJoin(j)}
+                    className={`rounded-md px-3 py-0.5 text-[11px] font-bold ${
+                      filterJoin === j
+                        ? "bg-primary/20 text-primary"
+                        : "text-muted-foreground hover:bg-accent"
+                    }`}
+                  >
+                    {j === "AND" ? "الكل (و)" : "أي واحد (أو)"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {filterRules.map((rule, idx) => {
+              const meta = FILTER_FIELDS[rule.field];
+              const ops = meta ? OPS_BY_TYPE[meta.type] : [];
+              // Localized value options for enum fields. `level` intentionally
+              // keeps Meta's English values (no dropdown). `objective` uses the
+              // distinct values present in the rows, else falls back to a text input.
+              const enumOpts: { value: string; label: string }[] | null =
+                rule.field === "status"
+                  ? (meta?.options ?? []).map(v => ({ value: v, label: STATUS_FILTER_LABELS[v] ?? v }))
+                  : rule.field === "verdict"
+                    ? VERDICT_FILTER_OPTIONS
+                    : rule.field === "objective" && objectiveOptions.length > 0
+                      ? objectiveOptions.map(v => ({ value: v, label: v }))
+                      : null;
+              return (
+                <div key={rule.id} className="flex flex-wrap items-center gap-1.5">
+                  <select
+                    value={rule.field}
+                    onChange={e => {
+                      const field = e.target.value as FilterField;
+                      const m = FILTER_FIELDS[field];
+                      const defaultOp = m ? OPS_BY_TYPE[m.type][0] : "is";
+                      setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, field, op: defaultOp, value: "", value2: undefined } : r));
+                    }}
+                    className="rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                  >
+                    {Object.entries(FILTER_FIELDS).map(([key, m]) => {
+                      const fieldMeta = m as { label: string };
+                      return <option key={key} value={key}>{fieldMeta.label}</option>;
+                    })}
+                  </select>
+
+                  <select
+                    value={rule.op}
+                    onChange={e => setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, op: e.target.value as FilterOp } : r))}
+                    className="rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                  >
+                    {ops.map(op => (
+                      <option key={op} value={op}>{OP_LABELS_AR[op]}</option>
+                    ))}
+                  </select>
+
+                  {enumOpts ? (
+                    <select
+                      value={rule.value}
+                      onChange={e => setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, value: e.target.value } : r))}
+                      className="rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                    >
+                      <option value="">— اختر —</option>
+                      {enumOpts.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  ) : rule.op === "between" ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        value={rule.value}
+                        onChange={e => setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, value: e.target.value } : r))}
+                        placeholder="من"
+                        className="num w-16 rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                      />
+                      <span className="text-xs text-muted-foreground">→</span>
+                      <input
+                        type="number"
+                        value={rule.value2 ?? ""}
+                        onChange={e => setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, value2: e.target.value } : r))}
+                        placeholder="إلى"
+                        className="num w-16 rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                      />
+                    </div>
+                  ) : (
+                    <input
+                      type={meta?.type === "numeric" ? "number" : "text"}
+                      value={rule.value}
+                      onChange={e => setFilterRules(rs => rs.map(r => r.id === rule.id ? { ...r, value: e.target.value } : r))}
+                      placeholder="قيمة…"
+                      className="num rounded-md border border-border/60 bg-background px-2 py-1 text-xs"
+                    />
+                  )}
+
+                  <button
+                    onClick={() => setFilterRules(rs => rs.filter(r => r.id !== rule.id))}
+                    className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-v-kill"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              onClick={() => {
+                const firstField = Object.keys(FILTER_FIELDS)[0] as FilterField;
+                const m = FILTER_FIELDS[firstField];
+                setFilterRules(rs => [...rs, {
+                  id: `f${Date.now()}`,
+                  field: firstField,
+                  op: OPS_BY_TYPE[m.type][0],
+                  value: "",
+                }]);
+              }}
+            >
+              <Plus className="h-3 w-3" />
+              إضافة قاعدة
+            </Button>
+
+            {hasFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs text-muted-foreground"
+                onClick={() => setFilterRules([])}
+              >
+                مسح الكل
+              </Button>
+            )}
+          </div>
+        )}
 
         {range !== "3d" && (
           <p className="text-[11px] text-muted-foreground">
@@ -587,8 +907,8 @@ export function DecisionTable({
                     colSpan={activeCols.length + 4}
                     className="px-4 py-8 text-center text-muted-foreground"
                   >
-                    {q || verdicts.size > 0
-                      ? "لا توجد نتائج مطابقة للفلتر — جرّب توسيع البحث"
+                    {q || verdicts.size > 0 || hasFilters
+                      ? "لا توجد نتائج — امسح عوامل التصفية للعودة"
                       : "لا توجد عناصر نشطة في هذا المستوى"}
                   </td>
                 </tr>
@@ -596,20 +916,23 @@ export function DecisionTable({
               {sorted.map(r => {
                 const paused = isPaused(r);
                 const thumb = seriesMap.get(r.id)?.thumbnailUrl;
+                const showLevelPill = isSearching;
+                const canDrillDown = !isSearching && level !== "ad";
                 return (
                   <tr
                     key={r.id}
                     className={`border-b border-border/40 transition-colors hover:bg-accent/40 ${
-                      level !== "ad" ? "cursor-pointer" : ""
+                      canDrillDown ? "cursor-pointer" : ""
                     } ${paused ? "opacity-50" : ""}`}
                     onClick={() => {
+                      if (isSearching) return;
                       if (level === "campaign") setPath({ campaign: r });
                       else if (level === "adset") setPath({ campaign: path.campaign, adset: r });
                     }}
                   >
                     <td className="max-w-[280px] px-4 py-2.5">
                       <div className="flex items-center gap-2">
-                        {level === "ad" &&
+                        {(level === "ad" || (isSearching && r.level === "ad")) &&
                           (thumb ? (
                             <img
                               src={thumb}
@@ -625,7 +948,12 @@ export function DecisionTable({
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
                             <span className="truncate font-medium">{r.name}</span>
-                            {level !== "ad" && (
+                            {showLevelPill && (
+                              <span className="shrink-0 rounded bg-muted px-1 text-[9px] font-bold text-muted-foreground">
+                                {LEVEL_LABELS_AR[r.level] ?? r.level}
+                              </span>
+                            )}
+                            {!isSearching && level !== "ad" && (
                               <ChevronLeft className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                             )}
                             {adsManagerUrl(r) && (
@@ -640,6 +968,18 @@ export function DecisionTable({
                                 <ExternalLink className="h-3 w-3" />
                               </a>
                             )}
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                setHistoryRow(r);
+                              }}
+                              title="سجل الحكم"
+                              aria-label="سجل الحكم"
+                              className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-primary"
+                            >
+                              <History className="h-3.5 w-3.5" />
+                            </button>
                           </div>
                           <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                             {paused && <span className="font-bold text-v-watch">موقوف</span>}
@@ -674,27 +1014,75 @@ export function DecisionTable({
                       )}
                     </td>
                     <td className="px-2 py-2.5 text-center">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className={`h-7 gap-1 px-2 text-[11px] font-bold ${
-                          paused
-                            ? "border-v-continue/40 text-v-continue hover:bg-v-continue/10"
-                            : "border-v-kill/40 text-v-kill hover:bg-v-kill/10"
-                        }`}
-                        onClick={e => {
-                          e.stopPropagation();
-                          setConfirmRow(r);
-                        }}
-                      >
-                        {paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
-                        {paused ? "تشغيل" : "إيقاف"}
-                      </Button>
+                      <div className="flex flex-col items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className={`h-7 w-full gap-1 px-2 text-[11px] font-bold ${
+                            paused
+                              ? "border-v-continue/40 text-v-continue hover:bg-v-continue/10"
+                              : "border-v-kill/40 text-v-kill hover:bg-v-kill/10"
+                          }`}
+                          onClick={e => {
+                            e.stopPropagation();
+                            setConfirmRow(r);
+                          }}
+                        >
+                          {paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
+                          {paused ? "تشغيل" : "إيقاف"}
+                        </Button>
+                        {r.daily_budget !== null && (
+                          <div className="flex w-full gap-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-6 flex-1 px-1 text-[10px] font-bold text-primary"
+                              title="زيادة 20%"
+                              onClick={e => {
+                                e.stopPropagation();
+                                setBudgetRow({ row: r, direction: 1 });
+                              }}
+                            >
+                              +20%
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-6 flex-1 px-1 text-[10px] font-bold text-amber-700"
+                              title="خفض 20%"
+                              onClick={e => {
+                                e.stopPropagation();
+                                setBudgetRow({ row: r, direction: -1 });
+                              }}
+                            >
+                              −20%
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
               })}
             </tbody>
+            {sorted.length > 0 && (
+              <tfoot>
+                <tr className="border-y-2 border-border/60 bg-background/60 font-bold">
+                  <td className="px-4 py-2 text-xs">
+                    الإجمالي ({sorted.length})
+                  </td>
+                  {activeCols.map(c => (
+                    <td
+                      key={c.key}
+                      className="num whitespace-nowrap px-2 py-2 text-center text-xs"
+                    >
+                      {totalCell(c.key)}
+                    </td>
+                  ))}
+                  <td colSpan={3} />
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </CardContent>
@@ -750,6 +1138,73 @@ export function DecisionTable({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* US13 — budget adjust confirmation */}
+      <AlertDialog open={!!budgetRow} onOpenChange={open => !open && setBudgetRow(null)}>
+        <AlertDialogContent dir="rtl" className="text-right">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {budgetRow?.direction === 1 ? "زيادة" : "خفض"} ميزانية «{budgetRow?.row.name}» بنسبة 20%؟
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 leading-relaxed">
+              {budgetRow && budgetRow.row.daily_budget !== null && (() => {
+                const current = budgetRow.row.daily_budget;
+                const next = budgetRow.direction === 1
+                  ? Math.round(current * 1.2)
+                  : Math.round(current * 0.8);
+                return (
+                  <>
+                    <p>
+                      من <span className="num font-bold">{money(current)}</span>/يوم
+                      إلى <span className="num font-bold">{money(next)}</span>/يوم
+                      {isDemo && " (في الوضع التجريبي هذه محاكاة فقط)"}
+                    </p>
+                    <p>
+                      {budgetRow.direction === 1
+                        ? "زيادة 20% كل 48 إلى 72 ساعة تحافظ على مرحلة تعلّم الخوارزمية ولا تكسرها. القفزات الكبيرة ترفع التكلفة."
+                        : "خفض 20% يحافظ على مرحلة تعلّم الخوارزمية ويساعد على إعادة الضبط. التخفيض الأكبر من 20% يضر بأداء الإعلان قبل أن يستفيد منه."}
+                    </p>
+                  </>
+                );
+              })()}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel>إلغاء</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={setBudgetMut.isPending}
+              onClick={() => {
+                if (!budgetRow || budgetRow.row.daily_budget === null) return;
+                const current = budgetRow.row.daily_budget;
+                const next = budgetRow.direction === 1
+                  ? Math.round(current * 1.2)
+                  : Math.round(current * 0.8);
+                // capture the name before the dialog state is cleared
+                lastBudgetRowName.current = budgetRow.row.name;
+                setBudgetMut.mutate({
+                  adAccountId: accountId,
+                  objectId: budgetRow.row.id,
+                  newBudget: next,
+                });
+              }}
+            >
+              {setBudgetMut.isPending && <Loader2 className="ml-1 h-3.5 w-3.5 animate-spin" />}
+              نعم، {budgetRow?.direction === 1 ? "زيادة" : "خفض"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* US12 / T054 — verdict history dialog */}
+      {historyRow && (
+        <VerdictHistoryDialog
+          open={!!historyRow}
+          onOpenChange={open => !open && setHistoryRow(null)}
+          adAccountId={accountId}
+          objectId={historyRow.id}
+          objectName={historyRow.name}
+        />
+      )}
     </Card>
   );
 }
