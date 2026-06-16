@@ -4,14 +4,18 @@
  * (محرك-القرار-الإعلاني-v2.1.md). No AI/LLM — fixed math only.
  *
  * Evaluation order per object (STOP at first firing verdict):
- *   1. Data gates → ⏳
- *   2. Daily circuit breaker (CB1/CB2)
- *   3. Kill rules K1–K7
- *   4. Starved-ad matrix (K5)
- *   5. 72-hour decay map (K4 / real / strong)
- *   6. Fatigue signals (F1/F2)
- *   7. Watch W1–W6
- *   8. Continue/Scale S1–S4
+ *   1. K3 dead-hook kill — allowed before full data gates per SOP
+ *      §4: "القتل الواضح بالـ CTR يُسمح من 1,500 impressions"
+ *   2. Starved-ad matrix (K5) — checked before CPA gates because
+ *      a starved ad has no spend to judge by CPA
+ *   3. Data gates → ⏳ (age, impressions, spend thresholds)
+ *   4. Circuit breaker CB1/CB2 (ad-set level — bypasses all gates
+ *      per SOP §5.3: "يتجاوز كل البوابات")
+ *   5. Kill rules K1–K7
+ *   6. 72-hour decay map (K4)
+ *   7. Fatigue signals (F1/F2)
+ *   8. Watch W1–W6
+ *   9. Continue/Scale S1–S4
  */
 import {
   AccountSnapshotPayload,

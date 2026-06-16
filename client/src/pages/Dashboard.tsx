@@ -41,7 +41,7 @@ export default function Dashboard() {
     },
     onError: e => {
       if (e.message === "RECONNECT_REQUIRED") {
-        toast.error("انتهت صلاحية التوكن — أعد توصيل حساب ميتا");
+        toast.error("انتهت صلاحية رمز الوصول — أعد توصيل حساب ميتا");
         navigate("/");
       } else if (e.message === "RATE_LIMITED") {
         toast.error("ميتا قيّدت الطلبات مؤقتًا — حاول بعد دقائق");

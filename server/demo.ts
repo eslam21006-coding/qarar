@@ -77,7 +77,7 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
   });
   // its ads
   objects.push({
-    id: "ad_k3", name: "كريتف #14 — هوك سؤال مباشر", status: "ACTIVE",
+    id: "ad_k3", name: "إعلان #14 — هوك سؤال مباشر", status: "ACTIVE",
     level: "ad", parentId: "as_k1", campaignId: "cmp_test",
     dailyBudget: null, createdTime: dateStr(9), ageDays: 9,
     w3d: W({ spend: 60, impressions: 5200, ctrLink: 0.4, ctrAll: 1.1, conversions: 0 }),
@@ -90,7 +90,7 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
     spendSharePct: null,
   });
   objects.push({
-    id: "ad_k1b", name: "كريتف #15 — ستاتيك ألم", status: "ACTIVE",
+    id: "ad_k1b", name: "إعلان #15 — ستاتيك ألم", status: "ACTIVE",
     level: "ad", parentId: "as_k1", campaignId: "cmp_test",
     dailyBudget: null, createdTime: dateStr(9), ageDays: 9,
     w3d: W({ spend: 35, impressions: 3000, ctrLink: 1.6, ctrAll: 2.5, conversions: 0 }),
@@ -123,7 +123,7 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
   });
   // Flash creative — day-1 peak then ≥50% collapse within 72h (K4), age 3 days
   objects.push({
-    id: "ad_flash", name: "كريتف #18 — فيديو UGC خام", status: "ACTIVE",
+    id: "ad_flash", name: "إعلان #18 — فيديو UGC خام", status: "ACTIVE",
     level: "ad", parentId: "as_good", campaignId: "cmp_test",
     dailyBudget: null, createdTime: dateStr(3), ageDays: 3,
     w3d: W({ spend: 68, impressions: 5500, ctrLink: 1.6, ctrAll: 2.8, conversions: 2 }),
@@ -137,7 +137,7 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
   });
   // Starved but high-efficiency ad → rescue 🛟 (K5 matrix)
   objects.push({
-    id: "ad_rescue", name: "كريتف #11 — شهادة عميلة", status: "ACTIVE",
+    id: "ad_rescue", name: "إعلان #11 — شهادة عميلة", status: "ACTIVE",
     level: "ad", parentId: "as_good", campaignId: "cmp_test",
     dailyBudget: null, createdTime: dateStr(8), ageDays: 8,
     w3d: W({ spend: 12, impressions: 1100, ctrLink: 3.4, ctrAll: 4.8, conversions: 1 }),
@@ -151,7 +151,7 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
   });
   // Main workhorse ad — S1 promotion eligible
   objects.push({
-    id: "ad_s1", name: "كريتف #9 — وجه مباشر: اعتراض السعر", status: "ACTIVE",
+    id: "ad_s1", name: "إعلان #9 — وجه مباشر: اعتراض السعر", status: "ACTIVE",
     level: "ad", parentId: "as_good", campaignId: "cmp_test",
     dailyBudget: null, createdTime: dateStr(15), ageDays: 15,
     w3d: W({ spend: 100, impressions: 7900, ctrLink: 2.4, ctrAll: 3.6, conversions: 4 }),
@@ -183,7 +183,7 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
     spendSharePct: null, learningPhase: true,
   });
   objects.push({
-    id: "ad_cb", name: "كريتف #9 (منسوخ Post ID)", status: "ACTIVE",
+    id: "ad_cb", name: "إعلان #9 (منسوخ Post ID)", status: "ACTIVE",
     level: "ad", parentId: "as_cb", campaignId: "cmp_test",
     dailyBudget: null, createdTime: dateStr(5), ageDays: 5,
     w3d: W({ spend: 116, impressions: 9300, ctrLink: 1.2, ctrAll: 2.0, conversions: 1 }),
@@ -198,7 +198,7 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
 
   // --- Ad set D: too-early (GATE) — new, tiny spend/impressions
   objects.push({
-    id: "as_gate", name: "Stage A — كريتفات الأسبوع الجديدة", status: "ACTIVE",
+    id: "as_gate", name: "Stage A — إعلانات الأسبوع الجديدة", status: "ACTIVE",
     level: "adset", parentId: "cmp_test", campaignId: "cmp_test",
     dailyBudget: 45, createdTime: dateStr(1), ageDays: 1,
     w3d: W({ spend: 14, impressions: 1100, ctrLink: 1.5, ctrAll: 2.4, conversions: 0 }),
@@ -207,7 +207,7 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
     spendSharePct: null, learningPhase: true,
   });
   objects.push({
-    id: "ad_gate", name: "كريتف #19 — كاروسيل أرقام", status: "ACTIVE",
+    id: "ad_gate", name: "إعلان #19 — كاروسيل أرقام", status: "ACTIVE",
     level: "ad", parentId: "as_gate", campaignId: "cmp_test",
     dailyBudget: null, createdTime: dateStr(1), ageDays: 1,
     w3d: W({ spend: 14, impressions: 1100, ctrLink: 1.5, ctrAll: 2.4, conversions: 0 }),
@@ -247,7 +247,7 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
   });
   // Fatigued ad inside scaling (F1): CTR dropped ≥25-30% from 3-day peak, CPM stable
   objects.push({
-    id: "ad_fatigue", name: "كريتف #5 — الرابح القديم (21 يوم)", status: "ACTIVE",
+    id: "ad_fatigue", name: "إعلان #5 — الرابح القديم (21 يوم)", status: "ACTIVE",
     level: "ad", parentId: "as_w1", campaignId: "cmp_scale",
     dailyBudget: null, createdTime: dateStr(21), ageDays: 21,
     w3d: W({ spend: 230, impressions: 17500, ctrLink: 1.5, ctrAll: 2.6, conversions: 4, cpm: 18.2 }),
@@ -265,7 +265,7 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
   });
   // Healthy scaling winner — S4
   objects.push({
-    id: "ad_s4", name: "كريتف #7 — الرابح الحالي + variations", status: "ACTIVE",
+    id: "ad_s4", name: "إعلان #7 — الرابح الحالي + variations", status: "ACTIVE",
     level: "ad", parentId: "as_w1", campaignId: "cmp_scale",
     dailyBudget: null, createdTime: dateStr(12), ageDays: 12,
     w3d: W({ spend: 190, impressions: 13500, ctrLink: 2.5, ctrAll: 3.7, conversions: 4 }),
@@ -301,7 +301,7 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
     spendSharePct: null,
   });
   objects.push({
-    id: "ad_w3", name: "كريتف #12 — فيديو قصة تحول", status: "ACTIVE",
+    id: "ad_w3", name: "إعلان #12 — فيديو قصة تحول", status: "ACTIVE",
     level: "ad", parentId: "as_w3", campaignId: "cmp_scale",
     dailyBudget: null, createdTime: dateStr(10), ageDays: 10,
     w3d: W({ spend: 285, impressions: 21000, ctrLink: 2.6, ctrAll: 4.0, conversions: 2, lpViews: 480 }),
