@@ -3,7 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { VerdictBadge } from "@/components/Verdict";
+import { RULES } from "@shared/qarar";
 import { money, pct, timeAgoAr } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 import type { EngineRow, Finding, TopAction } from "@shared/qarar";
@@ -270,6 +272,7 @@ export default function Dashboard() {
             isDemo={!!isDemo}
             searchTerm={tableSearch}
             onSearchTermChange={setTableSearch}
+            summary={summary ?? null}
           />
         </div>
 
@@ -465,46 +468,54 @@ function TodayActions({
           actions.map(a => {
             const done = doneMap.get(a.key) ?? false;
             return (
-              <button
-                type="button"
-                key={a.key}
-                onClick={() => onFocusObject(a.objectName)}
-                className={`flex w-full items-start gap-3 rounded-lg border p-3 text-start transition-opacity ${
-                  done
-                    ? "border-border/40 bg-background/30 opacity-55"
-                    : "border-border/60 bg-background/60 hover:border-primary/40 hover:bg-primary/5"
-                } cursor-pointer`}
-              >
-                <Checkbox
-                  checked={done}
-                  onCheckedChange={v =>
-                    setCheck.mutate({
-                      adAccountId: accountId,
-                      actionKey: a.key,
-                      done: v === true,
-                    })
-                  }
-                  onClick={e => e.stopPropagation()}
-                  className="mt-1"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="num rounded bg-white/10 px-1.5 text-[10px] font-bold">
-                      #{a.rank}
-                    </span>
-                    <VerdictBadge verdict={a.verdict} rule={a.rule} />
-                    <span className={`truncate text-sm font-bold ${done ? "line-through" : ""}`}>
-                      {a.objectName}
-                    </span>
+              <Tooltip key={a.key}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => onFocusObject(a.objectName)}
+                    className={`flex w-full items-start gap-3 rounded-lg border p-3 text-start transition-opacity ${
+                      done
+                        ? "border-border/40 bg-background/30 opacity-55"
+                        : "border-border/60 bg-background/60 hover:border-primary/40 hover:bg-primary/5"
+                    } cursor-pointer`}
+                  >
+                    <Checkbox
+                      checked={done}
+                      onCheckedChange={v =>
+                        setCheck.mutate({
+                          adAccountId: accountId,
+                          actionKey: a.key,
+                          done: v === true,
+                        })
+                      }
+                      onClick={e => e.stopPropagation()}
+                      className="mt-1"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="num rounded bg-white/10 px-1.5 text-[10px] font-bold">
+                          #{a.rank}
+                        </span>
+                        <VerdictBadge verdict={a.verdict} rule={a.rule} />
+                        <span className={`truncate text-sm font-bold ${done ? "line-through" : ""}`}>
+                          {a.objectName}
+                        </span>
+                      </div>
+                      <p className={`mt-1 text-sm ${done ? "line-through opacity-70" : ""}`}>
+                        {a.action_ar}
+                      </p>
+                    </div>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs">
+                  <div className="space-y-1 text-start">
+                    <div className="num text-xs font-semibold">{a.impact_ar}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      قاعدة: {RULES[a.rule]?.titleAr ?? a.rule}
+                    </div>
                   </div>
-                  <p className={`mt-1 text-sm ${done ? "line-through opacity-70" : ""}`}>
-                    {a.action_ar}
-                  </p>
-                  <p className="num mt-0.5 text-[11px] text-muted-foreground" dir="rtl">
-                    {a.impact_ar}
-                  </p>
-                </div>
-              </button>
+                </TooltipContent>
+              </Tooltip>
             );
           })
         )}

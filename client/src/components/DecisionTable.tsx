@@ -30,16 +30,18 @@ import { Input } from "@/components/ui/input";
 import { VerdictBadge } from "@/components/Verdict";
 import { VerdictHistoryDialog } from "@/components/VerdictHistoryDialog";
 import { cpaColorClass, ctrColorClass, money, num, pct } from "@/lib/format";
+import { cpaCell } from "@/lib/cellFormat";
 import { applyFilters, FILTER_FIELDS, type FilterAgg, type FilterField, type FilterJoin, type FilterOp, type FilterRule } from "@/lib/filters";
 import { aggregateTotals } from "@/lib/aggregate";
 import { trpc } from "@/lib/trpc";
-import type { DailyMetrics, EngineRow, Verdict, WindowMetrics } from "@shared/qarar";
+import type { AccountSummary, DailyMetrics, EngineRow, Verdict, WindowMetrics } from "@shared/qarar";
 import {
   ArrowDown,
   ArrowUp,
   ChevronLeft,
   Columns3,
   ExternalLink,
+  Eye,
   Filter,
   History,
   ImageOff,
@@ -253,6 +255,7 @@ export function DecisionTable({
   isDemo,
   searchTerm,
   onSearchTermChange,
+  summary,
 }: {
   rows: EngineRow[];
   series: SeriesObj[];
@@ -262,6 +265,7 @@ export function DecisionTable({
   isDemo: boolean;
   searchTerm: string;
   onSearchTermChange: (q: string) => void;
+  summary: AccountSummary | null;
 }) {
   const utils = trpc.useUtils();
 
@@ -278,6 +282,7 @@ export function DecisionTable({
   const q = searchTerm;
   const setQ = onSearchTermChange;
   const [verdicts, setVerdicts] = useState<Set<Verdict>>(new Set());
+  const [hidePaused, setHidePaused] = useState(false);
   const [filterRules, setFilterRules] = useState<FilterRule[]>([]);
   const [filterJoin, setFilterJoin] = useState<FilterJoin>("AND");
   const [showFilters, setShowFilters] = useState(false);
@@ -401,6 +406,12 @@ export function DecisionTable({
   // visible rows — when searching/filtering, search across ALL levels
   const hasFilters = filterRules.length > 0;
   const isSearching = q.trim() !== "" || verdicts.size > 0 || hasFilters;
+  // Same predicate used by T027/T030 — never the raw status string.
+  const isPaused = (r: EngineRow) => {
+    const s = seriesMap.get(r.id);
+    const st = s?.effectiveStatus ?? s?.status ?? r.status;
+    return st !== "ACTIVE";
+  };
   const visible = useMemo(() => {
     let list: EngineRow[];
     if (isSearching) {
@@ -415,9 +426,10 @@ export function DecisionTable({
       list = list.filter(r => r.name.toLowerCase().includes(needle));
     }
     if (verdicts.size > 0) list = list.filter(r => verdicts.has(r.verdict));
+    if (hidePaused) list = list.filter(r => !isPaused(r));
     if (hasFilters) list = applyFilters(list, filterRules, filterJoin, aggs, getStatus);
     return list;
-  }, [rows, level, path, q, verdicts, isSearching, hasFilters, filterRules, filterJoin, aggs, getStatus]);
+  }, [rows, level, path, q, verdicts, isSearching, hasFilters, filterRules, filterJoin, aggs, getStatus, hidePaused]);
 
   const verdictOrder: Record<Verdict, number> = {
     kill: 0,
@@ -495,7 +507,12 @@ export function DecisionTable({
       case "results":
         return num(a?.results ?? 0);
       case "cpa":
-        return (a?.results ?? 0) === 0 ? "∞" : money(a?.cpa ?? undefined);
+        return cpaCell({
+          verdict: r.verdict,
+          results: a?.results ?? 0,
+          cpa: a?.cpa ?? null,
+          target: unitTarget,
+        }).value;
       case "ctrLink":
         return a?.ctrLink == null ? "—" : pct(a.ctrLink);
       case "ctrAll":
@@ -521,18 +538,19 @@ export function DecisionTable({
 
   const cellClass = (r: EngineRow, key: ColKey): string => {
     const a = aggs.get(r.id);
-    if (key === "cpa") return `font-bold ${cpaColorClass((a?.results ?? 0) === 0 ? null : (a?.cpa ?? null), unitTarget)}`;
-    if (key === "ctrLink") return `font-bold ${a?.ctrLink == null ? "" : ctrColorClass(a.ctrLink)}`;
+    if (key === "cpa") {
+      return cpaCell({
+        verdict: r.verdict,
+        results: a?.results ?? 0,
+        cpa: a?.cpa ?? null,
+        target: unitTarget,
+      }).className;
+    }
+    if (key === "ctrLink") return `font-bold ${a?.ctrLink == null ? "" : ctrColorClass(a.ctrLink, summary?.baselines.ctrLinkMedian90 ?? null)}`;
     if (key === "spendShare" && r.spend_share_pct !== null && r.spend_share_pct < 10)
       return "text-v-rescue";
     if (key === "impressions") return ""; // neutral — no color
     return "";
-  };
-
-  const isPaused = (r: EngineRow) => {
-    const s = seriesMap.get(r.id);
-    const st = s?.effectiveStatus ?? s?.status ?? r.status;
-    return st !== "ACTIVE";
   };
 
   return (
@@ -646,6 +664,18 @@ export function DecisionTable({
               </button>
             ))}
           </div>
+
+          <Button
+            variant={hidePaused ? "default" : "outline"}
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => setHidePaused(p => !p)}
+            aria-pressed={hidePaused}
+            title="إخفاء الإعلانات والحملات الموقوفة"
+          >
+            <Eye className="h-3.5 w-3.5" />
+            {hidePaused ? "إظهار الموقوفة" : "إخفاء الموقوفة"}
+          </Button>
 
           <Button
             variant={showFilters || hasFilters ? "default" : "outline"}

@@ -24,14 +24,29 @@ export function cpaColorClass(cpa: number | null, target: number): string {
 }
 
 /**
- * Link CTR tier colors (rulebook tiers):
- * <0.5 dead · 0.5–0.9 weak · 0.9–1.5 acceptable · 1.5–2.5 good · >2.5 excellent
+ * Link CTR tier colors.
+ *
+ * When a `median` is provided the threshold between below-median and
+ * above-median colors keys off whether `ctr` is above or below it; the
+ * absolute SOP bands are used as the fallback when median is null.
+ *
+ * Bands (percent):
+ *   <0.5           dead red
+ *   0.5 to <1      weak amber
+ *   1 to <2        medium (watch)
+ *   2 to 3         good green
+ *   >3             excellent green
  */
-export function ctrColorClass(ctr: number): string {
+export function ctrColorClass(ctr: number, median: number | null = null): string {
+  if (median !== null) {
+    if (ctr < median) return "text-v-kill";
+    if (ctr < median * 1.2) return "text-v-watch";
+    return "text-v-continue";
+  }
   if (ctr < 0.5) return "text-v-kill";
-  if (ctr < 0.9) return "text-orange-400";
-  if (ctr < 1.5) return "text-v-watch";
-  if (ctr <= 2.5) return "text-v-continue";
+  if (ctr < 1) return "text-orange-400";
+  if (ctr < 2) return "text-v-watch";
+  if (ctr <= 3) return "text-v-continue";
   return "text-emerald-300";
 }
 
