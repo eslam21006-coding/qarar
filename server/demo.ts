@@ -77,7 +77,7 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
   });
   // its ads
   objects.push({
-    id: "ad_k3", name: "إعلان #14 — هوك سؤال مباشر", status: "ACTIVE",
+    id: "ad_k3", name: "إعلان #14 — سؤال مباشر للكاميرا", status: "ACTIVE",
     level: "ad", parentId: "as_k1", campaignId: "cmp_test",
     dailyBudget: null, createdTime: dateStr(9), ageDays: 9,
     w3d: W({ spend: 60, impressions: 5200, ctrLink: 0.4, ctrAll: 1.1, conversions: 0 }),
