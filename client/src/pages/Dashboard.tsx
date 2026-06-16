@@ -200,7 +200,7 @@ export default function Dashboard() {
             </span>
             <span className="font-bold">
               {summary.cadence.state === "stall"
-                ? "المصنع واقف"
+                ? "المصنع متوقف"
                 : summary.cadence.state === "reminder"
                 ? "تذكير"
                 : "غير معروف"}

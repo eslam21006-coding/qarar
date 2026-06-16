@@ -945,7 +945,7 @@ function computeCadence(snapshot: AccountSnapshotPayload): AccountSummary["caden
     return {
       state: "unknown",
       daysSinceLast: null,
-      message_ar: "مش عارف آخر إعلان امتى — تأكد من تواريخ الإنشاء.",
+      message_ar: "تاريخ آخر إعلان غير معروف — تأكد من تواريخ الإنشاء.",
     };
   }
   const daysSinceLast = Math.max(
@@ -956,14 +956,14 @@ function computeCadence(snapshot: AccountSnapshotPayload): AccountSummary["caden
     return {
       state: "stall",
       daysSinceLast,
-      message_ar: `المصنع واقف — آخر إعلان جديد قبل ${daysSinceLast} يوم. الحد الأدنى 5 لـ 10 مفاهيم كل أسبوعين وإلا الحساب يتزعزع.`,
+      message_ar: `المصنع متوقف — آخر إعلان قبل ${daysSinceLast} يومًا. الحد الأدنى 5 إلى 10 مفاهيم كل أسبوعين، وإلا اختل استقرار الحساب.`,
     };
   }
   if (daysSinceLast > 7) {
     return {
       state: "reminder",
       daysSinceLast,
-      message_ar: `مرّ ${daysSinceLast} يوم من غير إعلان جديد — ابدأ تجهّز المفاهيم الجايّة.`,
+      message_ar: `مرّ ${daysSinceLast} يومًا دون إعلان جديد — ابدأ بتجهيز المفاهيم القادمة.`,
     };
   }
   return null; // ok
