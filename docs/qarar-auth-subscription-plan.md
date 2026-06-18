@@ -84,7 +84,7 @@ integer `userId` foreign keys is moved to Phase B.
 
 **Schema generation:**
 - Run `npx @better-auth/cli@latest generate --output drizzle/auth-schema.ts`
-- Then run `npx drizzle-kit push`
+- Then run `npm run db:push`
 
 **New env vars required:**
 ```bash
