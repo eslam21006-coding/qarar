@@ -189,3 +189,8 @@ export const verdictHistory = mysqlTable(
 );
 
 export type VerdictHistory = typeof verdictHistory.$inferSelect;
+
+// Phase A: re-export the Better Auth tables (additive only — does not alter
+// the legacy `users` table or any existing column/index, and does not retype
+// any `userId` FK; the destructive reset is deferred to Phase B).
+export * from "./auth-schema";
