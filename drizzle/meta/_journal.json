@@ -36,6 +36,13 @@
       "when": 1781548732893,
       "tag": "0004_broken_iron_man",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1781770621818,
+      "tag": "0005_add_better_auth_tables",
+      "breakpoints": true
     }
   ]
 }
