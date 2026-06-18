@@ -529,14 +529,14 @@ function watchRules(
     };
   }
 
-  // W6: CPA above target but full-funnel ROAS ≥ breakeven (full buyer value)
+  // W6: CPA above target but العائد الكلي على الإنفاق ≥ breakeven (full buyer value)
   if (cpa !== null && cpa > target && conversions > 0) {
     const fullRoas = (conversions * t.fullBuyerValue) / o.w3d.spend;
     if (fullRoas >= 2.0) {
       return {
         verdict: "continue",
         rule: "W6",
-        reason: `في آخر 3 أيام: تكلفة العميل ${money(cpa)} أعلى من هدفك، لكن عند حساب كل ما سيشتريه العميل لاحقًا (${money(t.fullBuyerValue)}) فأنت رابح (full-funnel ROAS ${fullRoas.toFixed(1)}x)`,
+        reason: `في آخر 3 أيام: تكلفة العميل ${money(cpa)} أعلى من هدفك، لكن عند حساب كل ما سيشتريه العميل لاحقًا (${money(t.fullBuyerValue)}) فأنت رابح (العائد الكلي على الإنفاق ${fullRoas.toFixed(1)}x)`,
         action: "واصل بحذر — وإن استمر هذا النمط ففكّر في رفع هدفك قليلًا",
       };
     }
@@ -719,7 +719,7 @@ export function diagnose(
   if (findings.length === 0) {
     findings.push({
       step: 6,
-      text_ar: "الخطوة 6 — المشكلة ليست بالاعلانات حالياً. المشكلة في العرض أو المسار التسويقي — احجز مكالمة تشخيصية مجانية.",
+      text_ar: "الخطوة 6 — المشكلة ليست بالإعلانات حالياً. المشكلة في العرض أو المسار التسويقي — احجز مكالمة تشخيصية مجانية.",
       primary: false,
       ctaUrl: DISCOVERY_CALL_URL,
     });
@@ -734,7 +734,7 @@ export function diagnose(
 }
 
 // ============================================================
-// Campaign-level evaluation (5.0: judged by full-funnel ROAS)
+// Campaign-level evaluation (5.0: judged by العائد الكلي على الإنفاق)
 // ============================================================
 
 function evaluateCampaign(
@@ -782,7 +782,7 @@ function evaluateCampaign(
     return {
       verdict: "watch",
       rule: "W6",
-      reason: `في آخر 3 أيام: الحملة تغطي تكلفتها بالكاد (full-funnel ROAS ${fullRoas.toFixed(1)}x) — فوق التعادل لكن الربح قليل`,
+      reason: `في آخر 3 أيام: الحملة تغطي تكلفتها بالكاد (العائد الكلي على الإنفاق ${fullRoas.toFixed(1)}x) — فوق التعادل لكن الربح قليل`,
       action: "راقبها وأوقِف الإعلانات الحمراء بالداخل أولًا",
     };
   }
@@ -797,7 +797,7 @@ function evaluateCampaign(
   return {
     verdict: "watch",
     rule: "W6",
-    reason: `في آخر 3 أيام: الحملة تخسر حاليًا — full-funnel ROAS ${fullRoas.toFixed(1)}x فقط`,
+    reason: `في آخر 3 أيام: الحملة تخسر حاليًا — العائد الكلي على الإنفاق ${fullRoas.toFixed(1)}x فقط`,
     action: "أوقِف الإعلانات الحمراء بالداخل وراجع عرضك وصفحتك قبل أي ميزانية إضافية",
   };
 }
