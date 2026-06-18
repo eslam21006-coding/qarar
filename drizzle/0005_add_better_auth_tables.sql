@@ -36,9 +36,9 @@ CREATE TABLE `user` (
 	`image` text,
 	`created_at` timestamp(3) NOT NULL DEFAULT (now()),
 	`updated_at` timestamp(3) NOT NULL DEFAULT (now()),
-	`subscription_status` text DEFAULT ('inactive'),
+	`subscription_status` text NOT NULL DEFAULT ('inactive'),
 	`ghl_contact_id` text,
-	`role` text DEFAULT ('user'),
+	`role` text NOT NULL DEFAULT ('user'),
 	CONSTRAINT `user_id` PRIMARY KEY(`id`),
 	CONSTRAINT `user_email_unique` UNIQUE(`email`)
 );

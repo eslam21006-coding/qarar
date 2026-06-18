@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "ee97a3ac-7514-43e9-8398-2e1e09dd9bb4",
+  "id": "31d16eb9-18c7-4e53-8fad-27ea36cad219",
   "prevId": "9c294efd-309c-4a2d-ae9a-eaa17745bf55",
   "tables": {
     "actionChecks": {
@@ -1026,7 +1026,7 @@
           "name": "subscription_status",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false,
           "default": "('inactive')"
         },
@@ -1041,7 +1041,7 @@
           "name": "role",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false,
           "default": "('user')"
         }

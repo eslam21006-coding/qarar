@@ -19,9 +19,9 @@ export const user = mysqlTable("user", {
     .defaultNow()
     .$onUpdate(() => /* @__PURE__ */ new Date())
     .notNull(),
-  subscriptionStatus: text("subscription_status").default("inactive"),
+  subscriptionStatus: text("subscription_status").default("inactive").notNull(),
   ghlContactId: text("ghl_contact_id"),
-  role: text("role").default("user"),
+  role: text("role").default("user").notNull(),
 });
 
 export const session = mysqlTable(
