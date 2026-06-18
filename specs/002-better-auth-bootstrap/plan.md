@@ -71,7 +71,7 @@ specs/002-better-auth-bootstrap/
 │   └── schema-exports.md
 ├── checklists/
 │   └── requirements.md  # Spec quality checklist (from /speckit-specify)
-└── tasks.md             # Phase 2 output (/speckit-tasks — NOT created here)
+└── tasks.md             # Phase 2 output (/speckit-tasks)
 ```
 
 ### Source Code (repository root)

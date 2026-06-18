@@ -34,4 +34,4 @@
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
 - This is a foundation-only phase: "no functional login yet" is an intended outcome, captured explicitly in scope and edge cases rather than treated as a gap.
 - Specific file paths, package names, CLI commands, and config keys from the source plan are intentionally kept out of the spec body (they belong in the plan); the spec describes the observable outcomes instead.
-- Phase A deliberately performs a full user reset (drops the legacy users table). This is a destructive schema change that the project constitution otherwise discourages; it is called out as an explicit, justified standing constraint in the Context section and must be re-confirmed during `/speckit-plan`.
+- Phase A is intentionally additive and does NOT drop the legacy users table or retype any `userId` FK column (per decision R1 in research.md). The destructive schema reset is deferred to Phase B. Phase A must be confirmed as keeping the legacy schema untouched during planning.

@@ -24,7 +24,7 @@ Must export the four Better Auth tables for the MySQL dialect:
 
 Add exactly these five variables with **placeholder/empty** values (no real secrets):
 
-```
+```env
 BETTER_AUTH_SECRET=
 BETTER_AUTH_URL=https://app.adqarar.com
 GHL_WEBHOOK_SECRET=

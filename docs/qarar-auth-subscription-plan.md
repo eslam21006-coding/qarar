@@ -24,8 +24,13 @@ Manus is invisible — it is only the hosting server.
 
 ## ⚠️ Two Standing Constraints
 
-1. **Full user reset.** The schema change drops and recreates the users table.
-   All existing accounts will be gone. This is intentional.
+1. **Phase A is additive only.** The new Better Auth tables are created
+   alongside the existing schema. The legacy `users` table and the integer
+   `userId` foreign keys are LEFT IN PLACE this phase. The destructive
+   reset (drop of `users` and `int` → `varchar(36)` retype of `userId`
+   columns) is deferred to Phase B, where the `_core`/`db`/`routers`
+   cutover happens atomically. See the Phase A spec (`specs/002-better-auth-bootstrap/`)
+   decision R1 in `research.md` for the full justification.
 
 2. **Cron untouched.** Do NOT modify anything inside `server/_core/`.
    The Manus heartbeat/cron system will be addressed separately
@@ -33,11 +38,13 @@ Manus is invisible — it is only the hosting server.
 
 ---
 
-## Phase A — Better Auth Install + Schema Reset
+## Phase A — Better Auth Install (Additive)
 
 ### Goal
-Replace the old `users` table with Better Auth's own user system.
-This is the foundation everything else builds on.
+Install Better Auth and lay the foundation everything else builds on.
+Phase A is **additive only** — no existing table, column, or FK type is
+altered. The destructive reset of the legacy `users` table and the
+integer `userId` foreign keys is moved to Phase B.
 
 ### What Minimax Implements
 
@@ -50,10 +57,10 @@ This is the foundation everything else builds on.
 - `drizzle/auth-schema.ts` — Generated via Better Auth CLI
 
 **Modified files:**
-- `drizzle/schema.ts` — Remove old `users` table. Re-export from `auth-schema.ts`.
-  Change all `userId` foreign key columns from `int` to `varchar(36)`
-  in `metaConnections`, `adAccounts`, and any other table that references `userId`.
-- `.env` — Add four new variables (see below)
+- `drizzle/schema.ts` — Re-export from `auth-schema.ts` (additive only;
+  the legacy `users` table, `User`/`InsertUser` types, and all integer
+  `userId` foreign keys are LEFT UNCHANGED).
+- `.env` — Add five new variables (see below)
 - `package.json` — New dependency
 
 **Better Auth server config (`server/auth.ts`) must include:**
@@ -91,8 +98,9 @@ VITE_APP_URL=https://app.adqarar.com
 ### Done When
 - App deploys to Manus without crashing
 - Database has new tables: `user`, `session`, `account`, `verification`
-- Old `users` table is gone
+- Old `users` table is still present and unchanged (destructive reset is Phase B)
 - No TypeScript errors
+- `server/_core/` is untouched
 
 ---
 

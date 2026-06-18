@@ -50,7 +50,13 @@ export const auth = betterAuth({
         after: async (createdUser, context) => {
           const adminEmail = process.env.ADMIN_EMAIL;
           if (!adminEmail) return;
-          if (createdUser.email !== adminEmail) return;
+          const normalizedAdminEmail = adminEmail.trim().toLowerCase();
+          const normalizedCreatedEmail = createdUser.email?.trim().toLowerCase();
+          if (
+            !normalizedCreatedEmail ||
+            normalizedCreatedEmail !== normalizedAdminEmail
+          )
+            return;
           if (!context) return;
           await context.context.internalAdapter.updateUser(createdUser.id, {
             role: "admin",

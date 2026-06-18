@@ -10,11 +10,11 @@
 
 ## Context
 
-The Qarar dashboard currently authenticates users through the Manus OAuth SDK. The product is moving to a self-owned, branded email-and-password sign-in experience at `app.adqarar.com`, backed by Better Auth, with a subscription gate that will be wired up in later phases. This specification covers **Phase A only**: laying the foundation by installing Better Auth, generating its database tables, creating the server and client auth configuration, and converting the existing `userId` foreign keys so they can reference Better Auth's user identifiers.
+The Qarar dashboard currently authenticates users through the Manus OAuth SDK. The product is moving to a self-owned, branded email-and-password sign-in experience at `app.adqarar.com`, backed by Better Auth, with a subscription gate that will be wired up in later phases. This specification covers **Phase A only**: laying the foundation by installing Better Auth, generating its database tables, creating the server and client auth configuration, and re-exporting the new auth tables from `drizzle/schema.ts`.
 
-This is a foundation-only phase. Login does not work yet at the end of Phase A — that is intentional. The work is considered complete when the application still builds, type-checks, and boots, and the database carries the new auth tables. Replacing the running login flow, the subscription gate, the payment webhook, and the user-facing Arabic screens all belong to Phases B, C, and D respectively and are explicitly out of scope here.
+This is a foundation-only phase, and it is **additive only** — no existing table, column, or foreign-key type may be altered. Login does not work yet at the end of Phase A — that is intentional. The work is considered complete when the application still builds, type-checks, and boots, and the database carries the new auth tables alongside the existing schema. Replacing the running login flow, the subscription gate, the payment webhook, the user-facing Arabic screens, and the destructive schema reset (drop of the legacy `users` table, retype of the integer `userId` foreign keys to `varchar(36)`) all belong to Phases B, C, and D respectively and are explicitly out of scope here.
 
-Two standing constraints apply: (1) this is a **full user reset** — the existing `users` table is removed and replaced, so all existing accounts are intentionally discarded; (2) **nothing inside `server/_core/` may be touched** — the Manus heartbeat/cron system must remain fully intact.
+Two standing constraints apply: (1) Phase A is **additive only** — the existing `users` table and the integer `userId` foreign keys are LEFT IN PLACE; the destructive reset is deferred to Phase B; (2) **nothing inside `server/_core/` may be touched** — the Manus heartbeat/cron system must remain fully intact.
 
 ## Clarifications
 

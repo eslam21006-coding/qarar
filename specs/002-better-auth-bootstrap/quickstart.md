@@ -6,7 +6,7 @@ A runnable guide to prove Phase A works. **No login is expected to function yet*
 
 - Node + pnpm installed; dependencies installable.
 - A local `.env` for verification, using **placeholder** values copied from `.env.example`:
-  ```
+  ```env
   BETTER_AUTH_SECRET=dev-placeholder-secret-not-for-prod
   BETTER_AUTH_URL=http://localhost:5173
   GHL_WEBHOOK_SECRET=

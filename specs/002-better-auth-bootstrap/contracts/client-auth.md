@@ -4,7 +4,7 @@ Phase A creates this module. It is created but not yet consumed by any page (aut
 
 ## Construction
 
-```ts
+```typescript
 import { createAuthClient } from "better-auth/react";
 
 export const authClient = createAuthClient({

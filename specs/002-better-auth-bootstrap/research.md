@@ -29,7 +29,7 @@ Removing `users`/`User` or retyping the FK columns now would cause `tsc` errors 
 
 **Rationale**: `server/db.ts` exposes only an async, possibly-null `getDb()` (lazy) — not a synchronous instance the adapter can take at module load. Better Auth builds its adapter at config time. A dedicated client in `server/auth.ts` is additive, avoids touching `db.ts`, and matches how `db.ts` itself constructs drizzle (`drizzle(process.env.DATABASE_URL)`). Passing the explicit `schema` map makes the adapter resolve the right tables regardless of export aliasing.
 
-**Alternatives considered**: Refactor `db.ts` to export a shared synchronous `db` — rejected for Phase A (extra surface, risks the lazy/offline-tooling behavior `getDb()` intentionally provides). Can be unified in Phase B.
+**Alternatives considered**: Refactor `db.ts` to export a shared synchronous `db` — rejected for Phase A (extra surface, risks the lazy/offline-tooling behavior `getDb()` intentionally provides). Both the auth and data clients can be unified in Phase B.
 
 ---
 
