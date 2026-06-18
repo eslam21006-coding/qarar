@@ -9,10 +9,11 @@ import {
 import { encryptToken } from "./crypto";
 import * as db from "./db";
 
-function verifyState(state: string): number | null {
+function verifyState(state: string): string | null {
   try {
     const decoded = Buffer.from(state, "base64url").toString("utf8");
     const [userIdStr, ts, sig] = decoded.split(".");
+    if (!userIdStr || !ts || !sig) return null;
     const payload = `${userIdStr}.${ts}`;
     const expected = crypto
       .createHmac("sha256", process.env.JWT_SECRET ?? "qarar")
@@ -22,8 +23,10 @@ function verifyState(state: string): number | null {
     if (sig !== expected) return null;
     // state valid for 15 minutes
     if (Date.now() - parseInt(ts) > 15 * 60 * 1000) return null;
-    const userId = parseInt(userIdStr);
-    return Number.isFinite(userId) ? userId : null;
+    // Phase B: Better Auth user ids are strings (varchar(36)); no parseInt.
+    // Reject empty segments so a malformed state can't return a falsy id
+    // that would later compare against ctx.user.id.
+    return userIdStr.length > 0 ? userIdStr : null;
   } catch {
     return null;
   }

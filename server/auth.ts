@@ -13,6 +13,12 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
   },
+  // Phase B / T012 / FR-007a — DO NOT enable Better Auth's cookie-cache
+  // plugin. The subscription gate reads `subscriptionStatus` / `role` from
+  // the user record on every gated request (activeProcedure). If a cookie
+  // cache were enabled, `getSession()` could return a frozen snapshot and
+  // a Phase C inactive→active webhook would not be reflected until the
+  // session cookie refreshed. Keep this comment as a load-bearing guard.
   user: {
     additionalFields: {
       subscriptionStatus: {

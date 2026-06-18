@@ -1,7 +1,12 @@
 import "dotenv/config";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, desc, eq } from "drizzle-orm";
-import { adAccounts, funnelSettings, users, verdictHistory } from "../drizzle/schema";
+import {
+  adAccounts,
+  funnelSettings,
+  user as authUser,
+  verdictHistory,
+} from "../drizzle/schema";
 import * as db from "./db";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
@@ -11,14 +16,18 @@ import type { EngineRow } from "../shared/qarar";
  * Hard requirement: strict per-user data isolation.
  * User B must never be able to read or mutate User A's accounts,
  * funnel settings, snapshots, or checks — even with valid IDs.
+ *
+ * Phase B: user identifiers are now strings (Better Auth `user.id`).
+ * We seed two users in the Better Auth `user` table and assert isolation
+ * holds under string IDs end-to-end.
  */
 
 const SUFFIX = Date.now().toString(36);
-const OPEN_A = `iso-test-a-${SUFFIX}`;
-const OPEN_B = `iso-test-b-${SUFFIX}`;
+const USER_A_ID = `iso-a-${SUFFIX}-${Math.random().toString(36).slice(2, 10)}`;
+const USER_B_ID = `iso-b-${SUFFIX}-${Math.random().toString(36).slice(2, 10)}`;
+const EMAIL_A = `${USER_A_ID}@isolation.test`;
+const EMAIL_B = `${USER_B_ID}@isolation.test`;
 
-let userAId = 0;
-let userBId = 0;
 let accountAId = 0;
 let accountBId = 0;
 
@@ -31,18 +40,19 @@ let accountBId = 0;
  */
 const hasDatabase = Boolean(process.env.DATABASE_URL);
 
-function ctxFor(id: number, openId: string): TrpcContext {
+function ctxFor(id: string): TrpcContext {
   return {
     user: {
       id,
-      openId,
-      email: null,
+      email: `${id}@isolation.test`,
       name: "iso",
-      loginMethod: "test",
+      emailVerified: false,
+      image: null,
+      subscriptionStatus: "active",
       role: "user",
+      ghlContactId: null,
       createdAt: new Date(),
       updatedAt: new Date(),
-      lastSignedIn: new Date(),
     },
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
     res: { clearCookie: () => {} } as unknown as TrpcContext["res"],
@@ -53,16 +63,28 @@ beforeAll(async () => {
   if (!hasDatabase) return; // no DATABASE_URL — isolation suite is skipped below
   const d = await db.getDb();
   if (!d) throw new Error("DB unavailable for isolation test");
-  await d.insert(users).values({ openId: OPEN_A, name: "A" });
-  await d.insert(users).values({ openId: OPEN_B, name: "B" });
-  userAId = (await db.getUserByOpenId(OPEN_A))!.id;
-  userBId = (await db.getUserByOpenId(OPEN_B))!.id;
+  // Phase B: seed in Better Auth `user` table (string id). The legacy
+  // `users` table is no longer used by the data layer.
+  await d.insert(authUser).values({
+    id: USER_A_ID,
+    name: "A",
+    email: EMAIL_A,
+    subscriptionStatus: "active",
+    role: "user",
+  });
+  await d.insert(authUser).values({
+    id: USER_B_ID,
+    name: "B",
+    email: EMAIL_B,
+    subscriptionStatus: "active",
+    role: "user",
+  });
   // User A and User B each own their own demo account. The isolation tests
   // verify that user B cannot see user A's data even when they know the
   // objectId — the router enforces ownership via requireAccount, and the
   // db functions filter by userId.
-  const accA = await db.ensureDemoAccount(userAId);
-  const accB = await db.ensureDemoAccount(userBId);
+  const accA = await db.ensureDemoAccount(USER_A_ID);
+  const accB = await db.ensureDemoAccount(USER_B_ID);
   accountAId = accA.id;
   accountBId = accB.id;
 });
@@ -70,32 +92,32 @@ beforeAll(async () => {
 afterAll(async () => {
   const d = await db.getDb();
   if (!d) return;
-  await db.deleteAllUserData(userAId);
-  await db.deleteAllUserData(userBId);
-  await d.delete(users).where(eq(users.openId, OPEN_A));
-  await d.delete(users).where(eq(users.openId, OPEN_B));
+  await db.deleteAllUserData(USER_A_ID);
+  await db.deleteAllUserData(USER_B_ID);
+  await d.delete(authUser).where(eq(authUser.id, USER_A_ID));
+  await d.delete(authUser).where(eq(authUser.id, USER_B_ID));
 });
 
 describe.skipIf(!hasDatabase)("cross-user data isolation", () => {
   it("db.getAccount hides other users' accounts", async () => {
-    expect(await db.getAccount(userAId, accountAId)).toBeDefined();
-    expect(await db.getAccount(userBId, accountAId)).toBeUndefined();
+    expect(await db.getAccount(USER_A_ID, accountAId)).toBeDefined();
+    expect(await db.getAccount(USER_B_ID, accountAId)).toBeUndefined();
   });
 
   it("db.listAccounts never returns another user's account", async () => {
-    const listB = await db.listAccounts(userBId);
+    const listB = await db.listAccounts(USER_B_ID);
     expect(listB.find(a => a.id === accountAId)).toBeUndefined();
   });
 
   it("dashboard.get rejects access to another user's account", async () => {
-    const callerB = appRouter.createCaller(ctxFor(userBId, OPEN_B));
+    const callerB = appRouter.createCaller(ctxFor(USER_B_ID));
     await expect(
       callerB.dashboard.get({ adAccountId: accountAId })
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("funnel.save rejects writes to another user's account", async () => {
-    const callerB = appRouter.createCaller(ctxFor(userBId, OPEN_B));
+    const callerB = appRouter.createCaller(ctxFor(USER_B_ID));
     await expect(
       callerB.funnel.save({
         adAccountId: accountAId,
@@ -120,12 +142,12 @@ describe.skipIf(!hasDatabase)("cross-user data isolation", () => {
     const rows = await d!
       .select()
       .from(funnelSettings)
-      .where(eq(funnelSettings.userId, userBId));
+      .where(eq(funnelSettings.userId, USER_B_ID));
     expect(rows.length).toBe(0);
   });
 
   it("dashboard.setCheck rejects another user's account", async () => {
-    const callerB = appRouter.createCaller(ctxFor(userBId, OPEN_B));
+    const callerB = appRouter.createCaller(ctxFor(USER_B_ID));
     await expect(
       callerB.dashboard.setCheck({
         adAccountId: accountAId,
@@ -137,11 +159,11 @@ describe.skipIf(!hasDatabase)("cross-user data isolation", () => {
 
   it("deleteAllUserData only wipes the requesting user", async () => {
     const d = await db.getDb();
-    await db.deleteAllUserData(userBId);
+    await db.deleteAllUserData(USER_B_ID);
     const rowsA = await d!
       .select()
       .from(adAccounts)
-      .where(eq(adAccounts.userId, userAId));
+      .where(eq(adAccounts.userId, USER_A_ID));
     expect(rowsA.length).toBeGreaterThan(0);
   });
 });
@@ -181,16 +203,16 @@ describe.skipIf(!hasDatabase)("verdictHistory (US12 / T049)", () => {
 
   it("User B cannot read user A's verdictHistory rows", async () => {
     // User A records a verdict under their own account
-    await db.recordVerdicts(userAId, accountAId, [
+    await db.recordVerdicts(USER_A_ID, accountAId, [
       makeRow({ id: "obj-iso", rule: "K1", verdict: "kill" }),
     ]);
     // User B's getVerdictHistory for the same objectId scoped to A's
     // account returns nothing (strict per-user isolation)
-    const historyB = await db.getVerdictHistory(userBId, accountAId, "obj-iso");
+    const historyB = await db.getVerdictHistory(USER_B_ID, accountAId, "obj-iso");
     expect(historyB.length).toBe(0);
     // The tRPC query called from user B's session against user A's
     // accountId rejects with NOT_FOUND (requireAccount ownership check)
-    const callerB = appRouter.createCaller(ctxFor(userBId, OPEN_B));
+    const callerB = appRouter.createCaller(ctxFor(USER_B_ID));
     await expect(
       callerB.history.getForObject({
         adAccountId: accountAId,
@@ -219,15 +241,15 @@ describe.skipIf(!hasDatabase)("verdictHistory (US12 / T049)", () => {
 
   it("recording the same verdict+rule twice inserts only one row", async () => {
     const obj = makeRow({ id: "obj-dup", rule: "K1", verdict: "kill" });
-    await db.recordVerdicts(userAId, accountAId, [obj]);
-    await db.recordVerdicts(userAId, accountAId, [obj]);
+    await db.recordVerdicts(USER_A_ID, accountAId, [obj]);
+    await db.recordVerdicts(USER_A_ID, accountAId, [obj]);
     const d = await db.getDb();
     const rows = await d!
       .select()
       .from(verdictHistory)
       .where(
         and(
-          eq(verdictHistory.userId, userAId),
+          eq(verdictHistory.userId, USER_A_ID),
           eq(verdictHistory.objectId, "obj-dup")
         )
       );
@@ -236,7 +258,7 @@ describe.skipIf(!hasDatabase)("verdictHistory (US12 / T049)", () => {
 
   it("recording a changed verdict inserts exactly one new row", async () => {
     const obj = "obj-change";
-    await db.recordVerdicts(userAId, accountAId, [
+    await db.recordVerdicts(USER_A_ID, accountAId, [
       makeRow({ id: obj, rule: "K1", verdict: "kill" }),
     ]);
     // The two inserts can land in the same `evaluatedAt` second (MySQL
@@ -245,7 +267,7 @@ describe.skipIf(!hasDatabase)("verdictHistory (US12 / T049)", () => {
     // secondary sort below is the real deterministic guard for the
     // test — both layers of defense.
     await new Promise(r => setTimeout(r, 1100));
-    await db.recordVerdicts(userAId, accountAId, [
+    await db.recordVerdicts(USER_A_ID, accountAId, [
       makeRow({ id: obj, rule: "S2", verdict: "continue" }),
     ]);
     const d = await db.getDb();
@@ -254,7 +276,7 @@ describe.skipIf(!hasDatabase)("verdictHistory (US12 / T049)", () => {
       .from(verdictHistory)
       .where(
         and(
-          eq(verdictHistory.userId, userAId),
+          eq(verdictHistory.userId, USER_A_ID),
           eq(verdictHistory.objectId, obj)
         )
       )

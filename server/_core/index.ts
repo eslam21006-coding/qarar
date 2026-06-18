@@ -3,7 +3,8 @@ import express from "express";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { registerOAuthRoutes } from "./oauth";
+import { toNodeHandler } from "better-auth/node";
+import { auth } from "../auth";
 import { registerMetaCallback } from "../metaCallback";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
@@ -34,11 +35,24 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
+
+  // Phase B / T010 / FR-001 + FR-002 — Better Auth HTTP handler.
+  // MUST be mounted BEFORE express.json()/urlencoded() so the handler can
+  // read the raw request body for sign-in/sign-up POSTs. If a body parser
+  // runs first the stream is consumed and Better Auth gets an empty body,
+  // breaking auth.
+  app.all("/api/auth/*", toNodeHandler(auth));
+
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
-  registerOAuthRoutes(app);
+  // Phase B / FR-024 / contract auth-endpoint.md §2 — Manus OAuth login
+  // callback is no longer mounted. `registerOAuthRoutes` would expose
+  // `/api/oauth/callback` and mint app sessions; after cutover the real
+  // session is the Better Auth cookie. The `_core/oauth.ts` file itself
+  // is intentionally unmodified (untouchable Manus machinery). Login UI
+  // ships in Phase D.
   registerMetaCallback(app);
   // US11 / T047 — daily refresh Heartbeat handler. Mounted BEFORE the
   // Vite/static fallthrough (the platform only POSTs to /api/scheduled/*,

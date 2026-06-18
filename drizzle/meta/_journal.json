@@ -43,6 +43,13 @@
       "when": 1781782080434,
       "tag": "0005_add_better_auth_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1781798470826,
+      "tag": "0006_calm_dagger",
+      "breakpoints": true
     }
   ]
 }
