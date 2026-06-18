@@ -87,7 +87,7 @@ integer `userId` foreign keys is moved to Phase B.
 - Then run `npx drizzle-kit push`
 
 **New env vars required:**
-```
+```bash
 BETTER_AUTH_SECRET=<generate: openssl rand -base64 32>
 BETTER_AUTH_URL=https://app.adqarar.com
 GHL_WEBHOOK_SECRET=<paste from GHL later>
@@ -277,7 +277,7 @@ Unpaid users see an Arabic upgrade wall with the booking link.
 - `isActive` — true if `user.role === "admin"` OR `user.subscriptionStatus === "active"`
 
 **Router guard logic:**
-```
+```plaintext
 No session → <SignIn />
 Session + isActive false → <Upgrade />
 Session + isActive true → <AppRoutes /> (existing dashboard)

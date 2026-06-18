@@ -11,7 +11,7 @@ CREATE TABLE `account` (
 	`scope` text,
 	`password` text,
 	`created_at` timestamp(3) NOT NULL DEFAULT (now()),
-	`updated_at` timestamp(3) NOT NULL,
+	`updated_at` timestamp(3) NOT NULL DEFAULT (now()),
 	CONSTRAINT `account_id` PRIMARY KEY(`id`)
 );
 --> statement-breakpoint
@@ -20,7 +20,7 @@ CREATE TABLE `session` (
 	`expires_at` timestamp(3) NOT NULL,
 	`token` varchar(255) NOT NULL,
 	`created_at` timestamp(3) NOT NULL DEFAULT (now()),
-	`updated_at` timestamp(3) NOT NULL,
+	`updated_at` timestamp(3) NOT NULL DEFAULT (now()),
 	`ip_address` text,
 	`user_agent` text,
 	`user_id` varchar(36) NOT NULL,
