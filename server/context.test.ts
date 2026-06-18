@@ -116,14 +116,15 @@ describe("createContext (T014 / US1 / FR-003 + FR-004 + FR-005)", () => {
   it("does NOT import the Manus SDK (FR-005 — non-cron identity is Better Auth only)", async () => {
     // Read the context source and assert it does not pull sdk.ts in.
     // This is a guard against accidentally re-introducing Manus identity
-    // on the non-cron path.
+    // on the non-cron path. The path is `../sdk` (from `server/_core/`)
+    // or any future relative import shape.
     const fs = await import("node:fs/promises");
     const src = await fs.readFile(
       new URL("./_core/context.ts", import.meta.url),
       "utf8"
     );
     expect(src).not.toMatch(/sdk\.authenticateRequest/);
-    expect(src).not.toMatch(/from\s+["']\.\/sdk["']/);
+    expect(src).not.toMatch(/from\s+["'](?:\.\/|\.\.\/)sdk["']/);
     expect(src).toMatch(/auth\.api\.getSession/);
   });
 });

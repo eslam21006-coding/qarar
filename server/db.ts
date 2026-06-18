@@ -155,6 +155,7 @@ export async function markConnectionStatus(
 export async function deleteAllUserData(userId: string) {
   const db = await getDb();
   if (!db) return;
+  await db.delete(verdictHistory).where(eq(verdictHistory.userId, userId));
   await db.delete(snapshots).where(eq(snapshots.userId, userId));
   await db.delete(funnelSettings).where(eq(funnelSettings.userId, userId));
   await db.delete(actionChecks).where(eq(actionChecks.userId, userId));

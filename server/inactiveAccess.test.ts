@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { TRPCError } from "@trpc/server";
+import { SUBSCRIPTION_REQUIRED } from "@shared/const";
 import type { TrpcContext } from "./_core/context";
 
 /**
@@ -112,7 +113,7 @@ describe("inactive non-admin user (T022 / US4 / SC-004)", () => {
     }
     expect(caught).toBeInstanceOf(TRPCError);
     expect(caught.code).toBe("FORBIDDEN");
-    expect(caught.message).toBe("SUBSCRIPTION_REQUIRED");
+    expect(caught.message).toBe(SUBSCRIPTION_REQUIRED);
   });
 
   it("control.setStatus is blocked with SUBSCRIPTION_REQUIRED (activeProcedure)", async () => {
@@ -126,7 +127,7 @@ describe("inactive non-admin user (T022 / US4 / SC-004)", () => {
       })
     ).rejects.toMatchObject({
       code: "FORBIDDEN",
-      message: "SUBSCRIPTION_REQUIRED",
+      message: SUBSCRIPTION_REQUIRED,
     });
   });
 });

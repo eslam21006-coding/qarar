@@ -22,11 +22,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 function makeStubAuth() {
   return {
     handler: (req: any, res: any, _next: any) => {
+      // FR-002 hard requirement: the auth handler must read the raw
+      // request body BEFORE the JSON body parser runs. If the parser ran
+      // first, `req.body` would be a parsed object — assert it isn't.
+      if (req.body !== undefined && req.body !== null) {
+        res.statusCode = 500;
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ error: "body-parser-ran-first" }));
+        return;
+      }
       // Mirror Better Auth's contract: 200 + Set-Cookie on sign-up/in.
-      // The real Better Auth handler reads the RAW request body (the JSON
-      // body parser must NOT have consumed it yet — FR-002). This stub
-      // does the same: it does NOT inspect req.body (which would imply
-      // body-parsing ran first).
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
       res.setHeader(
