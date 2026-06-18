@@ -44,6 +44,22 @@ export const auth = betterAuth({
   ),
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL,
+  databaseHooks: {
+    user: {
+      create: {
+        after: async (createdUser, context) => {
+          const adminEmail = process.env.ADMIN_EMAIL;
+          if (!adminEmail) return;
+          if (createdUser.email !== adminEmail) return;
+          if (!context) return;
+          await context.context.internalAdapter.updateUser(createdUser.id, {
+            role: "admin",
+            subscriptionStatus: "active",
+          });
+        },
+      },
+    },
+  },
 });
 
 export type BetterAuthUser = typeof auth.$Infer.Session.user;
