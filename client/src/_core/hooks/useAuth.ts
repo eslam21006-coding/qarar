@@ -60,6 +60,6 @@ export function useAuth(): UseAuthResult {
   };
 }
 
-// Re-export the union types so existing importers (`useAuth`-only consumers
-// that read `Role`/`SubscriptionStatus`) keep working without an extra import.
-export type { Role, SubscriptionStatus };
+// Re-export the auth view-model types so existing consumers that imported
+// them from `@/_core/hooks/useAuth` keep compiling without an extra import.
+export type { Role, SessionUser, SubscriptionStatus };

@@ -26,6 +26,18 @@ describe("deriveIsActive", () => {
     expect(deriveIsActive({ subscriptionStatus: "inactive" })).toBe(false);
   });
 
+  it("null access fields fail closed (treated as missing)", () => {
+    expect(deriveIsActive({ role: null, subscriptionStatus: null })).toBe(
+      false,
+    );
+    expect(deriveIsActive({ role: null, subscriptionStatus: "active" })).toBe(
+      true,
+    );
+    expect(deriveIsActive({ role: "admin", subscriptionStatus: null })).toBe(
+      true,
+    );
+  });
+
   it("unknown role/status values are not active (fail closed)", () => {
     expect(
       deriveIsActive({
