@@ -1,84 +1,49 @@
-import { getLoginUrl } from "@/const";
-import { trpc } from "@/lib/trpc";
-import { TRPCClientError } from "@trpc/client";
-import { useCallback, useEffect, useMemo } from "react";
+import { useSession, signOut } from "@/lib/auth-client";
+import { deriveIsActive } from "./isActive";
 
-type UseAuthOptions = {
-  redirectOnUnauthenticated?: boolean;
-  redirectPath?: string;
-};
+type Role = "user" | "admin";
+type SubscriptionStatus = "active" | "inactive";
 
-export function useAuth(options?: UseAuthOptions) {
-  const { redirectOnUnauthenticated = false, redirectPath = getLoginUrl() } =
-    options ?? {};
-  const utils = trpc.useUtils();
+export interface SessionUser {
+  id: string;
+  name: string;
+  email: string;
+  role?: Role;
+  subscriptionStatus?: SubscriptionStatus;
+  ghlContactId?: string | null;
+}
 
-  const meQuery = trpc.auth.me.useQuery(undefined, {
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
+export interface UseAuthResult {
+  user: SessionUser | null;
+  loading: boolean;
+  isActive: boolean;
+  refetch: () => Promise<unknown> | void;
+  logout: () => Promise<void>;
+}
 
-  const logoutMutation = trpc.auth.logout.useMutation({
-    onSuccess: () => {
-      utils.auth.me.setData(undefined, undefined);
-    },
-  });
+export function useAuth(): UseAuthResult {
+  const session = useSession();
+  const user = (session.data?.user as SessionUser | undefined) ?? null;
+  const loading = Boolean(session.isPending);
 
-  const logout = useCallback(async () => {
-    try {
-      await logoutMutation.mutateAsync();
-    } catch (error: unknown) {
-      if (
-        error instanceof TRPCClientError &&
-        error.data?.code === "UNAUTHORIZED"
-      ) {
-        return;
-      }
-      throw error;
-    } finally {
-      utils.auth.me.setData(undefined, undefined);
-      await utils.auth.me.invalidate();
+  const isActive = deriveIsActive(user);
+
+  const refetch = () => {
+    if (typeof session.refetch === "function") {
+      return session.refetch();
     }
-  }, [logoutMutation, utils]);
+    return undefined;
+  };
 
-  const state = useMemo(() => {
-    localStorage.setItem(
-      "manus-runtime-user-info",
-      JSON.stringify(meQuery.data)
-    );
-    return {
-      user: meQuery.data ?? null,
-      loading: meQuery.isLoading || logoutMutation.isPending,
-      error: meQuery.error ?? logoutMutation.error ?? null,
-      isAuthenticated: Boolean(meQuery.data),
-    };
-  }, [
-    meQuery.data,
-    meQuery.error,
-    meQuery.isLoading,
-    logoutMutation.error,
-    logoutMutation.isPending,
-  ]);
-
-  useEffect(() => {
-    if (!redirectOnUnauthenticated) return;
-    if (meQuery.isLoading || logoutMutation.isPending) return;
-    if (state.user) return;
-    if (typeof window === "undefined") return;
-    if (window.location.pathname === redirectPath) return;
-
-    window.location.href = redirectPath
-  }, [
-    redirectOnUnauthenticated,
-    redirectPath,
-    logoutMutation.isPending,
-    meQuery.isLoading,
-    state.user,
-  ]);
+  const logout = async () => {
+    await signOut();
+  };
 
   return {
-    ...state,
-    refresh: () => meQuery.refetch(),
+    user,
+    loading,
+    isActive,
+    refetch,
     logout,
   };
 }
