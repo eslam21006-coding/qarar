@@ -51,4 +51,11 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+main().catch((e: unknown) => {
+  // Final safety net — main() already routes every expected error to
+  // process.exit() via process.stderr, but a stray rejection from this
+  // top-level async function must not become an unhandled rejection.
+  const message = e instanceof Error ? e.message : String(e);
+  process.stderr.write(`✗ Unexpected error: ${message}\n`);
+  process.exit(1);
+});

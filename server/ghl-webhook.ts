@@ -250,9 +250,12 @@ ghlWebhookRouter.post(
       }
       res.status(200).json({ ok: true, status });
     } catch (e: unknown) {
+      // Log the full internal message for operators, but return a generic
+      // safe string to the caller — never echo DB / infra internals to an
+      // external webhook source.
       const message = e instanceof Error ? e.message : String(e);
       console.error(`[GHL Webhook] DB error ${message}`);
-      res.status(500).json({ error: message });
+      res.status(500).json({ error: "internal_error" });
     }
   }
 );

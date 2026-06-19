@@ -728,7 +728,7 @@ describe("POST /api/webhooks/ghl — integration (T011 / T014 / T018 / T019)", (
       expect(calls.updateCalls).toHaveLength(0);
     });
 
-    it("DB throw inside setUserSubscriptionByEmail → 500 and the DB error is logged (FR-025)", async () => {
+    it("DB throw inside setUserSubscriptionByEmail → 500 with a generic body, full error logged (FR-025, no info disclosure)", async () => {
       const built = buildFakeDb({
         matchingUser: { id: "user-abc" },
         throwOnUpdate: new Error("connection_lost"),
@@ -748,13 +748,16 @@ describe("POST /api/webhooks/ghl — integration (T011 / T014 / T018 / T019)", (
         .send(body);
 
       expect(res.status).toBe(500);
-      expect(res.body).toEqual({ error: "connection_lost" });
+      // Generic body — never echo internal DB / infra text to the caller.
+      expect(res.body).toEqual({ error: "internal_error" });
+      // Full error is still available to operators in the server logs.
       expect(
         errorSpy.mock.calls
           .map((c) => c[0])
           .some(
             (m) =>
-              typeof m === "string" && m.startsWith("[GHL Webhook] DB error ")
+              typeof m === "string" &&
+              m === "[GHL Webhook] DB error connection_lost"
           )
       ).toBe(true);
     });
