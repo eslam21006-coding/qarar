@@ -220,7 +220,7 @@ pattern here.
 
 ## R9 — Verification approach
 
-**Decision**: `npm run check` (zero TS errors — FR-027/SC-008) and `npm test` must
+**Decision**: `pnpm check` (zero TS errors — FR-027/SC-008) and `pnpm test` must
 stay green. No server tests should change behavior; if any existing front-end test
 references Manus login, update it deliberately. Manual end-to-end verification per
 `quickstart.md` (sign-up → upgrade → activate via existing `scripts/set-access.ts` →

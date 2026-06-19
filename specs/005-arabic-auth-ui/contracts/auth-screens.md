@@ -107,4 +107,4 @@ prominent. Links to `https://eslamsalah.com/team-discovery-call`, opens in a new
 - All three render correctly RTL on the dark theme and remain usable at 360px width.
   (FR-023 / SC-006)
 - No emoji in body copy; only the upgrade lock glyph is allowed. (FR-024)
-- `npm run check` passes with zero TypeScript errors. (FR-027 / SC-008)
+- `pnpm check` passes with zero TypeScript errors. (FR-027 / SC-008)

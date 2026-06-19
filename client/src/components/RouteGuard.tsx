@@ -8,6 +8,23 @@ const SIGNUP_PATH = "/auth/signup";
 const UPGRADE_PATH = "/upgrade";
 const HOME_PATH = "/";
 
+/**
+ * Three-state access guard that gates the application's protected route
+ * subtree (`/`, `/dashboard/:accountId`, `/settings/:accountId`,
+ * `/privacy`, `/terms`, `/data-deletion-status`, etc.).
+ *
+ * Behaviour (mutually exclusive, exhaustive):
+ *
+ * | Precondition            | Rendered result | Navigation                              |
+ * |-------------------------|-----------------|-----------------------------------------|
+ * | `loading === true`      | Spinner only    | none                                    |
+ * | `!user`                 | nothing         | ensure URL is `/auth/signin` or `/auth/signup` |
+ * | `user && !isActive`     | `children`      | ensure URL is `/upgrade`                |
+ * | `user && isActive`      | `children`      | leave `/auth/*` and `/upgrade` for `/`  |
+ *
+ * Redirect effects are idempotent (no loop) — navigate only when the path
+ * is not already the target. See `contracts/route-guard.md` C2.
+ */
 export function RouteGuard({ children }: { children: React.ReactNode }) {
   const { user, loading, isActive } = useAuth();
   const [location, navigate] = useLocation();

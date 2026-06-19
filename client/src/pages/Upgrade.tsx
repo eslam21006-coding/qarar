@@ -9,10 +9,29 @@ const HEADING = "اشتراكك غير مفعّل بعد";
 const BODY =
   "للوصول إلى لوحة قرار يجب أن يكون اشتراكك نشطاً. إذا أتممت الدفع ولم يُفعَّل حسابك، تواصل معنا.";
 
+/**
+ * Arabic upgrade / access-denied screen (`/upgrade`).
+ *
+ * Shown to authenticated users whose session is not active (i.e.
+ * `useAuth().isActive === false`). Per `contracts/auth-screens.md` S3:
+ * - Lock icon (lucide `Lock`) at the top.
+ * - Heading `اشتراكك غير مفعّل بعد` and the verbatim body copy.
+ * - Prominent white/black CTA `احجز مكالمة الاكتشاف` opening
+ *   `https://eslamsalah.com/team-discovery-call` in a new tab
+ *   (`target="_blank"`, `rel="noopener noreferrer"`).
+ * - Small `تسجيل خروج` link that calls `signOut()` and navigates to
+ *   `/auth/signin`.
+ */
 export default function Upgrade() {
   const [, navigate] = useLocation();
   const [signingOut, setSigningOut] = useState(false);
 
+  /**
+   * End the current session and route the visitor back to the sign-in screen.
+   *
+   * Sets a local `signingOut` flag to keep the button disabled while the
+   * Better Auth client call is in flight.
+   */
   const handleSignOut = async () => {
     if (signingOut) return;
     setSigningOut(true);

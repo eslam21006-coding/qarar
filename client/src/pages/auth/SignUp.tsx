@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { signIn, signUp, useSession } from "@/lib/auth-client";
+import { getSession, signIn, signUp } from "@/lib/auth-client";
 import { LockKeyhole, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
@@ -16,6 +16,15 @@ import { Link, useLocation } from "wouter";
 const MSG_DUPLICATE = "هذا البريد الإلكتروني مسجّل بالفعل";
 const MSG_GENERIC = "حدث خطأ، حاول مرة أخرى";
 
+/**
+ * Heuristic check for a "duplicate email" error returned by `signUp.email`.
+ *
+ * Matches on HTTP status (409/422), Better Auth error codes, and the common
+ * English message fragments the server may emit.
+ *
+ * @param err - The error thrown or returned from `signUp.email`.
+ * @returns `true` if the error should surface the duplicate-email copy.
+ */
 function isDuplicateEmailError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const anyErr = err as {
@@ -45,15 +54,37 @@ function isDuplicateEmailError(err: unknown): boolean {
   return false;
 }
 
+/**
+ * Arabic sign-up screen (`/auth/signup`).
+ *
+ * Behaviour (per `contracts/auth-screens.md` S2):
+ * - Title `قرار`, subtitle `أنشئ حساباً جديداً`.
+ * - Name + email + password fields, RTL, dark `#0a0a0a`/`#111`/`#1a1a1a`/`#333`.
+ * - Submit label `إنشاء حساب`, loading label `جارٍ الإنشاء…`.
+ * - Empty fields are blocked client-side with inline Arabic feedback; no
+ *   network call is made.
+ * - On success, reads fresh session state via `getSession()` (see
+ *   research R6); when Better Auth is configured without `autoSignIn`,
+ *   falls back to `signIn.email()` so FR-008 (new non-admin user lands on
+ *   `/upgrade`) still holds.
+ * - On success navigates to `/`; the route guard routes onward
+ *   (`/upgrade` for non-admin, dashboard for admin via `ADMIN_EMAIL`).
+ * - Footer link `لديك حساب؟ سجّل دخولك` → `/auth/signin`.
+ */
 export default function SignUp() {
   const [, navigate] = useLocation();
-  const session = useSession();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  /**
+   * Validate the form, call `signUp.email`, and navigate on success.
+   *
+   * Guards required fields locally (empty name/email/password) per spec Edge
+   * Cases / data-model E3 so no blind server call is made.
+   */
   const submit = async () => {
     if (submitting) return;
     setError(null);
@@ -82,8 +113,11 @@ export default function SignUp() {
         return;
       }
 
-      const hasSession = Boolean(session.data?.user);
-      if (!hasSession) {
+      // Read fresh session state — the pre-submit `useSession()` snapshot may
+      // not yet reflect autoSignIn. Per research R6, fall back to signIn.email
+      // when Better Auth is configured without autoSignIn.
+      const fresh = await getSession();
+      if (!fresh?.data?.user) {
         const fallback = await signIn.email({
           email: trimmedEmail,
           password,
@@ -110,6 +144,9 @@ export default function SignUp() {
     }
   };
 
+  /**
+   * Form submit handler; prevents default navigation and calls `submit`.
+   */
   const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     void submit();

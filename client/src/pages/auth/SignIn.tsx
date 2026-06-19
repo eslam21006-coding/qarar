@@ -16,6 +16,14 @@ import { Link, useLocation } from "wouter";
 const MSG_INVALID = "البريد الإلكتروني أو كلمة المرور غير صحيحة";
 const MSG_GENERIC = "حدث خطأ، حاول مرة أخرى";
 
+/**
+ * Heuristic check for an "invalid credentials" error returned by
+ * `signIn.email`. Matches on HTTP status (401/400), Better Auth error
+ * codes, and the common English message fragments the server may emit.
+ *
+ * @param err - The error thrown or returned from `signIn.email`.
+ * @returns `true` if the error should surface the invalid-credentials copy.
+ */
 function isInvalidCredentialsError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const anyErr = err as {
@@ -46,6 +54,20 @@ function isInvalidCredentialsError(err: unknown): boolean {
   return false;
 }
 
+/**
+ * Arabic sign-in screen (`/auth/signin`).
+ *
+ * Behaviour (per `contracts/auth-screens.md` S1):
+ * - Title `قرار`, subtitle `سجّل دخولك للمتابعة`.
+ * - Email + password fields, RTL, dark `#0a0a0a`/`#111`/`#1a1a1a`/`#333`.
+ * - Submit label `دخول`, loading label `جارٍ الدخول…`.
+ * - Enter in the password field submits.
+ * - Empty fields are blocked client-side with inline Arabic feedback; no
+ *   network call is made.
+ * - On success, navigates to `/`; the route guard routes onward
+ *   (dashboard for active/admin, `/upgrade` otherwise).
+ * - Footer link `ليس لديك حساب؟ أنشئ حساباً` → `/auth/signup`.
+ */
 export default function SignIn() {
   const [, navigate] = useLocation();
   const [email, setEmail] = useState("");
@@ -53,6 +75,12 @@ export default function SignIn() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  /**
+   * Validate the form, call `signIn.email`, and navigate on success.
+   *
+   * Guards required fields locally (empty email/password) per spec Edge
+   * Cases / data-model E3 so no blind server call is made.
+   */
   const submit = async () => {
     if (submitting) return;
     setError(null);
@@ -92,6 +120,9 @@ export default function SignIn() {
     }
   };
 
+  /**
+   * Form submit handler; prevents default navigation and calls `submit`.
+   */
   const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     void submit();

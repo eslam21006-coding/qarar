@@ -1,18 +1,20 @@
 import { useSession, signOut } from "@/lib/auth-client";
-import { deriveIsActive } from "./isActive";
+import {
+  deriveIsActive,
+  type Role,
+  type SessionUser,
+  type SubscriptionStatus,
+} from "./isActive";
 
-type Role = "user" | "admin";
-type SubscriptionStatus = "active" | "inactive";
-
-export interface SessionUser {
-  id: string;
-  name: string;
-  email: string;
-  role?: Role;
-  subscriptionStatus?: SubscriptionStatus;
-  ghlContactId?: string | null;
-}
-
+/**
+ * Result shape returned by the {@link useAuth} hook.
+ *
+ * - `user`: the Better Auth session user, or `null` when signed out.
+ * - `loading`: `true` while `useSession()` has not yet resolved.
+ * - `isActive`: derived access flag — see `deriveIsActive` in `./isActive.ts`.
+ * - `refetch`: re-reads the session from the Better Auth client.
+ * - `logout`: ends the current Better Auth session.
+ */
 export interface UseAuthResult {
   user: SessionUser | null;
   loading: boolean;
@@ -21,6 +23,16 @@ export interface UseAuthResult {
   logout: () => Promise<void>;
 }
 
+/**
+ * Hook returning the current Better Auth session together with a derived
+ * `isActive` access flag. Drives the route guard, sign-out flows, and
+ * subscription-state-aware screens.
+ *
+ * Replaces the legacy tRPC `auth.me` dependency with `useSession()` so the
+ * front-end reads subscription state directly from the Better Auth session.
+ *
+ * @returns See {@link UseAuthResult}.
+ */
 export function useAuth(): UseAuthResult {
   const session = useSession();
   const user = (session.data?.user as SessionUser | undefined) ?? null;
@@ -47,3 +59,7 @@ export function useAuth(): UseAuthResult {
     logout,
   };
 }
+
+// Re-export the union types so existing importers (`useAuth`-only consumers
+// that read `Role`/`SubscriptionStatus`) keep working without an extra import.
+export type { Role, SubscriptionStatus };
