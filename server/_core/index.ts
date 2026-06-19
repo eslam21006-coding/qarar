@@ -5,6 +5,7 @@ import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { toNodeHandler } from "better-auth/node";
 import { auth } from "../auth";
+import { ghlWebhookRouter } from "../ghl-webhook";
 import { registerMetaCallback } from "../metaCallback";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
@@ -42,6 +43,12 @@ async function startServer() {
   // runs first the stream is consumed and Better Auth gets an empty body,
   // breaking auth.
   app.all("/api/auth/*", toNodeHandler(auth));
+  // Phase C / T008 / FR-001–FR-003 — GHL webhook.
+  // MUST sit BEFORE express.json()/urlencoded() so the route-scoped
+  // express.raw() inside the router reads the exact signed bytes GHL sent.
+  // Side-by-side with the Better Auth raw mount above; both paths need the
+  // raw stream preserved for HMAC verification.
+  app.use("/api/webhooks/ghl", ghlWebhookRouter);
 
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
