@@ -8,6 +8,7 @@ import Home from "./pages/Home";
 import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
 import { Privacy, Terms } from "./pages/Legal";
+import DataDeletionStatus from "./pages/DataDeletionStatus";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -18,6 +19,7 @@ function Router() {
       <Route path={"/settings/:accountId"} component={Settings} />
       <Route path={"/privacy"} component={Privacy} />
       <Route path={"/terms"} component={Terms} />
+      <Route path={"/data-deletion-status"} component={DataDeletionStatus} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

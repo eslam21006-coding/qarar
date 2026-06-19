@@ -114,6 +114,23 @@ export async function getConnection(userId: string) {
   return rows[0];
 }
 
+/**
+ * Reverse lookup used by the Meta deauthorize / data-deletion webhooks.
+ * Looks up by the Facebook user id (not our internal userId) so Meta can
+ * drive the wipe from its end. Returns the row or undefined when the FB
+ * account has no matching connection (still a 200 — idempotent).
+ */
+export async function getConnectionByFbUserId(fbUserId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db
+    .select()
+    .from(metaConnections)
+    .where(eq(metaConnections.fbUserId, fbUserId))
+    .limit(1);
+  return rows[0];
+}
+
 export async function upsertConnection(data: {
   userId: string;
   fbUserId: string;
