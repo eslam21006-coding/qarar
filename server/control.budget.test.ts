@@ -15,15 +15,16 @@ const OPEN = "setbudget-test-user";
 function ctxFor(): TrpcContext {
   return {
     user: {
-      id: 1,
-      openId: OPEN,
-      email: null,
+      id: "1",
+      email: "setbudget-test@example.com",
       name: "setbudget-test",
-      loginMethod: "test",
+      emailVerified: false,
+      image: null,
+      subscriptionStatus: "active",
       role: "user",
+      ghlContactId: null,
       createdAt: new Date(),
       updatedAt: new Date(),
-      lastSignedIn: new Date(),
     },
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
     res: { clearCookie: () => {} } as unknown as TrpcContext["res"],
@@ -91,20 +92,20 @@ function makeSnap(): AccountSnapshotPayload {
 
 // Mock the db module with in-memory state
 let mockSnap: AccountSnapshotPayload = makeSnap();
-let mockAccount: { id: number; userId: number; isDemo: boolean; accountId: string } = {
+let mockAccount: { id: number; userId: string; isDemo: boolean; accountId: string } = {
   id: 100,
-  userId: 1,
+  userId: "1",
   isDemo: true,
   accountId: "demo_account",
 };
 
 vi.mock("./db", () => ({
-  getAccount: async (uid: number, aid: number) =>
-    uid === 1 && aid === 100 ? mockAccount : null,
-  getLatestSnapshot: async (uid: number, aid: number) =>
-    uid === 1 && aid === 100 ? { payload: mockSnap } : null,
-  saveSnapshot: async (uid: number, aid: number, payload: AccountSnapshotPayload | null) => {
-    if (uid === 1 && aid === 100 && payload) mockSnap = payload;
+  getAccount: async (uid: string, aid: number) =>
+    uid === "1" && aid === 100 ? mockAccount : null,
+  getLatestSnapshot: async (uid: string, aid: number) =>
+    uid === "1" && aid === 100 ? { payload: mockSnap } : null,
+  saveSnapshot: async (uid: string, aid: number, payload: AccountSnapshotPayload | null) => {
+    if (uid === "1" && aid === 100 && payload) mockSnap = payload;
   },
   markConnectionStatus: async () => {},
   getConnection: async () => null,

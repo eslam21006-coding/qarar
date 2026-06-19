@@ -9,21 +9,36 @@ import {
 import { encryptToken } from "./crypto";
 import * as db from "./db";
 
-function verifyState(state: string): number | null {
+function verifyState(state: string): string | null {
   try {
+    // Phase B / security: fail closed if JWT_SECRET is not configured.
+    // A public fallback ("qarar") would make the HMAC forgeable by anyone
+    // with the source, allowing cross-user connection binding in the
+    // callback flow. Returning null is safe — the callback redirects to
+    // /?meta=invalid_state and the user can retry.
+    const secret = process.env.JWT_SECRET;
+    if (!secret) return null;
+
     const decoded = Buffer.from(state, "base64url").toString("utf8");
     const [userIdStr, ts, sig] = decoded.split(".");
+    if (!userIdStr || !ts || !sig) return null;
+    // Reject non-numeric timestamps explicitly. parseInt("foo") returns
+    // NaN, and `Date.now() - NaN > 15*60*1000` evaluates to false, which
+    // would silently accept malformed states.
+    if (!/^\d+$/.test(ts)) return null;
     const payload = `${userIdStr}.${ts}`;
     const expected = crypto
-      .createHmac("sha256", process.env.JWT_SECRET ?? "qarar")
+      .createHmac("sha256", secret)
       .update(payload)
       .digest("hex")
       .slice(0, 32);
     if (sig !== expected) return null;
     // state valid for 15 minutes
     if (Date.now() - parseInt(ts) > 15 * 60 * 1000) return null;
-    const userId = parseInt(userIdStr);
-    return Number.isFinite(userId) ? userId : null;
+    // Phase B: Better Auth user ids are strings (varchar(36)); no parseInt.
+    // Reject empty segments so a malformed state can't return a falsy id
+    // that would later compare against ctx.user.id.
+    return userIdStr.length > 0 ? userIdStr : null;
   } catch {
     return null;
   }

@@ -52,7 +52,7 @@ describe("diffKillSet — US11 / T045 (pure function)", () => {
 
     // The newly-killed objects = newKillIds \ oldKillIds
     const draft = diffKillSet({
-      userId: 1,
+      userId: "u-1",
       adAccountId: 100,
       old: oldResult,
       new: newResult,
@@ -78,7 +78,7 @@ describe("diffKillSet — US11 / T045 (pure function)", () => {
     const onlyNewKills = [...newKills].filter(id => !oldKills.has(id));
 
     const draft = diffKillSet({
-      userId: 1,
+      userId: "u-1",
       adAccountId: 100,
       old: oldResult,
       new: newResult,
@@ -120,7 +120,7 @@ describe("diffKillSet — US11 / T045 (pure function)", () => {
     const newNoKill = buildResult(newSnap);
 
     const draft = diffKillSet({
-      userId: 1,
+      userId: "u-1",
       adAccountId: 100,
       old: oldNoKill,
       new: newNoKill,
@@ -147,7 +147,7 @@ describe("diffKillSet — US11 / T045 (pure function)", () => {
 
     // The userA function call should mention ad_s1 (the new kill)
     const draftA = diffKillSet({
-      userId: 1,
+      userId: "u-1",
       adAccountId: 100,
       old: userAOld,
       new: userAResult,
@@ -157,7 +157,7 @@ describe("diffKillSet — US11 / T045 (pure function)", () => {
     // be independent — it does NOT include user A's ad_s1 unless user B's
     // own snapshot also has it as a new kill.
     const draftB = diffKillSet({
-      userId: 2,
+      userId: "u-2",
       adAccountId: 200,
       old: userBOld,
       new: userBResult,
@@ -170,11 +170,11 @@ describe("diffKillSet — US11 / T045 (pure function)", () => {
     // from the `new` arg, not from a shared global).
     if (draftA) {
       // User A's draft should not contain any user-specific claim about user B
-      expect(typeof draftA.userId).toBe("number");
-      expect(draftA.userId).toBe(1);
+      expect(typeof draftA.userId).toBe("string");
+      expect(draftA.userId).toBe("u-1");
     }
     if (draftB) {
-      expect(draftB.userId).toBe(2);
+      expect(draftB.userId).toBe("u-2");
     }
   });
 });

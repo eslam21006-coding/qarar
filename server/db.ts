@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
   users,
+  user as authUser,
   metaConnections,
   adAccounts,
   funnelSettings,
@@ -102,7 +103,7 @@ export async function getUserByOpenId(openId: string) {
 // Meta connections — ALWAYS scoped by userId (hard isolation)
 // ============================================================
 
-export async function getConnection(userId: number) {
+export async function getConnection(userId: string) {
   const db = await getDb();
   if (!db) return undefined;
   const rows = await db
@@ -114,7 +115,7 @@ export async function getConnection(userId: number) {
 }
 
 export async function upsertConnection(data: {
-  userId: number;
+  userId: string;
   fbUserId: string;
   fbUserName: string;
   encryptedToken: string;
@@ -139,7 +140,7 @@ export async function upsertConnection(data: {
 }
 
 export async function markConnectionStatus(
-  userId: number,
+  userId: string,
   status: "active" | "expired" | "revoked"
 ) {
   const db = await getDb();
@@ -151,9 +152,10 @@ export async function markConnectionStatus(
 }
 
 /** Full data wipe for "افصل واحذف بياناتي". */
-export async function deleteAllUserData(userId: number) {
+export async function deleteAllUserData(userId: string) {
   const db = await getDb();
   if (!db) return;
+  await db.delete(verdictHistory).where(eq(verdictHistory.userId, userId));
   await db.delete(snapshots).where(eq(snapshots.userId, userId));
   await db.delete(funnelSettings).where(eq(funnelSettings.userId, userId));
   await db.delete(actionChecks).where(eq(actionChecks.userId, userId));
@@ -165,29 +167,30 @@ export async function deleteAllUserData(userId: number) {
 // Ad accounts
 // ============================================================
 
-export async function listAccounts(userId: number) {
+export async function listAccounts(userId: string) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(adAccounts).where(eq(adAccounts.userId, userId));
 }
 
-/** US11 — list every user id. Used by the daily refresh to enumerate
- *  (user, account) pairs. As a scheduler entrypoint this must fail loudly
- *  on a DB outage rather than masking it as "no users" (which would mark the
- *  run successful while silently skipping everyone). runDailyRefresh already
- *  short-circuits when DATABASE_URL is unset, so reaching here with no db
- *  handle means a genuine connection failure that monitoring should catch. */
-export async function listAllUsers(): Promise<{ id: number }[]> {
+/** US11 / Phase B — list every user id (Better Auth `user` table, string id).
+ *  Used by the daily refresh to enumerate (user, account) pairs. As a
+ *  scheduler entrypoint this must fail loudly on a DB outage rather than
+ *  masking it as "no users" (which would mark the run successful while
+ *  silently skipping everyone). runDailyRefresh already short-circuits when
+ *  DATABASE_URL is unset, so reaching here with no db handle means a genuine
+ *  connection failure that monitoring should catch. */
+export async function listAllUsers(): Promise<{ id: string }[]> {
   const db = await getDb();
   if (!db) {
     throw new Error("Database unavailable — cannot enumerate users for daily refresh");
   }
   return db
-    .select({ id: users.id })
-    .from(users);
+    .select({ id: authUser.id })
+    .from(authUser);
 }
 
-export async function getAccount(userId: number, id: number) {
+export async function getAccount(userId: string, id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const rows = await db
@@ -199,7 +202,7 @@ export async function getAccount(userId: number, id: number) {
 }
 
 export async function syncAccounts(
-  userId: number,
+  userId: string,
   connectionId: number,
   accounts: Array<{ accountId: string; name: string; currency: string; accountStatus: number }>
 ) {
@@ -237,7 +240,7 @@ export async function syncAccounts(
   }
 }
 
-export async function selectAccount(userId: number, id: number, selected: boolean) {
+export async function selectAccount(userId: string, id: number, selected: boolean) {
   const db = await getDb();
   if (!db) return;
   await db
@@ -246,7 +249,7 @@ export async function selectAccount(userId: number, id: number, selected: boolea
     .where(and(eq(adAccounts.id, id), eq(adAccounts.userId, userId)));
 }
 
-export async function ensureDemoAccount(userId: number) {
+export async function ensureDemoAccount(userId: string) {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
   const rows = await db
@@ -277,7 +280,7 @@ export async function ensureDemoAccount(userId: number) {
 // Funnel settings
 // ============================================================
 
-export async function getFunnel(userId: number, adAccountId: number) {
+export async function getFunnel(userId: string, adAccountId: number) {
   const db = await getDb();
   if (!db) return undefined;
   const rows = await db
@@ -291,7 +294,7 @@ export async function getFunnel(userId: number, adAccountId: number) {
 }
 
 export async function upsertFunnel(
-  userId: number,
+  userId: string,
   adAccountId: number,
   data: Partial<typeof funnelSettings.$inferInsert>
 ) {
@@ -319,7 +322,7 @@ export async function upsertFunnel(
 // Snapshots
 // ============================================================
 
-export async function getLatestSnapshot(userId: number, adAccountId: number) {
+export async function getLatestSnapshot(userId: string, adAccountId: number) {
   const db = await getDb();
   if (!db) return undefined;
   const rows = await db
@@ -332,7 +335,7 @@ export async function getLatestSnapshot(userId: number, adAccountId: number) {
 }
 
 export async function saveSnapshot(
-  userId: number,
+  userId: string,
   adAccountId: number,
   payload: unknown,
   status: "pending" | "ready" | "error" = "ready",
@@ -358,7 +361,7 @@ export async function saveSnapshot(
 // Action checks (قرارات النهاردة — تم)
 // ============================================================
 
-export async function getChecks(userId: number, adAccountId: number, day: string) {
+export async function getChecks(userId: string, adAccountId: number, day: string) {
   const db = await getDb();
   if (!db) return [];
   return db
@@ -374,7 +377,7 @@ export async function getChecks(userId: number, adAccountId: number, day: string
 }
 
 export async function setCheck(
-  userId: number,
+  userId: string,
   adAccountId: number,
   actionKey: string,
   day: string,
@@ -418,7 +421,7 @@ export async function setCheck(
  * All queries are strictly scoped by userId.
  */
 export async function recordVerdicts(
-  userId: number,
+  userId: string,
   adAccountId: number,
   rows: Array<{
     id: string;
@@ -475,7 +478,7 @@ export async function recordVerdicts(
  * by evaluatedAt ASC (oldest first) per the contract. Strictly per-user.
  */
 export async function getVerdictHistory(
-  userId: number,
+  userId: string,
   adAccountId: number,
   objectId: string
 ): Promise<Array<{

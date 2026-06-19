@@ -3,7 +3,12 @@ import { z } from "zod";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
+import {
+  activeProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from "./_core/trpc";
 import * as db from "./db";
 import { decryptToken } from "./crypto";
 import {
@@ -60,7 +65,7 @@ const funnelInputSchema = z.object({
   geoTiers: z.array(z.string()).optional().nullable(),
 });
 
-async function requireAccount(userId: number, adAccountId: number) {
+async function requireAccount(userId: string, adAccountId: number) {
   const account = await db.getAccount(userId, adAccountId);
   if (!account) {
     throw new TRPCError({ code: "NOT_FOUND", message: "الحساب غير موجود" });
@@ -68,7 +73,7 @@ async function requireAccount(userId: number, adAccountId: number) {
   return account;
 }
 
-async function getUserToken(userId: number): Promise<string> {
+async function getUserToken(userId: string): Promise<string> {
   const conn = await db.getConnection(userId);
   if (!conn || conn.status !== "active") {
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "RECONNECT_REQUIRED" });
@@ -79,7 +84,12 @@ async function getUserToken(userId: number): Promise<string> {
 export const appRouter = router({
   system: systemRouter,
   auth: router({
-    me: publicProcedure.query(opts => opts.ctx.user),
+    // Phase B / T018 + T021 / FR-011 — `auth.me` is the "who am I" read.
+    // Moved from publicProcedure → protectedProcedure so the frontend can
+    // distinguish "anonymous" (UNAUTHORIZED) from "inactive" (200 with the
+    // user). Stays on `protectedProcedure` (NOT `activeProcedure`) so
+    // inactive users can still read their own session (FR-011, US4).
+    me: protectedProcedure.query(({ ctx }) => ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
@@ -101,7 +111,7 @@ export const appRouter = router({
     }),
 
     /** Build the Facebook OAuth dialog URL (state = signed user id). */
-    connectUrl: protectedProcedure.mutation(async ({ ctx }) => {
+    connectUrl: activeProcedure.mutation(async ({ ctx }) => {
       if (!META_APP_ID()) {
         throw new TRPCError({ code: "PRECONDITION_FAILED", message: "APP_NOT_CONFIGURED" });
       }
@@ -119,12 +129,12 @@ export const appRouter = router({
     }),
 
     /** Ad accounts of the connected token (synced) + demo + selection state. */
-    accounts: protectedProcedure.query(async ({ ctx }) => {
+    accounts: activeProcedure.query(async ({ ctx }) => {
       return db.listAccounts(ctx.user.id);
     }),
 
     /** Re-sync the ad-account list from Meta. */
-    syncAccounts: protectedProcedure.mutation(async ({ ctx }) => {
+    syncAccounts: activeProcedure.mutation(async ({ ctx }) => {
       const conn = await db.getConnection(ctx.user.id);
       if (!conn || conn.status !== "active") {
         throw new TRPCError({ code: "PRECONDITION_FAILED", message: "RECONNECT_REQUIRED" });
@@ -143,7 +153,7 @@ export const appRouter = router({
       return db.listAccounts(ctx.user.id);
     }),
 
-    selectAccount: protectedProcedure
+    selectAccount: activeProcedure
       .input(z.object({ id: z.number(), selected: z.boolean() }))
       .mutation(async ({ ctx, input }) => {
         await requireAccount(ctx.user.id, input.id);
@@ -152,7 +162,7 @@ export const appRouter = router({
       }),
 
     /** Demo mode: create the demo account + seeded funnel settings. */
-    enableDemo: protectedProcedure.mutation(async ({ ctx }) => {
+    enableDemo: activeProcedure.mutation(async ({ ctx }) => {
       const account = await db.ensureDemoAccount(ctx.user.id);
       const existing = await db.getFunnel(ctx.user.id, account.id);
       if (!existing) {
@@ -163,7 +173,7 @@ export const appRouter = router({
     }),
 
     /** افصل واحذف بياناتي — revoke + full wipe. */
-    disconnect: protectedProcedure.mutation(async ({ ctx }) => {
+    disconnect: activeProcedure.mutation(async ({ ctx }) => {
       const conn = await db.getConnection(ctx.user.id);
       if (conn) {
         try {
@@ -178,7 +188,7 @@ export const appRouter = router({
   }),
 
   funnel: router({
-    get: protectedProcedure
+    get: activeProcedure
       .input(z.object({ adAccountId: z.number() }))
       .query(async ({ ctx, input }) => {
         await requireAccount(ctx.user.id, input.adAccountId);
@@ -188,7 +198,7 @@ export const appRouter = router({
         return { settings: f, targets };
       }),
 
-    save: protectedProcedure.input(funnelInputSchema).mutation(async ({ ctx, input }) => {
+    save: activeProcedure.input(funnelInputSchema).mutation(async ({ ctx, input }) => {
       await requireAccount(ctx.user.id, input.adAccountId);
       const { adAccountId, ...data } = input;
       const saved = await db.upsertFunnel(ctx.user.id, adAccountId, data as any);
@@ -197,7 +207,7 @@ export const appRouter = router({
     }),
 
     /** Pure preview of derived targets while typing — no persistence. */
-    preview: protectedProcedure
+    preview: activeProcedure
       .input(funnelInputSchema.omit({ adAccountId: true }))
       .query(async ({ input }) => {
         return deriveTargets(input as FunnelInputs, null);
@@ -209,7 +219,7 @@ export const appRouter = router({
      * Evaluate the cached snapshot through the engine. Never hits Meta —
      * reading is always from cache; refresh is explicit.
      */
-    get: protectedProcedure
+    get: activeProcedure
       .input(z.object({ adAccountId: z.number() }))
       .query(async ({ ctx, input }) => {
         const account = await requireAccount(ctx.user.id, input.adAccountId);
@@ -289,7 +299,7 @@ export const appRouter = router({
       }),
 
     /** On-demand refresh: pulls fresh insights from Meta into the cache. */
-    refresh: protectedProcedure
+    refresh: activeProcedure
       .input(z.object({ adAccountId: z.number() }))
       .mutation(async ({ ctx, input }) => {
         const account = await requireAccount(ctx.user.id, input.adAccountId);
@@ -363,7 +373,7 @@ export const appRouter = router({
         return { success: true };
       }),
 
-    setCheck: protectedProcedure
+    setCheck: activeProcedure
       .input(
         z.object({
           adAccountId: z.number(),
@@ -385,7 +395,7 @@ export const appRouter = router({
      * Guarded by: account ownership, object-in-snapshot check, and an explicit
      * confirmation dialog in the UI.
      */
-    setStatus: protectedProcedure
+    setStatus: activeProcedure
       .input(
         z.object({
           adAccountId: z.number(),
@@ -435,7 +445,7 @@ export const appRouter = router({
      * (enforced server-side; the call below fails with needsPermission
      * if the token lacks the scope).
      */
-    setBudget: protectedProcedure
+    setBudget: activeProcedure
       .input(
         z.object({
           adAccountId: z.number(),
@@ -507,7 +517,7 @@ export const appRouter = router({
   // every query filters by ctx.user.id from the session, never by a
   // client-supplied userId.
   history: router({
-    getForObject: protectedProcedure
+    getForObject: activeProcedure
       .input(
         z.object({
           adAccountId: z.number(),

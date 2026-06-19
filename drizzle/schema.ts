@@ -43,7 +43,7 @@ export type InsertUser = typeof users.$inferInsert;
  */
 export const metaConnections = mysqlTable("metaConnections", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull().unique(),
+  userId: varchar("userId", { length: 36 }).notNull().unique(),
   fbUserId: varchar("fbUserId", { length: 64 }),
   fbUserName: text("fbUserName"),
   /** AES-256-GCM encrypted token: base64(iv).base64(tag).base64(ciphertext) */
@@ -63,7 +63,7 @@ export type MetaConnection = typeof metaConnections.$inferSelect;
  */
 export const adAccounts = mysqlTable("adAccounts", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+  userId: varchar("userId", { length: 36 }).notNull(),
   connectionId: int("connectionId"),
   /** Meta account id, e.g. act_1234567890. For demo: demo_account */
   accountId: varchar("accountId", { length: 64 }).notNull(),
@@ -84,7 +84,7 @@ export type AdAccount = typeof adAccounts.$inferSelect;
  */
 export const funnelSettings = mysqlTable("funnelSettings", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+  userId: varchar("userId", { length: 36 }).notNull(),
   adAccountId: int("adAccountId").notNull(),
   /** (أ) paid LTO < $67 / (ب) free lead magnet / (ج) direct call booking */
   archetype: mysqlEnum("archetype", ["paid_lto", "free_lead", "direct_call"])
@@ -124,7 +124,7 @@ export type FunnelSettings = typeof funnelSettings.$inferSelect;
  */
 export const snapshots = mysqlTable("snapshots", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+  userId: varchar("userId", { length: 36 }).notNull(),
   adAccountId: int("adAccountId").notNull(),
   /** Normalized account tree + baselines, see server/meta/types.ts */
   payload: json("payload"),
@@ -141,7 +141,7 @@ export type Snapshot = typeof snapshots.$inferSelect;
  */
 export const actionChecks = mysqlTable("actionChecks", {
   id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
+  userId: varchar("userId", { length: 36 }).notNull(),
   adAccountId: int("adAccountId").notNull(),
   /** stable key: objectId + rule */
   actionKey: varchar("actionKey", { length: 128 }).notNull(),
@@ -166,7 +166,7 @@ export const verdictHistory = mysqlTable(
   "verdictHistory",
   {
     id: int("id").autoincrement().primaryKey(),
-    userId: int("userId").notNull(),
+    userId: varchar("userId", { length: 36 }).notNull(),
     adAccountId: int("adAccountId").notNull(),
     objectId: varchar("objectId", { length: 64 }).notNull(),
     objectName: text("objectName"),
@@ -193,4 +193,8 @@ export type VerdictHistory = typeof verdictHistory.$inferSelect;
 // Phase A: re-export the Better Auth tables (additive only — does not alter
 // the legacy `users` table or any existing column/index, and does not retype
 // any `userId` FK; the destructive reset is deferred to Phase B).
+// Phase B: the six FK `userId` columns above (metaConnections, adAccounts,
+// funnelSettings, snapshots, actionChecks, verdictHistory) are now
+// `varchar(36)` to reference Better Auth `user.id`. The legacy `users` table
+// stays `int` (Manus SDK/cron path is untouched).
 export * from "./auth-schema";

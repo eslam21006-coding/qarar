@@ -32,7 +32,7 @@ import type { AccountSnapshotPayload, EngineResult, EngineRow, FunnelInputs } fr
  */
 
 export interface KillSetDiffInput {
-  userId: number;
+  userId: string;
   adAccountId: number;
   old: EngineResult | null;
   new: EngineResult;
@@ -40,7 +40,7 @@ export interface KillSetDiffInput {
 }
 
 export interface NotificationDraft {
-  userId: number;
+  userId: string;
   adAccountId: number;
   title: string;
   content: string;
@@ -99,7 +99,7 @@ const DEFAULT_FUNNEL: FunnelInputs = {
 };
 
 async function getFunnelForRun(
-  userId: number,
+  userId: string,
   adAccountId: number
 ): Promise<FunnelInputs | null> {
   try {
@@ -128,14 +128,14 @@ async function getFunnelForRun(
 }
 
 interface ProcessAccountResult {
-  userId: number;
+  userId: string;
   accountId: number;
   notified: boolean;
   newKills: number;
 }
 
 async function processAccount(
-  userId: number,
+  userId: string,
   adAccountId: number
 ): Promise<ProcessAccountResult> {
   const account = await db.getAccount(userId, adAccountId);
@@ -194,7 +194,7 @@ async function processAccount(
   return { userId, accountId: adAccountId, notified: false, newKills: 0 };
 }
 
-async function getTokenForUser(userId: number): Promise<string> {
+async function getTokenForUser(userId: string): Promise<string> {
   const conn = await db.getConnection(userId);
   if (!conn || conn.status !== "active") {
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "RECONNECT_REQUIRED" });
@@ -232,7 +232,7 @@ export async function runDailyRefresh(): Promise<{ processed: number; notified: 
   // We use the existing db functions for both, which keep the iteration
   // per-user scoped. db.listAccounts(userId) never returns another user's
   // accounts, satisfying the isolation requirement.
-  const pairs: { userId: number; adAccountId: number }[] = [];
+  const pairs: { userId: string; adAccountId: number }[] = [];
   for (const user of await db.listAllUsers()) {
     const accounts = await db.listAccounts(user.id);
     for (const a of accounts) {
