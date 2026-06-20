@@ -56,16 +56,12 @@ export default function Upgrade() {
       }}
     >
       <div className="w-full max-w-md text-center">
-        <div
-          className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full"
-          style={{
-            background: "rgba(10,18,32,0.85)",
-            border: "1px solid rgba(56,132,244,0.2)",
-          }}
-        >
-          <span className="text-3xl" aria-hidden="true">
-            🔒
-          </span>
+        <div className="mx-auto mb-6 flex justify-center">
+          <img
+            src="/qarar_logo_transparent.png"
+            alt="قرار"
+            style={{ height: "56px", width: "auto", borderRadius: "10px" }}
+          />
         </div>
 
         <h1 className="text-2xl font-bold leading-tight text-white">

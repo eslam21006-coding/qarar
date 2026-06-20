@@ -199,13 +199,23 @@ export default function SignUp() {
         }}
       >
         <div className="mx-auto w-full max-w-md">
-          <div className="mb-10">
-            <h1 className="text-[32px] font-bold leading-tight text-white">
-              قرار
-            </h1>
-            <p className="mt-1 text-sm text-[#4a8ae6]">
-              لوحة قرارات إعلانات ميتا
-            </p>
+          <div className="mb-10 flex items-center gap-3">
+            <img
+              src="/qarar_logo_transparent.png"
+              alt="قرار"
+              style={{ height: "44px", width: "auto", borderRadius: "10px" }}
+            />
+            <div>
+              <h1 className="text-[28px] font-bold leading-tight text-white">
+                قرار
+              </h1>
+              <p
+                dir="ltr"
+                className="mt-1 text-[11px] uppercase text-[#4a8ae6]"
+              >
+                ADS DECISION ENGINE
+              </p>
+            </div>
           </div>
 
           <div
@@ -278,6 +288,13 @@ export default function SignUp() {
       >
         <div className="w-full max-w-sm">
           <h2 className="mb-2 text-2xl font-bold text-white">قرار</h2>
+          <div className="mb-3 flex justify-center">
+            <img
+              src="/qarar_logo_transparent.png"
+              alt="قرار"
+              style={{ height: "40px", width: "auto", borderRadius: "10px" }}
+            />
+          </div>
           <p className="mb-10 text-[15px] text-[#94a3b8]">أنشئ حساباً جديداً</p>
 
           <form className="space-y-5" onSubmit={onSubmit} noValidate>
