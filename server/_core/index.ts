@@ -37,6 +37,11 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
 
+  // Set request timeout to 130s (buffer above 120s procedure timeout)
+  // Prevents premature socket closure on long-running Meta insights fetches
+  server.requestTimeout = 130_000;
+  server.headersTimeout = 135_000;
+
   // Phase B / T010 / FR-001 + FR-002 — Better Auth HTTP handler.
   // MUST be mounted BEFORE express.json()/urlencoded() so the handler can
   // read the raw request body for sign-in/sign-up POSTs. If a body parser

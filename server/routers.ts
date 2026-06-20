@@ -311,11 +311,10 @@ export const appRouter = router({
         }
         const token = await getUserToken(ctx.user.id);
         try {
-          // Hotfix T1: race buildSnapshot against a 25s timeout. Cloudflare
-          // returns an HTML 524 page when a worker exceeds 30s; the client
-          // then tries to parse the HTML as JSON and surfaces
-          // "Unexpected token '<'". A clean TRPCError TIMEOUT lets the UI
-          // show a friendly message and try again.
+          // Hotfix T1: race buildSnapshot against a 120s timeout. Large accounts
+          // with no cached data can take 30-60+ seconds to fetch all insights from Meta.
+          // Express + Cloudflare have higher limits; 120s is safe for production.
+          // A clean TRPCError TIMEOUT lets the UI show a friendly message and try again.
           const payload = await Promise.race([
             buildSnapshot(
               token,
@@ -329,10 +328,10 @@ export const appRouter = router({
                     new TRPCError({
                       code: "TIMEOUT",
                       message:
-                        "استغرق تحميل البيانات وقتًا طويلًا — المرجح أن حسابك كبير. حاول مرة أخرى وستعمل عادةً في المحاولة الثانية.",
+                        "استغرق تحميل البيانات وقتًا طويلًا — المرجح أن حسابك كبير جدًا. حاول مرة أخرى وقد تستغرق دقيقتين.",
                     })
                   ),
-                25_000
+                120_000
               )
             ),
           ]);
