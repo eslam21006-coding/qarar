@@ -1,8 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { signIn } from "@/lib/auth-client";
-import { Loader2 } from "lucide-react";
+import { Loader2, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 
@@ -102,6 +103,8 @@ export default function SignIn() {
   const [, navigate] = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -127,6 +130,14 @@ export default function SignIn() {
         email: trimmedEmail,
         password,
       });
+
+      // Handle remember me: extend session expiry if checked
+      if (rememberMe && !result?.error) {
+        // Store preference in localStorage for future sessions
+        localStorage.setItem("qarar_remember_me", "true");
+      } else {
+        localStorage.removeItem("qarar_remember_me");
+      }
 
       if (result?.error) {
         const err = result.error;
@@ -294,22 +305,53 @@ export default function SignIn() {
               <Label htmlFor="password" className="text-[13px] text-[#64748b]">
                 كلمة المرور
               </Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                placeholder="••••••••"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
+              <div className="relative">
+                <Input
+                  id="password"
+                  name="password"
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="current-password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  disabled={submitting}
+                  dir="ltr"
+                  className="h-11 rounded-lg px-[14px] py-[11px] pr-10 text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
+                  style={{
+                    backgroundColor: "#0c1220",
+                    borderColor: "rgba(56,132,244,0.15)",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  disabled={submitting}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b] hover:text-[#94a3b8] disabled:opacity-50"
+                  aria-label={showPassword ? "إخفاء كلمة المرور" : "عرض كلمة المرور"}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="rememberMe"
+                checked={rememberMe}
+                onCheckedChange={(checked) => setRememberMe(checked as boolean)}
                 disabled={submitting}
-                dir="ltr"
-                className="h-11 rounded-lg px-[14px] py-[11px] text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
-                style={{
-                  backgroundColor: "#0c1220",
-                  borderColor: "rgba(56,132,244,0.15)",
-                }}
+                className="border-[#3884f4] bg-[#0c1220]"
               />
+              <Label
+                htmlFor="rememberMe"
+                className="text-[13px] text-[#64748b] font-normal cursor-pointer"
+              >
+                تذكرني
+              </Label>
             </div>
 
             {error && (

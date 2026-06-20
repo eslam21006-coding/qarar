@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getSession, signIn, signUp } from "@/lib/auth-client";
-import { Loader2 } from "lucide-react";
+import { Loader2, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 
@@ -106,6 +106,7 @@ export default function SignUp() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -162,7 +163,9 @@ export default function SignUp() {
         }
       }
 
-      navigate("/", { replace: true });
+      // Store email in localStorage and redirect to email verification page
+      localStorage.setItem("qarar_signup_email", trimmedEmail);
+      navigate("/auth/verify-email", { replace: true });
     } catch (err: unknown) {
       if (isDuplicateEmailError(err)) {
         setError(MSG_DUPLICATE);
@@ -336,22 +339,37 @@ export default function SignUp() {
               <Label htmlFor="password" className="text-[13px] text-[#64748b]">
                 كلمة المرور
               </Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="new-password"
-                placeholder="••••••••"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                disabled={submitting}
-                dir="ltr"
-                className="h-11 rounded-lg px-[14px] py-[11px] text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
-                style={{
-                  backgroundColor: "#0c1220",
-                  borderColor: "rgba(56,132,244,0.15)",
-                }}
-              />
+              <div className="relative">
+                <Input
+                  id="password"
+                  name="password"
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="new-password"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  disabled={submitting}
+                  dir="ltr"
+                  className="h-11 rounded-lg px-[14px] py-[11px] pr-10 text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
+                  style={{
+                    backgroundColor: "#0c1220",
+                    borderColor: "rgba(56,132,244,0.15)",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  disabled={submitting}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b] hover:text-[#94a3b8] disabled:opacity-50"
+                  aria-label={showPassword ? "إخفاء كلمة المرور" : "عرض كلمة المرور"}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
             </div>
 
             {error && (

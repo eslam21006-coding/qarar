@@ -12,6 +12,7 @@ export const auth = betterAuth({
   }),
   emailAndPassword: {
     enabled: true,
+    requireEmailVerification: true,
   },
   // Phase B / T012 / FR-007a — DO NOT enable Better Auth's cookie-cache
   // plugin. The subscription gate reads `subscriptionStatus` / `role` from
@@ -67,6 +68,7 @@ export const auth = betterAuth({
           await context.context.internalAdapter.updateUser(createdUser.id, {
             role: "admin",
             subscriptionStatus: "active",
+            emailVerified: true,
           });
         },
       },

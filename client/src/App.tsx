@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import SignIn from "@/pages/auth/SignIn";
 import SignUp from "@/pages/auth/SignUp";
+import VerifyEmail from "@/pages/auth/VerifyEmail";
 import NotFound from "@/pages/NotFound";
 import Upgrade from "@/pages/Upgrade";
 import { useEffect } from "react";
@@ -28,6 +29,9 @@ function PublicRouter() {
         <PublicAuthRoute>
           <SignUp />
         </PublicAuthRoute>
+      </Route>
+      <Route path="/auth/verify-email">
+        <VerifyEmail />
       </Route>
       <Route>
         <ProtectedRouter />
