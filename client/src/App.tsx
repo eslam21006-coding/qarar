@@ -1,7 +1,13 @@
+import { useAuth } from "@/_core/hooks/useAuth";
+import { RouteGuard } from "@/components/RouteGuard";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import SignIn from "@/pages/auth/SignIn";
+import SignUp from "@/pages/auth/SignUp";
 import NotFound from "@/pages/NotFound";
-import { Route, Switch } from "wouter";
+import Upgrade from "@/pages/Upgrade";
+import { useEffect } from "react";
+import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
@@ -10,20 +16,61 @@ import Settings from "./pages/Settings";
 import { Privacy, Terms } from "./pages/Legal";
 import DataDeletionStatus from "./pages/DataDeletionStatus";
 
-function Router() {
-  // make sure to consider if you need authentication for certain routes
+function PublicRouter() {
   return (
     <Switch>
-      <Route path={"/"} component={Home} />
-      <Route path={"/dashboard/:accountId"} component={Dashboard} />
-      <Route path={"/settings/:accountId"} component={Settings} />
-      <Route path={"/privacy"} component={Privacy} />
-      <Route path={"/terms"} component={Terms} />
-      <Route path={"/data-deletion-status"} component={DataDeletionStatus} />
-      <Route path={"/404"} component={NotFound} />
-      {/* Final fallback route */}
-      <Route component={NotFound} />
+      <Route path="/auth/signin">
+        <PublicAuthRoute>
+          <SignIn />
+        </PublicAuthRoute>
+      </Route>
+      <Route path="/auth/signup">
+        <PublicAuthRoute>
+          <SignUp />
+        </PublicAuthRoute>
+      </Route>
+      <Route>
+        <ProtectedRouter />
+      </Route>
     </Switch>
+  );
+}
+
+/**
+ * Wrapper for routes that should only be reachable by signed-out visitors.
+ * Authenticated users are redirected to `/` (active) or `/upgrade` (!active),
+ * per contracts/route-guard.md C2.
+ */
+function PublicAuthRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading, isActive } = useAuth();
+  const [, navigate] = useLocation();
+
+  useEffect(() => {
+    if (loading || !user) return;
+    const target = isActive ? "/" : "/upgrade";
+    navigate(target, { replace: true });
+  }, [loading, user, isActive, navigate]);
+
+  if (loading) return null;
+  if (user) return null;
+  return <>{children}</>;
+}
+
+function ProtectedRouter() {
+  return (
+    <RouteGuard>
+      <Switch>
+        <Route path="/upgrade" component={Upgrade} />
+        <Route path="/" component={Home} />
+        <Route path="/dashboard/:accountId" component={Dashboard} />
+        <Route path="/settings/:accountId" component={Settings} />
+        <Route path="/privacy" component={Privacy} />
+        <Route path="/terms" component={Terms} />
+        <Route path="/data-deletion-status" component={DataDeletionStatus} />
+        <Route path="/404" component={NotFound} />
+        <Route component={NotFound} />
+      </Switch>
+    </RouteGuard>
   );
 }
 
@@ -38,7 +85,7 @@ function App() {
       <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
           <Toaster />
-          <Router />
+          <PublicRouter />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

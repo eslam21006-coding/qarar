@@ -2,12 +2,11 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getLoginUrl } from "@/const";
+import { signOut } from "@/lib/auth-client";
 import { trpc } from "@/lib/trpc";
 import {
   Activity,
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
   FlaskConical,
   Link2,
@@ -17,9 +16,8 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useLocation } from "wouter";
 import { toast } from "sonner";
-import { Link, useLocation } from "wouter";
 
 function Wordmark() {
   return (
@@ -38,19 +36,16 @@ function Wordmark() {
 }
 
 export default function Home() {
-  const { user, loading, isAuthenticated, logout } = useAuth();
+  const { user, loading } = useAuth();
   const [, navigate] = useLocation();
 
-  // surface OAuth callback result from query param
-  useEffect(() => {
-    const p = new URLSearchParams(window.location.search);
-    const meta = p.get("meta");
-    if (!meta) return;
-    if (meta === "connected") toast.success("تم توصيل حساب ميتا بنجاح ✓");
-    else if (meta === "denied") toast.error("تم رفض الإذن — لازم توافق على صلاحية ads_read");
-    else toast.error("فشل توصيل الحساب — حاول مرة أخرى");
-    window.history.replaceState({}, "", "/");
-  }, []);
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+    } finally {
+      navigate("/auth/signin", { replace: true });
+    }
+  };
 
   return (
     <div className="min-h-screen">
@@ -58,12 +53,10 @@ export default function Home() {
         <div className="container flex h-16 items-center justify-between">
           <Wordmark />
           <div className="flex items-center gap-2">
-            {isAuthenticated && (
-              <Button variant="ghost" size="sm" onClick={() => logout()}>
-                <LogOut className="ml-1 h-4 w-4" />
-                خروج
-              </Button>
-            )}
+            <Button variant="ghost" size="sm" onClick={handleSignOut}>
+              <LogOut className="ml-1 h-4 w-4" />
+              خروج
+            </Button>
           </div>
         </div>
       </header>
@@ -74,8 +67,6 @@ export default function Home() {
             <Skeleton className="h-32 w-full" />
             <Skeleton className="h-32 w-full" />
           </div>
-        ) : !isAuthenticated ? (
-          <Landing />
         ) : (
           <ConnectScreen userName={user?.name ?? ""} navigate={navigate} />
         )}
@@ -85,83 +76,15 @@ export default function Home() {
         <div className="container flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
           <span>قرار — يشخّص ويقرّر ولا ينفّذ. التنفيذ بيدك دائمًا.</span>
           <div className="flex gap-4">
-            <Link href="/privacy" className="hover:text-foreground">
+            <a href="/privacy" className="hover:text-foreground">
               سياسة الخصوصية
-            </Link>
-            <Link href="/terms" className="hover:text-foreground">
+            </a>
+            <a href="/terms" className="hover:text-foreground">
               شروط الاستخدام
-            </Link>
+            </a>
           </div>
         </div>
       </footer>
-    </div>
-  );
-}
-
-function Landing() {
-  return (
-    <div className="mx-auto grid max-w-5xl items-center gap-10 lg:grid-cols-2">
-      <div className="space-y-6">
-        <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
-          <ShieldCheck className="h-3.5 w-3.5" />
-          قراءة فقط — لا يعدّل حسابك أبدًا
-        </div>
-        <h1 className="text-4xl font-extrabold leading-tight lg:text-5xl">
-          لن تحتار بعد اليوم أمام
-          <span className="text-primary"> Ads Manager</span>
-        </h1>
-        <p className="text-lg leading-relaxed text-muted-foreground">
-          «قرار» يتصل بحساب إعلانات ميتا الخاص بك، ويفحص كل حملة ومجموعة وإعلان
-          وفق قواعد ثابتة مكتوبة — ثم يعطيك الحكم:
-          <span className="font-bold text-foreground"> 🔴 أوقف · 🟡 راقب · 🟢 واصل · 🛟 أنقذه · ⏳ مبكّر</span>
-          — مع رقم القاعدة والسبب والإجراء بالعربي.
-        </p>
-        <ul className="space-y-2 text-sm text-muted-foreground">
-          <li className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-v-continue" />
-            محرك قرارات حتمي 100% — صفر ذكاء اصطناعي، صفر اجتهاد
-          </li>
-          <li className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-v-continue" />
-            بوابات بيانات صارمة — لا حكم على بيانات ناقصة
-          </li>
-          <li className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-v-continue" />
-            «قرارات النهاردة» — أعلى 3 إجراءات أثرًا كل يوم
-          </li>
-        </ul>
-        <Button size="lg" className="text-base font-bold" asChild>
-          <a href={getLoginUrl()}>
-            ابدأ الآن
-            <ArrowLeft className="mr-2 h-4 w-4" />
-          </a>
-        </Button>
-      </div>
-      <Card className="border-border/60 bg-card/60">
-        <CardContent className="space-y-3 p-6" dir="rtl">
-          <div className="num mb-3 text-[10px] uppercase tracking-widest text-muted-foreground">
-            LIVE PREVIEW
-          </div>
-          {[
-            { e: "🔴", n: "أوقفه — لا أحد يضغط على الإعلان", r: "أوقف", c: "text-v-kill" },
-            { e: "🟢", n: "واصل — العميل يكلفك أقل من هدفك", r: "واصل", c: "text-v-continue" },
-            { e: "🟡", n: "راقب — الإعلان جيد لكن صفحتك تخسّرك", r: "راقب", c: "text-v-watch" },
-            { e: "🛟", n: "أنقذه — إعلان جيد لم يأخذ فرصته", r: "أنقذ", c: "text-v-rescue" },
-            { e: "⏳", n: "انتظر — ما زال مبكّرًا على الحكم", r: "انتظر", c: "text-v-early" },
-          ].map(x => (
-            <div
-              key={x.r}
-              className="flex items-center justify-between rounded-lg border border-border/60 bg-background/60 px-3 py-2.5"
-            >
-              <span className="flex items-center gap-2 text-sm">
-                <span>{x.e}</span>
-                <span className="text-foreground/90">{x.n}</span>
-              </span>
-              <span className={`num text-xs font-bold ${x.c}`}>{x.r}</span>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
     </div>
   );
 }
@@ -221,6 +144,11 @@ function ConnectScreen({
         <p className="mt-1 text-muted-foreground">
           وصّل حساب ميتا أو جرّب الوضع التجريبي لترى المحرك يعمل.
         </p>
+      </div>
+
+      <div className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
+        <ShieldCheck className="h-3.5 w-3.5" />
+        قراءة فقط — لا يعدّل حسابك أبدًا
       </div>
 
       {/* Meta connection card */}
@@ -379,6 +307,21 @@ function ConnectScreen({
           </Button>
         </CardContent>
       </Card>
+
+      <ul className="space-y-2 text-sm text-muted-foreground">
+        <li className="flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-v-continue" />
+          محرك قرارات حتمي 100% — صفر ذكاء اصطناعي، صفر اجتهاد
+        </li>
+        <li className="flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-v-continue" />
+          بوابات بيانات صارمة — لا حكم على بيانات ناقصة
+        </li>
+        <li className="flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-v-continue" />
+          «قرارات النهاردة» — أعلى 3 إجراءات أثرًا كل يوم
+        </li>
+      </ul>
     </div>
   );
 }

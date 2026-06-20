@@ -1,84 +1,65 @@
-import { getLoginUrl } from "@/const";
-import { trpc } from "@/lib/trpc";
-import { TRPCClientError } from "@trpc/client";
-import { useCallback, useEffect, useMemo } from "react";
+import { useSession, signOut } from "@/lib/auth-client";
+import {
+  deriveIsActive,
+  type Role,
+  type SessionUser,
+  type SubscriptionStatus,
+} from "./isActive";
 
-type UseAuthOptions = {
-  redirectOnUnauthenticated?: boolean;
-  redirectPath?: string;
-};
+/**
+ * Result shape returned by the {@link useAuth} hook.
+ *
+ * - `user`: the Better Auth session user, or `null` when signed out.
+ * - `loading`: `true` while `useSession()` has not yet resolved.
+ * - `isActive`: derived access flag — see `deriveIsActive` in `./isActive.ts`.
+ * - `refetch`: re-reads the session from the Better Auth client.
+ * - `logout`: ends the current Better Auth session.
+ */
+export interface UseAuthResult {
+  user: SessionUser | null;
+  loading: boolean;
+  isActive: boolean;
+  refetch: () => Promise<unknown> | void;
+  logout: () => Promise<void>;
+}
 
-export function useAuth(options?: UseAuthOptions) {
-  const { redirectOnUnauthenticated = false, redirectPath = getLoginUrl() } =
-    options ?? {};
-  const utils = trpc.useUtils();
+/**
+ * Hook returning the current Better Auth session together with a derived
+ * `isActive` access flag. Drives the route guard, sign-out flows, and
+ * subscription-state-aware screens.
+ *
+ * Replaces the legacy tRPC `auth.me` dependency with `useSession()` so the
+ * front-end reads subscription state directly from the Better Auth session.
+ *
+ * @returns See {@link UseAuthResult}.
+ */
+export function useAuth(): UseAuthResult {
+  const session = useSession();
+  const user = (session.data?.user as SessionUser | undefined) ?? null;
+  const loading = Boolean(session.isPending);
 
-  const meQuery = trpc.auth.me.useQuery(undefined, {
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
+  const isActive = deriveIsActive(user);
 
-  const logoutMutation = trpc.auth.logout.useMutation({
-    onSuccess: () => {
-      utils.auth.me.setData(undefined, undefined);
-    },
-  });
-
-  const logout = useCallback(async () => {
-    try {
-      await logoutMutation.mutateAsync();
-    } catch (error: unknown) {
-      if (
-        error instanceof TRPCClientError &&
-        error.data?.code === "UNAUTHORIZED"
-      ) {
-        return;
-      }
-      throw error;
-    } finally {
-      utils.auth.me.setData(undefined, undefined);
-      await utils.auth.me.invalidate();
+  const refetch = () => {
+    if (typeof session.refetch === "function") {
+      return session.refetch();
     }
-  }, [logoutMutation, utils]);
+    return undefined;
+  };
 
-  const state = useMemo(() => {
-    localStorage.setItem(
-      "manus-runtime-user-info",
-      JSON.stringify(meQuery.data)
-    );
-    return {
-      user: meQuery.data ?? null,
-      loading: meQuery.isLoading || logoutMutation.isPending,
-      error: meQuery.error ?? logoutMutation.error ?? null,
-      isAuthenticated: Boolean(meQuery.data),
-    };
-  }, [
-    meQuery.data,
-    meQuery.error,
-    meQuery.isLoading,
-    logoutMutation.error,
-    logoutMutation.isPending,
-  ]);
-
-  useEffect(() => {
-    if (!redirectOnUnauthenticated) return;
-    if (meQuery.isLoading || logoutMutation.isPending) return;
-    if (state.user) return;
-    if (typeof window === "undefined") return;
-    if (window.location.pathname === redirectPath) return;
-
-    window.location.href = redirectPath
-  }, [
-    redirectOnUnauthenticated,
-    redirectPath,
-    logoutMutation.isPending,
-    meQuery.isLoading,
-    state.user,
-  ]);
+  const logout = async () => {
+    await signOut();
+  };
 
   return {
-    ...state,
-    refresh: () => meQuery.refetch(),
+    user,
+    loading,
+    isActive,
+    refetch,
     logout,
   };
 }
+
+// Re-export the auth view-model types so existing consumers that imported
+// them from `@/_core/hooks/useAuth` keep compiling without an extra import.
+export type { Role, SessionUser, SubscriptionStatus };
