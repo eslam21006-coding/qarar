@@ -1,20 +1,50 @@
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { signIn } from "@/lib/auth-client";
-import { LockKeyhole, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 
 const MSG_INVALID = "البريد الإلكتروني أو كلمة المرور غير صحيحة";
 const MSG_GENERIC = "حدث خطأ، حاول مرة أخرى";
+
+const VERDICT_ROWS = [
+  {
+    dot: "🟢",
+    entity: "حملة — عروض الصيف",
+    action: "كمّل",
+    actionColor: "#4ade80",
+    cost: "٤٢ ر.س/عميل",
+  },
+  {
+    dot: "🔴",
+    entity: "مجموعة — اهتمامات عامة",
+    action: "اقفل",
+    actionColor: "#f87171",
+    cost: "١٨٧ ر.س/عميل",
+  },
+  {
+    dot: "🟡",
+    entity: "إعلان — فيديو المنتج",
+    action: "راقب",
+    actionColor: "#facc15",
+    cost: "٩١ ر.س/عميل",
+  },
+  {
+    dot: "🛟",
+    entity: "إعلان — صورة ثابتة",
+    action: "أنقذ",
+    actionColor: "#38bdf8",
+    cost: "١٣٥ ر.س/عميل",
+  },
+];
+
+const FEATURES = [
+  "٣٩ قاعدة حتمية لتقييم كل إعلان",
+  "قرارات فورية — بدون تخمين أو ذكاء اصطناعي",
+  "مبني على خبرة تجاوزت ٣٠ مليون دولار إنفاق إعلاني",
+];
 
 /**
  * Heuristic check for an "invalid credentials" error returned by
@@ -58,8 +88,8 @@ function isInvalidCredentialsError(err: unknown): boolean {
  * Arabic sign-in screen (`/auth/signin`).
  *
  * Behaviour (per `contracts/auth-screens.md` S1):
- * - Title `قرار`, subtitle `سجّل دخولك للمتابعة`.
- * - Email + password fields, RTL, dark `#0a0a0a`/`#111`/`#1a1a1a`/`#333`.
+ * - Split layout (RTL): branding panel on the right, form panel on the left.
+ *   On mobile (<768px), the panels stack vertically with branding on top.
  * - Submit label `دخول`, loading label `جارٍ الدخول…`.
  * - Enter in the password field submits.
  * - Empty fields are blocked client-side with inline Arabic feedback; no
@@ -131,24 +161,106 @@ export default function SignIn() {
   return (
     <div
       dir="rtl"
-      className="flex min-h-screen items-center justify-center bg-[#0a0a0a] px-4 py-10 text-zinc-100"
+      className="flex min-h-screen w-full flex-col text-zinc-100 md:flex-row"
     >
-      <Card className="w-full max-w-md rounded-2xl border-[#222] bg-[#111] text-zinc-100 shadow-xl">
-        <CardHeader className="space-y-2 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-white/10">
-            <LockKeyhole className="h-6 w-6 text-white" />
+      {/* Branding panel — visually on the right; on mobile, on top */}
+      <aside
+        className="order-1 flex w-full flex-col justify-center px-6 py-12 md:order-2 md:w-1/2 md:px-12 lg:px-16"
+        style={{
+          backgroundColor: "#060d18",
+          backgroundImage:
+            "radial-gradient(circle at 1px 1px, rgba(56,132,244,0.04) 1px, transparent 0), linear-gradient(170deg, #060d18 0%, #0a1628 40%, #0d1f3a 100%)",
+          backgroundSize: "32px 32px, 100% 100%",
+          backgroundRepeat: "repeat, no-repeat",
+        }}
+      >
+        <div className="mx-auto w-full max-w-md">
+          <div className="mb-10">
+            <h1 className="text-[32px] font-bold leading-tight text-white">
+              قرار
+            </h1>
+            <p className="mt-1 text-sm text-[#4a8ae6]">
+              لوحة قرارات إعلانات ميتا
+            </p>
           </div>
-          <CardTitle className="text-2xl font-extrabold text-white">
-            قرار
-          </CardTitle>
-          <CardDescription className="text-zinc-400">
-            سجّل دخولك للمتابعة
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="space-y-4" onSubmit={onSubmit} noValidate>
+
+          <div
+            className="mb-10 rounded-[10px] border p-4"
+            style={{
+              background: "rgba(10,18,32,0.85)",
+              borderColor: "rgba(56,132,244,0.15)",
+            }}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-sm font-semibold text-white">
+                لوحة القرارات
+              </span>
+              <span
+                className="rounded-full px-2 py-0.5 text-[11px]"
+                style={{
+                  background: "rgba(56,132,244,0.12)",
+                  color: "#8ab4f0",
+                }}
+              >
+                ٣ أيام
+              </span>
+            </div>
             <div className="space-y-2">
-              <Label htmlFor="email" className="text-zinc-200">
+              {VERDICT_ROWS.map((row, i) => (
+                <div
+                  key={i}
+                  className="flex items-center justify-between rounded-md px-[10px] py-2 text-[13px]"
+                  style={{ background: "rgba(255,255,255,0.02)" }}
+                >
+                  <span className="flex items-center gap-2 text-zinc-300">
+                    <span aria-hidden="true">{row.dot}</span>
+                    <span>{row.entity}</span>
+                  </span>
+                  <span style={{ color: row.actionColor }}>{row.action}</span>
+                  <span className="text-[12px] text-zinc-500">{row.cost}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <ul className="mb-8 space-y-2">
+            {FEATURES.map((feature, i) => (
+              <li
+                key={i}
+                className="flex items-center gap-2 text-[13px] text-[#8ab4f0]"
+              >
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#3884f4]" />
+                {feature}
+              </li>
+            ))}
+          </ul>
+
+          <p
+            className="mt-6 border-t pt-4 text-[11px] leading-relaxed text-[#334155]"
+            style={{ borderColor: "rgba(56,132,244,0.1)" }}
+          >
+            بياناتك مشفرة ولا تُشارك مع أي طرف — اتصال مباشر مع حسابك في ميتا
+          </p>
+        </div>
+      </aside>
+
+      {/* Form panel — visually on the left; on mobile, below */}
+      <main
+        className="order-2 flex w-full flex-col items-center justify-center px-6 py-12 md:order-1 md:w-1/2 md:px-12 lg:px-20"
+        style={{
+          background: "#080c14",
+          borderRight: "1px solid rgba(56,132,244,0.08)",
+        }}
+      >
+        <div className="w-full max-w-sm">
+          <h2 className="mb-2 text-2xl font-bold text-white">قرار</h2>
+          <p className="mb-10 text-[15px] text-[#94a3b8]">
+            سجّل دخولك للمتابعة
+          </p>
+
+          <form className="space-y-5" onSubmit={onSubmit} noValidate>
+            <div className="space-y-1.5">
+              <Label htmlFor="email" className="text-[13px] text-[#64748b]">
                 البريد الإلكتروني
               </Label>
               <Input
@@ -161,12 +273,16 @@ export default function SignIn() {
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 disabled={submitting}
-                className="border-[#333] bg-[#1a1a1a] text-white placeholder:text-zinc-500 focus-visible:ring-white/30"
                 dir="ltr"
+                className="h-11 rounded-lg px-[14px] py-[11px] text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
+                style={{
+                  backgroundColor: "#0c1220",
+                  borderColor: "rgba(56,132,244,0.15)",
+                }}
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-zinc-200">
+            <div className="space-y-1.5">
+              <Label htmlFor="password" className="text-[13px] text-[#64748b]">
                 كلمة المرور
               </Label>
               <Input
@@ -178,8 +294,12 @@ export default function SignIn() {
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 disabled={submitting}
-                className="border-[#333] bg-[#1a1a1a] text-white placeholder:text-zinc-500 focus-visible:ring-white/30"
                 dir="ltr"
+                className="h-11 rounded-lg px-[14px] py-[11px] text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
+                style={{
+                  backgroundColor: "#0c1220",
+                  borderColor: "rgba(56,132,244,0.15)",
+                }}
               />
             </div>
 
@@ -195,7 +315,8 @@ export default function SignIn() {
             <Button
               type="submit"
               disabled={submitting}
-              className="h-11 w-full rounded-md bg-white text-base font-bold text-black hover:bg-zinc-200"
+              className="h-11 w-full rounded-lg text-sm font-semibold text-white"
+              style={{ background: "#3884f4" }}
             >
               {submitting ? (
                 <>
@@ -208,17 +329,18 @@ export default function SignIn() {
             </Button>
           </form>
 
-          <p className="mt-6 text-center text-sm text-zinc-400">
+          <p className="mt-8 text-center text-[13px] text-[#475569]">
             ليس لديك حساب؟{" "}
             <Link
               href="/auth/signup"
-              className="font-bold text-white underline-offset-4 hover:underline"
+              className="font-medium hover:underline"
+              style={{ color: "#5a9cf5" }}
             >
               أنشئ حساباً
             </Link>
           </p>
-        </CardContent>
-      </Card>
+        </div>
+      </main>
     </div>
   );
 }
