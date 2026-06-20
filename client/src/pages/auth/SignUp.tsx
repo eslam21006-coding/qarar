@@ -287,14 +287,6 @@ export default function SignUp() {
         }}
       >
         <div className="w-full max-w-sm">
-          <h2 className="mb-2 text-2xl font-bold text-white">قرار</h2>
-          <div className="mb-3 flex justify-center">
-            <img
-              src="/qarar_logo_transparent.png"
-              alt="قرار"
-              style={{ height: "40px", width: "auto", borderRadius: "10px" }}
-            />
-          </div>
           <p className="mb-10 text-[15px] text-[#94a3b8]">أنشئ حساباً جديداً</p>
 
           <form className="space-y-5" onSubmit={onSubmit} noValidate>
