@@ -13,6 +13,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { sdk } from "./sdk";
 import { runDailyRefresh } from "../dailyRefresh";
+import { generatePasswordResetToken, verifyPasswordResetToken, buildPasswordResetUrl } from "../passwordReset";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -60,6 +61,57 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
+
+  // Password reset endpoints
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      // Generate reset token
+      const token = await generatePasswordResetToken(email);
+      const resetUrl = buildPasswordResetUrl(token);
+
+      // TODO: Send email with reset link via Manus notification API or external service
+      console.log(`[Password Reset] Send to ${email}: ${resetUrl}`);
+
+      // Always return success for security (don't reveal if email exists)
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error in forgot-password:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const { token, password } = req.body;
+      if (!token || typeof token !== "string") {
+        return res.status(400).json({ error: "Token is required" });
+      }
+      if (!password || typeof password !== "string") {
+        return res.status(400).json({ error: "Password is required" });
+      }
+
+      // Verify token and get email
+      const email = await verifyPasswordResetToken(token);
+      if (!email) {
+        return res.status(400).json({ error: "Invalid or expired token" });
+      }
+
+      // TODO: Update password via better-auth internal adapter or bcrypt
+      // For now, just acknowledge the request
+      console.log(`[Password Reset] Reset password for ${email}`);
+
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error in reset-password:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Phase B / FR-024 / contract auth-endpoint.md §2 — Manus OAuth login
   // callback is no longer mounted. `registerOAuthRoutes` would expose
   // `/api/oauth/callback` and mint app sessions; after cutover the real

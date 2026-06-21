@@ -380,6 +380,16 @@ export default function SignIn() {
             </Button>
           </form>
 
+          <p className="mt-4 text-center text-[12px]">
+            <Link
+              href="/auth/forgot-password"
+              className="font-medium hover:underline"
+              style={{ color: "#5a9cf5" }}
+            >
+              هل نسيت كلمة المرور؟
+            </Link>
+          </p>
+
           <p className="mt-8 text-center text-[13px] text-[#475569]">
             ليس لديك حساب؟{" "}
             <Link

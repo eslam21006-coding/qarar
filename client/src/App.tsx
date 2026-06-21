@@ -5,6 +5,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import SignIn from "@/pages/auth/SignIn";
 import SignUp from "@/pages/auth/SignUp";
 import VerifyEmail from "@/pages/auth/VerifyEmail";
+import ForgotPassword from "@/pages/auth/ForgotPassword";
+import ResetPassword from "@/pages/auth/ResetPassword";
 import NotFound from "@/pages/NotFound";
 import Upgrade from "@/pages/Upgrade";
 import { useEffect } from "react";
@@ -32,6 +34,14 @@ function PublicRouter() {
       </Route>
       <Route path="/auth/verify-email">
         <VerifyEmail />
+      </Route>
+      <Route path="/auth/forgot-password">
+        <PublicAuthRoute>
+          <ForgotPassword />
+        </PublicAuthRoute>
+      </Route>
+      <Route path="/auth/reset-password">
+        <ResetPassword />
       </Route>
       <Route>
         <ProtectedRouter />
