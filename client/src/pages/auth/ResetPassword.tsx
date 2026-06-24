@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordStrengthMeter, isPasswordStrong } from "@/components/PasswordStrengthMeter";
 import { Loader2, Eye, EyeOff, Lock } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
@@ -55,8 +56,8 @@ export default function ResetPassword() {
       return;
     }
 
-    if (password.length < 8) {
-      setError("يجب أن تكون كلمة المرور 8 أحرف على الأقل");
+    if (!isPasswordStrong(password)) {
+      setError("كلمة المرور لا تلبي جميع المتطلبات");
       return;
     }
 
@@ -220,6 +221,7 @@ export default function ResetPassword() {
                 )}
               </button>
             </div>
+            <PasswordStrengthMeter password={password} showRequirements={true} />
           </div>
 
           <div className="space-y-1.5">

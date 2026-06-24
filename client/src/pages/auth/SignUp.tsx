@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordStrengthMeter, isPasswordStrong } from "@/components/PasswordStrengthMeter";
 import { getSession, signIn, signUp } from "@/lib/auth-client";
 import { Loader2, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
@@ -124,6 +125,11 @@ export default function SignUp() {
     const trimmedEmail = email.trim();
     if (!trimmedName || !trimmedEmail || !password) {
       setError("أدخل الاسم والبريد الإلكتروني وكلمة المرور");
+      return;
+    }
+
+    if (!isPasswordStrong(password)) {
+      setError("كلمة المرور لا تلبي جميع المتطلبات");
       return;
     }
 
@@ -370,6 +376,7 @@ export default function SignUp() {
                   )}
                 </button>
               </div>
+              <PasswordStrengthMeter password={password} showRequirements={true} />
             </div>
 
             {error && (
