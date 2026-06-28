@@ -21,7 +21,18 @@ When C1/C2/C6 fire, the produced row MUST satisfy:
 
 ## Preservation invariants (must NOT change)
 
-- Evaluation order for every existing rule is unchanged: gates → circuit breaker → kill → starved → decay → fatigue → watch → continue.
+- Evaluation order for every existing rule is unchanged. Per `server/engine.ts`'s own header block, the actual ad pipeline is:
+  1. K3 dead-hook kill (ad-level only — 1,500 impressions + CTR < 0.5%)
+  2. Starved-ad matrix K5 (ad-level only — checked before the generic gates because a starved ad has no spend to judge by CPA)
+  3. Data gates (GATE)
+  4. Circuit breaker CB1/CB2 (ad-set level only — bypasses every gate per SOP §5.3 "يتجاوز كل البوابات")
+  5. Kill rules K1–K7
+  6. 72-hour decay map (K4, ad-level only)
+  7. Fatigue signals F1/F2 (ad-level only)
+  8. Watch W1–W6
+  9. Continue/Scale S1–S4
+
+  The ad-set pipeline is the same minus the ad-only steps (K3, K5, K4, F1/F2). The ad-level K1 added by this batch (FR-001b) slots into step 5 of the ad pipeline; the watch catch (FR-001) slots into step 8 of both pipelines. No existing rule's position changed.
 - No existing rule's threshold, condition, rule code, reason, or action changes.
 - The new `W1` watch firing requires `cpa === null`; existing `W1` requires `cpa !== null` — the two are mutually exclusive, so no object receives a conflicting double `W1`.
 - All 174+ existing engine tests pass unmodified. (If any existing test asserted the old `continue` behavior for a zero-result object in the 1×–2× range, that test is updated deliberately and called out — none is expected from the source scan.)

@@ -659,6 +659,26 @@ describe("ISSUE-001 — zero-result fallthrough catch", () => {
     expect(r.rule).toBe("W1");
   });
 
+  // Edge-case boundaries from spec FR-001 (Edge Cases section):
+  //  - spend exactly equal to 1× target must fire the new watch catch
+  //    (condition is spend >= target);
+  //  - spend at exactly 2× target is claimed by K1 (kill) — the watch
+  //    catch's exclusive upper bound (< 2×) guarantees it never fires
+  //    at or above 2× target.
+  it("boundary: ad 0-conv @ exactly 1× target → watch W1 (inclusive lower bound)", () => {
+    const result = runEngine(snapWithZeroResultCase(TARGET, 5), DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "ad_zr")!;
+    expect(r.verdict).toBe("watch");
+    expect(r.rule).toBe("W1");
+  });
+
+  it("boundary: ad 0-conv @ exactly 2× target → kill K1 (watch catch upper bound is strict <)", () => {
+    const result = runEngine(snapWithZeroResultCase(TWO_X, 5), DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "ad_zr")!;
+    expect(r.verdict).toBe("kill");
+    expect(r.rule).toBe("K1");
+  });
+
   it("contract: the new W1 firing carries the exact reason/action strings", () => {
     const spend = TARGET * 1.5;
     const result = runEngine(snapWithZeroResultCase(spend, 5), DEMO_FUNNEL as FunnelInputs);
