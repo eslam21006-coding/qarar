@@ -525,3 +525,187 @@ describe("cadence indicator (US9 / T055)", () => {
     expect(result.summary.cadence!.daysSinceLast).toBeNull();
   });
 });
+
+// ===========================================================================
+// ISSUE-001 — zero-result fallthrough catch (FR-001 / FR-001b / FR-002-005)
+// ===========================================================================
+// The engine previously let a zero-result ad or ad set at spend ≥ 1× and
+// < 2× target fall through every rule to the S2 "continue" fallback, even
+// though it was burning money without a single conversion. Contract cases
+// C1–C6 below are taken verbatim from specs/006-engine-fix-timeout-copy/
+// contracts/engine-rules.md.
+
+describe("ISSUE-001 — zero-result fallthrough catch", () => {
+  // unitTarget with baseFunnel (AOV=43, ROAS=1.0) = 43
+  const TARGET = 43;
+  const TWO_X = TARGET * 2;
+
+  // Build a fresh snapshot with one parent adset (healthy so it doesn't
+  // interfere) + a zero-result ad + a zero-result adset, both with the
+  // requested 3-day spend and per-day history. Conversions=0 ⇒ CPA=null,
+  // past the gate if spend ≥ target, below the gate if spend < target.
+  function snapWithZeroResultCase(spend: number, ageDays: number) {
+    const snap = buildDemoSnapshot();
+    // Parent adset for the ad-level case — a healthy winner so it never
+    // outranks our test ad. spendSharePct = 100% (only child) skips K5.
+    snap.objects.push({
+      id: "as_zr_parent", name: "zr parent", status: "ACTIVE",
+      level: "adset", parentId: "cmp_test", campaignId: "cmp_test",
+      dailyBudget: 50, createdTime: "2026-06-15", ageDays: 8,
+      w3d: {
+        spend: 200, impressions: 15000, reach: 12000, frequency: 1.25,
+        clicks: 250, linkClicks: 200, ctrAll: 1.7, ctrLink: 1.4,
+        cpm: 18, cpc: 1.0, conversions: 5, conversionValue: 215,
+        lpViews: 170, cpa: 40,
+      },
+      today: {
+        spend: 60, impressions: 4500, reach: 3800, frequency: 1.2,
+        clicks: 75, linkClicks: 60, ctrAll: 1.7, ctrLink: 1.4,
+        cpm: 18, cpc: 1.0, conversions: 2, conversionValue: 86,
+        lpViews: 50, cpa: 30,
+      },
+      daily7: [],
+      spendSharePct: null,
+    });
+    // For C5 (spend < target), keep impressions < 1500 so the gate fires
+    // (otherwise the impression branch of ctrGateMet would lift us out of
+    // the gate before the spend check matters).
+    const isBelowGate = spend < TARGET;
+    const impressions = isBelowGate ? 800 : 3000;
+    const linkClicks = isBelowGate ? 10 : 40;
+    const clicks = isBelowGate ? 13 : 50;
+    // The ad under test — zero conversions.
+    snap.objects.push({
+      id: "ad_zr", name: "zr ad", status: "ACTIVE",
+      level: "ad", parentId: "as_zr_parent", campaignId: "cmp_test",
+      dailyBudget: null, createdTime: "2026-06-20", ageDays,
+      w3d: {
+        spend, impressions, reach: impressions * 0.8, frequency: 1.2,
+        clicks, linkClicks, ctrAll: 1.5, ctrLink: 1.3,
+        cpm: 18, cpc: 1.5, conversions: 0, conversionValue: 0,
+        lpViews: Math.round(linkClicks * 0.85), cpa: null,
+      },
+      today: {
+        spend: spend / 3, impressions: impressions / 3, reach: (impressions / 3) * 0.8, frequency: 1.1,
+        clicks: Math.round(clicks / 3), linkClicks: Math.round(linkClicks / 3), ctrAll: 1.5, ctrLink: 1.3,
+        cpm: 18, cpc: 1.5, conversions: 0, conversionValue: 0,
+        lpViews: Math.round((linkClicks / 3) * 0.85), cpa: null,
+      },
+      daily7: [],
+      spendSharePct: null,
+    });
+    // The adset under test — zero conversions.
+    snap.objects.push({
+      id: "as_zr", name: "zr adset", status: "ACTIVE",
+      level: "adset", parentId: "cmp_test", campaignId: "cmp_test",
+      dailyBudget: 20, createdTime: "2026-06-20", ageDays,
+      w3d: {
+        spend, impressions, reach: impressions * 0.8, frequency: 1.2,
+        clicks, linkClicks, ctrAll: 1.5, ctrLink: 1.3,
+        cpm: 18, cpc: 1.5, conversions: 0, conversionValue: 0,
+        lpViews: Math.round(linkClicks * 0.85), cpa: null,
+      },
+      today: {
+        spend: spend / 3, impressions: impressions / 3, reach: (impressions / 3) * 0.8, frequency: 1.1,
+        clicks: Math.round(clicks / 3), linkClicks: Math.round(linkClicks / 3), ctrAll: 1.5, ctrLink: 1.3,
+        cpm: 18, cpc: 1.5, conversions: 0, conversionValue: 0,
+        lpViews: Math.round((linkClicks / 3) * 0.85), cpa: null,
+      },
+      daily7: [],
+      spendSharePct: null,
+    });
+    return snap;
+  }
+
+  it("C1: ad 0-conv @ 1.5× target → watch W1", () => {
+    const result = runEngine(snapWithZeroResultCase(TARGET * 1.5, 5), DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "ad_zr")!;
+    expect(r.verdict).toBe("watch");
+    expect(r.rule).toBe("W1");
+  });
+
+  it("C2: adset 0-conv @ 1.5× target → watch W1", () => {
+    const result = runEngine(snapWithZeroResultCase(TARGET * 1.5, 5), DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "as_zr")!;
+    expect(r.verdict).toBe("watch");
+    expect(r.rule).toBe("W1");
+  });
+
+  it("C3: ad 0-conv @ 2.5× target → kill K1 (ad-level parity per FR-001b)", () => {
+    const result = runEngine(snapWithZeroResultCase(TARGET * 2.5, 5), DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "ad_zr")!;
+    expect(r.verdict).toBe("kill");
+    expect(r.rule).toBe("K1");
+  });
+
+  it("C4: adset 0-conv @ 2.5× target → kill K1 (existing behavior unchanged)", () => {
+    const result = runEngine(snapWithZeroResultCase(TARGET * 2.5, 5), DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "as_zr")!;
+    expect(r.verdict).toBe("kill");
+    expect(r.rule).toBe("K1");
+  });
+
+  it("C5: ad 0-conv @ 0.5× target (below gate) → too_early GATE", () => {
+    const result = runEngine(snapWithZeroResultCase(TARGET * 0.5, 5), DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "ad_zr")!;
+    expect(r.verdict).toBe("too_early");
+    expect(r.rule).toBe("GATE");
+  });
+
+  it("C6: ad 0-conv @ 1.9× target → watch W1 (exclusive upper bound at 2×)", () => {
+    const result = runEngine(snapWithZeroResultCase(TARGET * 1.9, 5), DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "ad_zr")!;
+    expect(r.verdict).toBe("watch");
+    expect(r.rule).toBe("W1");
+  });
+
+  // Edge-case boundaries from spec FR-001 (Edge Cases section):
+  //  - spend exactly equal to 1× target must fire the new watch catch
+  //    (condition is spend >= target);
+  //  - spend at exactly 2× target is claimed by K1 (kill) — the watch
+  //    catch's exclusive upper bound (< 2×) guarantees it never fires
+  //    at or above 2× target.
+  it("boundary: ad 0-conv @ exactly 1× target → watch W1 (inclusive lower bound)", () => {
+    const result = runEngine(snapWithZeroResultCase(TARGET, 5), DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "ad_zr")!;
+    expect(r.verdict).toBe("watch");
+    expect(r.rule).toBe("W1");
+  });
+
+  it("boundary: ad 0-conv @ exactly 2× target → kill K1 (watch catch upper bound is strict <)", () => {
+    const result = runEngine(snapWithZeroResultCase(TWO_X, 5), DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "ad_zr")!;
+    expect(r.verdict).toBe("kill");
+    expect(r.rule).toBe("K1");
+  });
+
+  it("contract: the new W1 firing carries the exact reason/action strings", () => {
+    const spend = TARGET * 1.5;
+    const result = runEngine(snapWithZeroResultCase(spend, 5), DEMO_FUNNEL as FunnelInputs);
+    const r = result.rows.find(x => x.id === "ad_zr")!;
+    // money(64.5) → "$65" (n>=10 → 0 decimal places, toLocaleString rounds).
+    expect(r.reason_ar).toBe(
+      `صرف $${Math.round(spend).toLocaleString("en-US")} بدون أي نتيجة — لم يصل لحد الإيقاف بعد لكن يحتاج مراقبة`,
+    );
+    expect(r.action_ar).toBe(
+      `راقبه — إن لم يحقق نتائج قبل أن يصل صرفه لـ $${TWO_X.toLocaleString("en-US")} سيُوقف تلقائيًا`,
+    );
+  });
+});
+
+// ===========================================================================
+// ISSUE-005 — no internal "خطوة" labels in engine output strings (FR-010-013)
+// ===========================================================================
+
+describe("ISSUE-005 — engine output contains no internal step labels", () => {
+  it("no produced reason_ar, action_ar, or finding text_ar contains 'خطوة'", () => {
+    const result = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs);
+    for (const r of result.rows) {
+      expect(r.reason_ar, `reason_ar of ${r.id}`).not.toContain("خطوة");
+      expect(r.action_ar, `action_ar of ${r.id}`).not.toContain("خطوة");
+      for (const f of r.findings) {
+        expect(f.text_ar, `finding of ${r.id}`).not.toContain("خطوة");
+      }
+    }
+  });
+});
