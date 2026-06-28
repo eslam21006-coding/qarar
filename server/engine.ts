@@ -542,6 +542,23 @@ function watchRules(
     }
   }
 
+  // ISSUE-001 / FR-001 — zero-result fallthrough catch.
+  // Sits AFTER all existing watch rules (W1–W6) and BEFORE the S2 continue
+  // fallback in continueRules(). Bounded to the 1×–2× target gap so a
+  // zero-result object at ≥ 2× target still reaches K1 (the ad-level
+  // parity kill in evaluateAd, or the existing killRulesAdset K1).
+  // Mutually exclusive with the existing W1 (which requires cpa !== null)
+  // so reusing rule code "W1" never produces two different firings for
+  // the same object.
+  if (cpa === null && conversions === 0 && o.w3d.spend >= target && o.w3d.spend < 2 * target) {
+    return {
+      verdict: "watch",
+      rule: "W1",
+      reason: `صرف ${money(o.w3d.spend)} بدون أي نتيجة — لم يصل لحد الإيقاف بعد لكن يحتاج مراقبة`,
+      action: `راقبه — إن لم يحقق نتائج قبل أن يصل صرفه لـ ${money(2 * target)} سيُوقف تلقائيًا`,
+    };
+  }
+
   return null;
 }
 
@@ -659,7 +676,7 @@ export function diagnose(
   if (baselines.cpmAvg14 && w.cpm > 1.3 * baselines.cpmAvg14 && w.impressions > 500) {
     findings.push({
       step: 1,
-      text_ar: `الخطوة 1 — سعر الظهور مرتفع على هذا الإعلان تحديدًا (${money(w.cpm)} مقابل متوسط ${money(baselines.cpmAvg14)}) — فيسبوك يرفع سعر التصميم الذي لا يعجب الناس`,
+      text_ar: `سعر الظهور مرتفع على هذا الإعلان تحديدًا (${money(w.cpm)} مقابل متوسط ${money(baselines.cpmAvg14)}) — فيسبوك يرفع سعر التصميم الذي لا يعجب الناس`, // step 1
       primary: false,
     });
   }
@@ -671,13 +688,13 @@ export function diagnose(
     if (w.ctrAll >= 2 * w.ctrLink && w.ctrAll > 1.5) {
       findings.push({
         step: 3,
-        text_ar: `الخطوة 3 — الناس تتفاعل مع الإعلان (${w.ctrAll.toFixed(2)}%) لكنها لا تضغط للشراء (${w.ctrLink.toFixed(2)}%) — بداية الإعلان جيدة لكن الرسالة أو دعوة الشراء ضعيفة`,
+        text_ar: `الناس تتفاعل مع الإعلان (${w.ctrAll.toFixed(2)}%) لكنها لا تضغط للشراء (${w.ctrLink.toFixed(2)}%) — بداية الإعلان جيدة لكن الرسالة أو دعوة الشراء ضعيفة`, // step 3
         primary: false,
       });
     } else {
       findings.push({
         step: 2,
-        text_ar: `الخطوة 2 — ضغط الناس على الإعلان قليل (${w.ctrLink.toFixed(2)}%) رغم أن سعر الظهور طبيعي — المشكلة في التصميم نفسه، جدّده`,
+        text_ar: `ضغط الناس على الإعلان قليل (${w.ctrLink.toFixed(2)}%) رغم أن سعر الظهور طبيعي — المشكلة في التصميم نفسه، جدّده`, // step 2
         primary: false,
       });
     }
@@ -687,7 +704,7 @@ export function diagnose(
   if (w.linkClicks >= 50 && w.lpViews > 0 && w.lpViews / w.linkClicks < 0.75) {
     findings.push({
       step: 4,
-      text_ar: `الخطوة 4 — ${((w.lpViews / w.linkClicks) * 100).toFixed(0)}% فقط ممن ضغطوا وصلوا لصفحتك (المفترض 75%+) — افحص سرعة التحميل أولًا، ثم تأكد أن الصفحة تطابق وعد الإعلان`,
+      text_ar: `${((w.lpViews / w.linkClicks) * 100).toFixed(0)}% فقط ممن ضغطوا وصلوا لصفحتك (المفترض 75%+) — افحص سرعة التحميل أولًا، ثم تأكد أن الصفحة تطابق وعد الإعلان`, // step 4
       primary: false,
     });
   }
@@ -704,8 +721,8 @@ export function diagnose(
       findings.push({
         step: 5,
         text_ar: adClean
-          ? `الخطوة 5 — الناس تصل لصفحتك لكن ${cvr.toFixed(1)}% فقط يشترون — المشكلة في الصفحة أو العرض أو السعر — ⚠️ الإعلان بريء، لا تعدّله`
-          : `الخطوة 5 — قلة ممن يصلون لصفحتك يشترون (${cvr.toFixed(1)}%) — راجع الصفحة أو العرض أو السعر أيضًا`,
+          ? `الناس تصل لصفحتك لكن ${cvr.toFixed(1)}% فقط يشترون — المشكلة في الصفحة أو العرض أو السعر — ⚠️ الإعلان بريء، لا تعدّله` // step 5
+          : `قلة ممن يصلون لصفحتك يشترون (${cvr.toFixed(1)}%) — راجع الصفحة أو العرض أو السعر أيضًا`, // step 5
         primary: false,
         ctaUrl: DISCOVERY_CALL_URL,
       });
@@ -719,7 +736,7 @@ export function diagnose(
   if (findings.length === 0) {
     findings.push({
       step: 6,
-      text_ar: "الخطوة 6 — المشكلة ليست بالإعلانات حالياً. المشكلة في العرض أو المسار التسويقي — احجز مكالمة تشخيصية مجانية.",
+      text_ar: "المشكلة ليست بالإعلانات حالياً. المشكلة في العرض أو المسار التسويقي — احجز مكالمة تشخيصية مجانية.", // step 6
       primary: false,
       ctaUrl: DISCOVERY_CALL_URL,
     });
@@ -829,6 +846,20 @@ function evaluateAd(
   if (gate) return gate;
 
   // 2. (circuit breaker is ad-set level)
+
+  // 3. K1 zero-result kill (ISSUE-001 / FR-001b) — ad-level parity with
+  // killRulesAdset. Without this, a zero-result ad at ≥ 2× target used to
+  // fall through to the S2 continue fallback. The kill sits BEFORE the
+  // decay map and BEFORE the watch catch so a zero-result ad in the kill
+  // range never gets re-classified as "watch" by the new FR-001 catch.
+  if (ad.w3d.conversions === 0 && ad.w3d.spend >= 2 * t.unitTarget) {
+    return {
+      verdict: "kill",
+      rule: "K1",
+      reason: `في آخر 3 أيام: صرف ${money(ad.w3d.spend)} (ضعف هدفك ${money(t.unitTarget)}) بدون أي نتيجة — لا يبيع أصلًا`,
+      action: "أوقِف هذه المجموعة",
+    };
+  }
 
   // 5. 72-hour decay map (ads ≤ 4 days)
   const decay = decayMap(ad, baselines);
