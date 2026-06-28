@@ -1,9 +1,9 @@
 # Qarar (قرار) — Open Issues Plan
 ## Post-Auth Stabilization & Feature Completion
 
-**Version:** 1.0
+**Version:** 1.1
 **Date:** June 28, 2026
-**Status:** All four auth phases (A–D) are merged and deployed. The product is live at app.adqarar.com with Better Auth, subscription gating, GHL webhook, and Arabic RTL login UI. This document covers everything that remains.
+**Status:** Batch 1 merged (engine fix, timeout, copy cleanup). This update adds ISSUE-009 (currency conversion) to Batch 2.
 
 ---
 
@@ -15,20 +15,21 @@
 - Admin auto-elevation via ADMIN_EMAIL
 - GHL webhook endpoint (ready, not yet configured in GHL)
 - Meta OAuth connection (redirect URIs updated for app.adqarar.com)
-- Decision engine with 39 rules (K1–K7, CB1/CB2, F1/F2, W1–W6, S1–S4, GATE)
+- Decision engine with 39 rules + zero-result gap fix (Batch 1)
+- Dashboard.refresh timeout increased to 180s (Batch 1)
+- Internal "خطوة" labels removed from user-facing copy (Batch 1)
 - Dark Arabic RTL UI with branded split login screen
 - Demo mode with synthetic data
-- Password reset and email verification (added by Manus)
-- 174 tests passing
+- Password reset and email verification
+- 179 tests passing
 
 ### What is broken or incomplete
-- Engine verdict bugs (zero-result fallthrough, CPA column mismatch)
-- Cloudflare 524 timeout on first data pull
-- New ad sets not appearing after publish
-- Internal step labels leaking into Arabic copy
+- CPA column shows different value than what engine used
+- No currency conversion between user's price currency and ad account currency
+- New ad sets may not appear (verify after Batch 1 deploy)
+- Too many "اقفل" verdicts (likely caused by currency mismatch — verify after Batch 2)
 - Settings page collects unnecessary data
 - GHL → auto-create-user flow not built
-- "خطوة" labels in user-facing messages
 
 ---
 
@@ -48,108 +49,26 @@ All work in this plan must comply with `.specify/memory/constitution.md`:
 
 ## Issue Registry
 
-### ISSUE-001: Engine verdict bug — zero-result fallthrough
-**Priority:** 🔴 CRITICAL
-**Category:** Engine logic
-**Files:** `server/engine.ts`
+### ~~ISSUE-001: Engine verdict bug — zero-result fallthrough~~
+**Status:** ✅ FIXED in Batch 1
 
-**Problem:**
-When an ad has zero conversions and has spent between 1× and 2× the target CPA, it falls through every rule and defaults to "واصل" (continue). This is because:
-- K1 (kill for zero results) only fires at spend ≥ 2× target
-- Every watch rule (W1–W6) checks `cpa !== null` — but CPA is null when conversions are zero
-- Every continue rule (S1–S4) checks `cpa !== null`
-- The ad hits the default return of `continueRules()` which returns a continue verdict
-
-**Evidence from live account:**
-- Ad "C-V10 فكرتك حبيسة الدرج": cost 58.9 AED, results 0, CTR 0.89%
-- Target: ~53 AED (derived from user's $25 input)
-- Verdict: 🟢 واصل (continue) with tooltip "واصل بحذر — الحساب متعادل"
-- Expected: 🟡 راقب (watch) — spending money with no results but hasn't hit kill threshold
-
-**Root cause in code:**
-In `watchRules()`, W1 checks `cpa > target * 1.2` — but CPA is null (0 conversions), so it skips.
-In `continueRules()`, S1/S2/S3/S4 all check `cpaAtOrUnder = cpa !== null && cpa <= target` — null, so all skip.
-The function falls to a default return that gives "continue."
-
-**Required fix:**
-Add a new watch-level catch BEFORE the continue rules fallback in both `evaluateAd()` and `evaluateAdset()`:
-
-```
-If spend >= 1× unitTarget AND conversions === 0:
-  → verdict: "watch"
-  → rule: "W1" (or a new code if preferred — but W1 "slightly above target" is closest)
-  → reason: "صرف {money(spend)} بدون أي نتيجة — لم يصل لحد الإيقاف بعد لكن يحتاج مراقبة"
-  → action: "راقبه — إن لم يحقق نتائج قبل أن يصل صرفه لـ {money(2 * target)} سيُوقف تلقائيًا"
-```
-
-This rule must fire AFTER all existing watch rules (W1–W6) and BEFORE `continueRules()`.
-
-**Constraints:**
-- Do not change the evaluation order for any existing rule
-- Do not modify any existing rule's logic or thresholds
-- This is purely additive — a new catch for a gap in coverage
-- Must add tests for this exact scenario (0 conversions, spend between 1× and 2× target)
-
----
-
-### ISSUE-002: Cloudflare 524 timeout on dashboard.refresh
-**Priority:** 🔴 CRITICAL
-**Category:** Server infrastructure
-**Files:** `server/routers.ts`, `server/_core/index.ts`
-
-**Problem:**
-The `dashboard.refresh` tRPC procedure times out when pulling Meta insights for a large account with no cached snapshots. The request takes >100 seconds, Cloudflare kills it at 100s with a 524 error.
-
-**Evidence:**
-- Request: `POST /api/trpc/dashboard.refresh?batch=1`
-- Status: 408 Request Timeout after 25.6 seconds (server timeout)
-- Then Cloudflare 524 on retry attempts
-- Error message: "استغرق تحميل البيانات وقتًا طويلًا"
-
-**Root cause:**
-The full user reset (Phase A/B) wiped all cached snapshots. The first data pull queries Meta's API for the full account hierarchy (campaigns → ad sets → ads) with multiple time windows (today, 3d, 7d, 14d, 30d, 90d baselines). For large accounts this exceeds the server timeout.
-
-**Required fix — two-part:**
-
-Part A — Increase server timeout:
-- Find the timeout configuration in `server/routers.ts` for the refresh procedure
-- Increase to 180 seconds (3 minutes)
-- Check if there's a global Express timeout in `server/_core/index.ts` that also needs increasing
-- Ensure the AbortController (if used) has a matching 180-second timeout
-
-Part B — Background refresh pattern (recommended):
-- Instead of blocking the HTTP request while Meta API responds, start the refresh as a background job
-- Return immediately with `{ status: "refreshing" }` 
-- The client polls for completion (e.g. every 5 seconds)
-- When done, the client refreshes the dashboard data from cache
-- This completely avoids the Cloudflare timeout issue
-
-**Constraints:**
-- Do not change the engine evaluation logic
-- Do not change the Meta API query structure (it needs all windows for accurate verdicts)
-- The refresh endpoint must remain user-triggered (Constitution §V: read-only by default)
-- Part A is sufficient for MVP; Part B is the proper long-term solution
-
----
+### ~~ISSUE-002: Cloudflare 524 timeout on dashboard.refresh~~
+**Status:** ✅ FIXED in Batch 1 (timeout increased to 180s)
 
 ### ISSUE-003: New ad sets not appearing after publish
-**Priority:** 🔴 CRITICAL (but likely resolves with ISSUE-002)
+**Priority:** 🔴 CRITICAL (verify after Batch 1 deploy)
 **Category:** Data freshness
-**Files:** Likely same as ISSUE-002
 
 **Problem:**
 An ad set published on June 22 does not appear in the app on June 23.
 
-**Root cause (hypothesis):**
-The refresh fails silently due to the timeout (ISSUE-002). Since the refresh never completes, new ads are never pulled from Meta and never cached.
-
 **Action:**
-Verify this resolves after fixing ISSUE-002. If it doesn't, investigate whether:
-- The Meta API query filters out newly created objects
-- The snapshot caching logic skips objects below a certain spend/impression threshold
-- The normalization layer drops objects with no data
+Verify this resolves after deploying Batch 1 (timeout fix). If it doesn't:
+- Check if the Meta API query filters out newly created objects
+- Check if the snapshot caching logic skips objects below a spend/impression threshold
+- Check if the normalization layer drops objects with no data
 
-**No spec needed until ISSUE-002 is fixed and verified.**
+**No spec needed until verified.**
 
 ---
 
@@ -157,6 +76,7 @@ Verify this resolves after fixing ISSUE-002. If it doesn't, investigate whether:
 **Priority:** 🟡 IMPORTANT
 **Category:** UI data consistency
 **Files:** `client/src/components/DecisionTable.tsx`
+**Batch:** 2
 
 **Problem:**
 The CPA column in the dashboard shows one value (e.g. 24.7) but the engine tooltip says a different value (e.g. 62 over 3 days). The user sees the column number and the tooltip number and they don't match.
@@ -176,49 +96,28 @@ The CPA column may be showing today's CPA or the selected range CPA, while the e
 
 ---
 
-### ISSUE-005: Internal step labels in user-facing messages
-**Priority:** 🟡 IMPORTANT
-**Category:** Arabic copy
-**Files:** `server/engine.ts` (copy only, no logic)
-
-**Problem:**
-Some user-facing reason and action strings contain internal references like "خطوة 2" or "خطوة 6" which mean nothing to the user. These are engine-internal step labels.
-
-**Required fix:**
-- Search `server/engine.ts` for all occurrences of "خطوة" in reason/action strings
-- Remove or rephrase them. The rule's meaning must be preserved — only the internal label is removed
-- Example: "خطوة 6: تكلفة العميل أعلى..." → "تكلفة العميل أعلى..."
-- The step numbering system stays in code comments for developer reference — it is only removed from strings that users see
-
-**Constraints:**
-- Do not change any rule logic, thresholds, or evaluation order
-- Do not change rule codes (K1, W6, etc.)
-- Only modify string literals inside `reason` and `action` fields
-- Every modified string must remain simple Arabic (≤ 6th grade)
-- Must run existing engine tests to confirm no logic regression
+### ~~ISSUE-005: Internal step labels in user-facing messages~~
+**Status:** ✅ FIXED in Batch 1
 
 ---
 
 ### ISSUE-006: Too many "اقفل" (kill) verdicts
-**Priority:** 🟡 IMPORTANT (diagnose after ISSUE-001 and ISSUE-004)
+**Priority:** 🟡 IMPORTANT (diagnose after ISSUE-009)
 **Category:** Engine calibration
-**Files:** `server/engine.ts` (investigation only — no changes until diagnosed)
 
 **Problem:**
-The user reports that most ads are getting killed. Very few get "واصل" or "كمّل". This could be:
-1. Correct — the ads genuinely underperform against the target
-2. A target derivation issue — the derived target is too low, so everything looks expensive
-3. A date range issue — the engine uses 3-day rolling, which might not represent actual performance
-4. A threshold issue — kill thresholds might be too aggressive
+The user reports that most ads are getting killed. Very few get "واصل" or "كمّل".
 
-**Action plan:**
-1. Fix ISSUE-001 first (zero-result fallthrough)
-2. Fix ISSUE-004 (CPA column alignment)
-3. Re-evaluate with the user's live data
-4. If still too many kills, compare the derived target (`unitTarget`) against what the user intended
-5. Review kill thresholds K1 (2× target), K2 (consistent overspend), K6 (2× CPA median), K7 (70% of full buyer value)
+**Root cause (hypothesis):**
+Most likely caused by ISSUE-009 — if the user entered prices in USD but the ad account is in AED, every CPA looks 3.67× higher than intended, causing almost everything to hit kill thresholds.
 
-**No spec until ISSUE-001 and ISSUE-004 are fixed.** This may resolve itself.
+**Action:**
+1. Fix ISSUE-009 (currency conversion) first
+2. User re-enters funnel settings with correct currency
+3. Re-evaluate verdict distribution
+4. If still too many kills, review kill thresholds against live data
+
+**No spec until ISSUE-009 is deployed and tested.**
 
 ---
 
@@ -226,34 +125,25 @@ The user reports that most ads are getting killed. Very few get "واصل" or "�
 **Priority:** 🟢 FEATURE
 **Category:** UX simplification
 **Files:** `client/src/pages/Settings.tsx`, possibly `server/routers.ts`
+**Batch:** 4
 
 **Problem:**
 The settings page asks for targeting options, countries, etc. that have no effect on engine decisions. The only inputs the engine uses are:
-- `archetype`: "free_lead" or "paid" (funnel type — determines CPA target calculation)
-- `productPrice`: price of the product/service
-- `costPerUnit`: cost to deliver
-- `avgOrdersPerCustomer`: repeat purchase multiplier
-- `ltoPrice` / `ltoTakeRate`: for low-ticket-offer funnels
-- `htoUnderperforming`: flag for W5 funnel diagnosis
+- `archetype`: funnel type (paid_lto / free_lead / direct_call)
+- `aov`: average order value
+- `htoPrice`: high-ticket offer price
+- `htoConversionRate`: lead → HTO conversion %
+- `frontEndRoas`: front-end ROAS target
+- `marketCplBenchmark`: CPL benchmark for free-lead funnels
+- `htoUnderperforming`: W5 funnel signal flag
 
-Everything else (targeting, countries, demographics, etc.) is noise that confuses non-technical users.
+Everything else (targeting, countries, demographics, arena, bestInterest, geoTiers) is noise.
 
 **Required fix:**
 - Remove or collapse unnecessary fields in the settings UI
 - Keep only the fields the engine actually reads from `FunnelInputs`
-- Group them logically:
-  1. "ما نوع الفانل؟" (funnel type — paid or free lead)
-  2. "كم سعر المنتج/الخدمة؟" (product price)
-  3. "كم تكلفة التوصيل/التقديم؟" (cost per unit)
-  4. "كم مرة يشتري العميل عادةً؟" (repeat orders)
 - Add simple Arabic labels with examples
-- This is a UI-only change — the server schema and engine logic stay exactly the same
-
-**Constraints:**
-- Do not change `FunnelInputs` type definition
-- Do not change `deriveTargets()` logic
-- Do not change any engine rule
-- Keep all existing fields in the database — just hide them from the UI
+- This is a UI-only change — the server schema and engine logic stay the same
 
 ---
 
@@ -261,151 +151,178 @@ Everything else (targeting, countries, demographics, etc.) is noise that confuse
 **Priority:** 🟢 FEATURE
 **Category:** User onboarding automation
 **Files:** `server/ghl-webhook.ts`, `server/auth.ts`, `server/passwordReset.ts`
+**Batch:** 5
 
 **Problem:**
-The current flow requires manual steps:
-1. User signs up at app.adqarar.com
-2. Admin manually activates them (or future: GHL webhook activates by matching email)
-
-The desired flow:
-1. Buyer enters email on GHL sales page → pays
+The current flow requires manual activation. The desired flow:
+1. Buyer pays on GHL sales page
 2. GHL fires webhook to `/api/webhooks/ghl`
-3. The webhook handler:
+3. Webhook handler:
    a. Checks if user exists by email
-   b. If not → creates a new Better Auth user with `subscriptionStatus: "active"` and a random temporary password
+   b. If not → creates a new Better Auth user with `subscriptionStatus: "active"`
    c. Generates a password-reset token
-   d. Returns the set-password URL in the webhook response (or stores it for GHL to send via email)
+   d. Returns the set-password URL in the webhook response
 4. GHL automation sends the buyer an email with the set-password link
-5. Buyer clicks link → sets their password → logs in at app.adqarar.com
-6. They're already active (step 3b set it) → they see the dashboard immediately
+5. Buyer sets password → logs in → sees dashboard immediately
 
 **Dependencies:**
-- `server/passwordReset.ts` already exists (Manus added it)
-- Better Auth user creation is already implemented
-- GHL webhook handler already processes payment events
+- `server/passwordReset.ts` already exists
+- Better Auth user creation is implemented
+- GHL webhook handler processes payment events
 
-**What needs to be built:**
-- Auto-user-creation logic in the webhook handler (when email not found in DB)
-- Password-reset token generation for the new user
-- A way to get the set-password URL back to GHL (either in the webhook response body, or stored for retrieval)
-- GHL workflow configuration to send the set-password email (manual step, not code)
+---
+
+### ISSUE-009: Currency-aware funnel settings
+**Priority:** 🔴 CRITICAL
+**Category:** Engine accuracy / Settings
+**Files:** `shared/qarar.ts`, `drizzle/schema.ts`, `client/src/pages/Settings.tsx`, `server/routers.ts`
+**Batch:** 2
+
+**Problem:**
+There is no currency conversion between the user's price currency and the ad account currency. The `deriveTargets()` function takes raw numbers from funnel settings and compares them directly against Meta API data. If the user enters prices in USD but their ad account reports in AED, every target is ~3.67× too low, causing almost every ad to be killed.
+
+**Example:**
+- User enters AOV = $49 USD
+- Ad account is in AED
+- Engine derives target CPA = $49 (treated as 49 AED = ~$13.35 USD)
+- Meta reports CPA = 180 AED (~$49 USD) — the actual correct CPA
+- Engine sees 180 vs 49 → 3.67× above target → kills it
+- Real comparison should be: target 180 AED vs CPA 180 AED → at target → continue
+
+**Required fix:**
+
+#### 1. Settings UI changes (`client/src/pages/Settings.tsx`)
+- Add a currency selector dropdown at the top of the funnel settings form
+- Label: "ما عملة أسعارك؟" (What currency are your prices in?)
+- Options: USD, AED, SAR, EGP, EUR, GBP, KWD, QAR, BHD, OMR
+- Default: the ad account's currency (from `adAccounts.currency`)
+- The selector appears prominently BEFORE any price fields
+- When the input currency matches the ad account currency, no conversion notice is shown
+- When they differ, show a notice: "سيتم تحويل الأسعار تلقائيًا إلى {accountCurrency}" (Prices will be auto-converted to {accountCurrency})
+
+#### 2. Schema change (`drizzle/schema.ts`)
+- Add `inputCurrency` column to `funnelSettings` table
+- Type: `varchar("inputCurrency", { length: 8 }).default("USD")`
+- Run migration with `pnpm db:push`
+
+#### 3. Exchange rate table (`shared/qarar.ts`)
+- Add a hardcoded exchange rate table (rates per 1 USD):
+
+| Currency | Code | Rate |
+|---|---|---|
+| US Dollar | USD | 1.00 |
+| UAE Dirham | AED | 3.67 |
+| Saudi Riyal | SAR | 3.75 |
+| Egyptian Pound | EGP | 50.0 |
+| Euro | EUR | 0.92 |
+| British Pound | GBP | 0.79 |
+| Kuwaiti Dinar | KWD | 0.31 |
+| Qatari Riyal | QAR | 3.64 |
+| Bahraini Dinar | BHD | 0.376 |
+| Omani Rial | OMR | 0.385 |
+
+- Add conversion function: `convertCurrency(amount: number, from: string, to: string): number`
+  - Convert from source to USD first, then from USD to target
+  - Example: 49 USD → AED = 49 × 3.67 = 179.83
+
+#### 4. Target derivation change (`shared/qarar.ts` → `deriveTargets()`)
+- Add two new parameters: `inputCurrency?: string` and `accountCurrency?: string`
+- Before calculating targets, convert all monetary inputs to the account currency:
+  - `aov` → convert
+  - `htoPrice` → convert
+  - `ticketPrice` → convert
+  - `marketCplBenchmark` → convert
+- The rest of the calculation stays exactly the same
+- When both currencies are the same (or either is missing), no conversion happens
+- Return both original and converted values for display
+
+#### 5. Settings page display
+- Show the derived target CPA in BOTH currencies on the Settings page
+- Example: "هدف تكلفة العميل: $49 = د.إ179.83"
+- This lets the user verify the conversion is correct
+
+#### 6. Server changes (`server/routers.ts`)
+- The `funnel.save` procedure must store `inputCurrency`
+- The `funnel.get` procedure must return `inputCurrency`
+- When calling `deriveTargets()` on the server, pass `inputCurrency` from funnel settings and `accountCurrency` from the snapshot/account
 
 **Constraints:**
-- The set-password URL must point to `https://app.adqarar.com/auth/reset-password?token=<token>`
-- The new user must have `subscriptionStatus: "active"` from creation (they paid)
-- If the user already exists, just activate them (existing behavior)
-- The password reset token must have a reasonable expiry (e.g. 72 hours)
-- Must handle edge cases: duplicate webhook fires, GHL retry after timeout
-- No changes to the engine
+- Hardcoded rates are acceptable — they don't change fast enough to affect CPA threshold decisions
+- The exchange rate table lives in `shared/qarar.ts` so both client and server use the same rates
+- Do NOT introduce an external API dependency for exchange rates
+- Do not change the engine evaluation logic — only the input values change
+- All existing engine tests must pass (they use USD by default — no conversion)
+- New tests: USD→AED conversion, same-currency no-op, zero/null handling
+- The currency selector UI must be simple Arabic
 
 ---
 
 ## Execution Plan
 
-### Batch 1: Critical fixes (one branch, one PR)
-**Branch:** `fix/engine-and-timeout`
-**Scope:** ISSUE-001 + ISSUE-002 (Part A) + ISSUE-005
-
-These three are all server-side, don't conflict, and are the minimum needed to make the product usable.
-
-| Issue | Files | Risk |
-|---|---|---|
-| ISSUE-001 (zero-result gap) | `server/engine.ts` | LOW — additive rule, existing tests verify no regression |
-| ISSUE-002 Part A (timeout) | `server/routers.ts`, `server/_core/index.ts` | LOW — config change |
-| ISSUE-005 (step labels) | `server/engine.ts` | LOW — string-only changes, tests verify logic unchanged |
-
-**Tests required:**
-- New test: ad with 0 conversions, spend between 1× and 2× target → verdict "watch"
-- New test: ad with 0 conversions, spend < 1× target → verdict "too_early" (existing gate behavior, but confirm)
-- Existing engine tests must all still pass (39+ tests)
-- Grep for "خطوة" in engine output to confirm all removed
-
-**Done when:**
-- Zero-result ad at 1.1× target gets "راقب" not "واصل"
-- Dashboard.refresh completes for large accounts without timeout
-- No "خطوة" appears in any user-facing tooltip or message
-- All existing tests pass
+### ~~Batch 1: Critical fixes~~ ✅ MERGED
 
 ---
 
-### Batch 2: UI alignment (one branch, one PR)
-**Branch:** `fix/ui-alignment`
-**Scope:** ISSUE-004 + duplicate logo removal (if not already merged)
+### Batch 2: Currency conversion + CPA column (one branch, one PR)
+**Branch:** `fix/currency-and-cpa-column`
+**Scope:** ISSUE-009 + ISSUE-004
 
 | Issue | Files | Risk |
 |---|---|---|
+| ISSUE-009 (currency) | `shared/qarar.ts`, `drizzle/schema.ts`, `client/src/pages/Settings.tsx`, `server/routers.ts` | MEDIUM — touches deriveTargets() but logic unchanged, only inputs converted |
 | ISSUE-004 (CPA column) | `client/src/components/DecisionTable.tsx` | LOW — display only |
 
+**Tests required:**
+- USD input + AED account → target is 3.67× the USD value
+- Same currency → no conversion
+- Null/zero amount → returns 0
+- Conversion roundtrip accuracy
+- All existing engine tests pass unchanged
+- CPA column shows `cpa_3d`
+- Null CPA shows "—"
+
 **Done when:**
-- CPA column shows `cpa_3d` from engine output
-- Null CPA shows "—" not red infinity
-- Column header indicates 3-day window
+- Currency selector appears in Settings
+- Derived targets convert to account currency
+- Settings page shows target in both currencies
+- CPA column matches engine evaluation
+- All tests pass
 
 ---
 
-### Batch 3: Reassess (no code — diagnosis only)
-**Scope:** ISSUE-006 (too many kills) + ISSUE-003 (data gap)
-
-After Batch 1 and 2 are deployed:
-1. User refreshes data on the live account
-2. Check if new ad sets now appear (ISSUE-003)
-3. Check if verdict distribution looks reasonable (ISSUE-006)
-4. If still broken, create targeted specs for each
+### Batch 3: Reassess (no code)
+After Batch 2 deployed:
+1. User re-enters funnel settings with correct currency
+2. Refresh data
+3. Check data gap (ISSUE-003)
+4. Check verdict distribution (ISSUE-006)
 
 ---
 
-### Batch 4: Settings simplification (one branch, one PR)
+### Batch 4: Settings simplification
 **Branch:** `feature/settings-simplification`
 **Scope:** ISSUE-007
 
-Frontend-only change. Remove unnecessary fields, keep only what the engine uses. Low risk, no engine changes.
-
 ---
 
-### Batch 5: GHL auto-provisioning (one branch, one PR)
+### Batch 5: GHL auto-provisioning
 **Branch:** `feature/ghl-auto-provision`
 **Scope:** ISSUE-008
-
-Server-side change. Extends the existing webhook handler. Depends on password reset infrastructure (already built by Manus).
-
-After code is deployed, the manual GHL configuration step follows:
-1. Create webhook in GHL settings
-2. Set signing key
-3. Build GHL automation to send the set-password email
 
 ---
 
 ## Batch Dependency Graph
 
 ```
-Batch 1 (engine + timeout + copy)
+Batch 1 (engine + timeout + copy) ✅ DONE
   ↓
-Batch 2 (UI alignment)
+Batch 2 (currency conversion + CPA column)
   ↓
 Batch 3 (reassess — no code)
   ↓
 Batch 4 (settings simplification)    [independent]
 Batch 5 (GHL auto-provision)         [independent]
 ```
-
-Batches 4 and 5 are independent of each other and can run in parallel after Batch 3.
-
----
-
-## Files Reference
-
-| File | What it does | Touched by |
-|---|---|---|
-| `server/engine.ts` | Decision engine — 39 rules | Batch 1 (ISSUE-001, ISSUE-005) |
-| `server/routers.ts` | tRPC procedures incl. dashboard.refresh | Batch 1 (ISSUE-002) |
-| `server/_core/index.ts` | Express entry point, timeouts | Batch 1 (ISSUE-002) |
-| `client/src/components/DecisionTable.tsx` | Dashboard table | Batch 2 (ISSUE-004) |
-| `client/src/pages/Settings.tsx` | Funnel settings UI | Batch 4 (ISSUE-007) |
-| `server/ghl-webhook.ts` | GHL webhook handler | Batch 5 (ISSUE-008) |
-| `server/auth.ts` | Better Auth config | Batch 5 (ISSUE-008) |
-| `server/passwordReset.ts` | Password reset logic | Batch 5 (ISSUE-008) |
-| `shared/qarar.ts` | Shared types, rule catalog | Reference only |
-| `.specify/memory/constitution.md` | Constitutional principles | Reference only |
 
 ---
 
