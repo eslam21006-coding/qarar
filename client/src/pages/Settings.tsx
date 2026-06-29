@@ -113,7 +113,7 @@ export default function Settings() {
         htoPrice: String(s.htoPrice),
         htoConversionRate: String(s.htoConversionRate),
         frontEndRoas: String(s.frontEndRoas),
-        dailyBudget: s.dailyBudget != null && s.dailyBudget > 0 ? String(s.dailyBudget) : "",
+        dailyBudget: s.dailyBudget != null ? String(s.dailyBudget) : "",
         marketCplBenchmark: s.marketCplBenchmark != null ? String(s.marketCplBenchmark) : "",
         htoUnderperforming: s.htoUnderperforming,
       });
@@ -183,10 +183,14 @@ export default function Settings() {
   }
 
   // Localised aria-currency-style hint substitution: visible-field labels that
-  // contain `{عملة}` are rendered with the user-selected input-currency symbol.
+  // contain `{عملة}` are rendered with the user-selected input-currency symbol
+  // by default, but `dailyBudget` lives in the ad-account currency so it
+  // accepts an explicit override.
   const inputSym = currencySymbol(form.inputCurrency);
-  const labelFor = (field: keyof typeof FIELD_COPY): string =>
-    FIELD_COPY[field].label.replace("{عملة}", inputSym);
+  const labelFor = (
+    field: keyof typeof FIELD_COPY,
+    symbol: string = inputSym
+  ): string => FIELD_COPY[field].label.replace("{عملة}", symbol);
 
   return (
     <div className="min-h-screen pb-16">
@@ -329,7 +333,7 @@ export default function Settings() {
                     />
                   </div>
                   <NumberField
-                    label={labelFor("dailyBudget").replace("{عملة}", sym)}
+                    label={labelFor("dailyBudget", sym)}
                     hint={FIELD_COPY.dailyBudget.hint}
                     value={form.dailyBudget}
                     onChange={v => set("dailyBudget", v)}
