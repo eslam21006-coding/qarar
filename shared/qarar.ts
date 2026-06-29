@@ -219,6 +219,14 @@ export interface FunnelInputs {
   arena: "interests" | "broad";
   bestInterest?: string | null;
   geoTiers?: string[] | null;
+  /**
+   * Batch 2 / ISSUE-009 — currency the user-entered prices are denominated in.
+   * Carrier only: read by runEngine() to thread into deriveTargets().
+   * Existing fixtures (baseFunnel, DEMO_FUNNEL) omit it ⇒ undefined ⇒ no-op.
+   * Stored value is `string | null`; both null and undefined are safe no-ops
+   * inside convertCurrency.
+   */
+  inputCurrency?: string | null;
 }
 
 export interface DerivedTargets {
@@ -340,20 +348,91 @@ export function median(values: number[]): number | null {
 /** Attribution model change date (March 2026) */
 export const ATTRIBUTION_CHANGE_DATE = "2026-03-01";
 
+// ---------- Currency conversion (Batch 2 / ISSUE-009) ----------
+// Frozen, shared table. No external/network rate source (constitution).
+// Pivots through USD: amount / rate[from] * rate[to].
+
+export const EXCHANGE_RATES_TO_USD: Readonly<Record<string, number>> = Object.freeze({
+  USD: 1.0,
+  AED: 3.67,
+  SAR: 3.75,
+  EGP: 50.0,
+  EUR: 0.92,
+  GBP: 0.79,
+  KWD: 0.31,
+  QAR: 3.64,
+  BHD: 0.376,
+  OMR: 0.385,
+});
+
+/**
+ * Pure, deterministic currency conversion via USD as the pivot.
+ *
+ * `from` / `to` accept `string | null | undefined` so callers can pass the
+ * stored `funnel.inputCurrency` (type `string | null`) directly without
+ * coalescing. A `null` / `undefined` / unknown code ⇒ safe no-op
+ * (amount returned unchanged).
+ *
+ * Behavior table (first match wins):
+ *   1. amount is 0, null, undefined, NaN, or non-finite     → 0
+ *   2. from === to                                          → amount
+ *   3. from or to is null/undefined/unknown                  → amount
+ *   4. otherwise                                            → amount / rate[from] * rate[to]
+ */
+export function convertCurrency(
+  amount: number,
+  from: string | null | undefined,
+  to: string | null | undefined
+): number {
+  if (amount === 0 || amount === null || amount === undefined) return 0;
+  if (!Number.isFinite(amount)) return 0;
+  if (from === to) return amount;
+  if (!from || !to) return amount;
+  const fromRate = EXCHANGE_RATES_TO_USD[from];
+  const toRate = EXCHANGE_RATES_TO_USD[to];
+  if (fromRate === undefined || toRate === undefined) return amount;
+  return (amount / fromRate) * toRate;
+}
+
 /**
  * Derived targets (2.x) — pure & shared so the client previews live while typing.
  * rawTargetCPA = AOV ÷ frontEndROAS
  * fullBuyerValue = AOV + htoPrice × (htoConversionRate/100)
  * maxCPA = fullBuyerValue ÷ 2 (Full-Funnel ROAS ≥ 2.0 floor)
  * effectiveCPA = min(rawTargetCPA, maxCPA)
+ *
+ * Batch 2 / ISSUE-009 — when `inputCurrency` and `accountCurrency` are
+ * supplied and differ, the user-entered monetary inputs (aov, htoPrice,
+ * ticketPrice, marketCplBenchmark) are converted into account currency
+ * BEFORE any target math. Baselines (baselines.cpaMedian30) and
+ * f.dailyBudget are NEVER converted — both are already in account currency.
+ *
+ * Backward-compat (FR-007): when both params are omitted, undefined, or
+ * equal, convertCurrency is a no-op and the output is bit-for-bit identical
+ * to the pre-feature output.
  */
 export function deriveTargets(
   f: FunnelInputs,
-  baselines?: Baselines | null
+  baselines?: Baselines | null,
+  inputCurrency?: string | null,
+  accountCurrency?: string | null
 ): DerivedTargets {
+  // Currency conversion — happens before any math, in account currency.
+  // convertCurrency is a safe no-op for null/undefined/equal/unknown codes.
+  const aov = convertCurrency(f.aov, inputCurrency, accountCurrency);
+  const htoPrice = convertCurrency(f.htoPrice, inputCurrency, accountCurrency);
+  const ticketPrice =
+    f.ticketPrice != null
+      ? convertCurrency(f.ticketPrice, inputCurrency, accountCurrency)
+      : null;
+  const marketCplBenchmark =
+    f.marketCplBenchmark != null && f.marketCplBenchmark > 0
+      ? convertCurrency(f.marketCplBenchmark, inputCurrency, accountCurrency)
+      : f.marketCplBenchmark ?? null;
+
   const roas = f.frontEndRoas > 0 ? f.frontEndRoas : 1;
-  const rawTargetCPA = f.aov > 0 ? f.aov / roas : null;
-  const fullBuyerValue = f.aov + f.htoPrice * (f.htoConversionRate / 100);
+  const rawTargetCPA = aov > 0 ? aov / roas : null;
+  const fullBuyerValue = aov + htoPrice * (f.htoConversionRate / 100);
   const maxCPA = fullBuyerValue / 2;
   const effectiveCPA =
     rawTargetCPA !== null ? Math.min(rawTargetCPA, maxCPA) : maxCPA;
@@ -366,13 +445,16 @@ export function deriveTargets(
   let unitTargetSource: DerivedTargets["unitTargetSource"] = "effective_cpa";
 
   if (f.archetype === "free_lead") {
-    leadValue = f.htoPrice * (f.htoConversionRate / 100);
+    // leadValue & cplCeiling derive from the (already-converted) htoPrice.
+    leadValue = htoPrice * (f.htoConversionRate / 100);
     cplCeiling = 0.7 * leadValue;
+    // baselines.cpaMedian30 is already in account currency — DO NOT convert
+    // (no double-conversion). Same for the benchmark branch.
     if (baselines?.cpaMedian30 && baselines.cpaMedian30 > 0) {
       unitTarget = baselines.cpaMedian30;
       unitTargetSource = "cpl_baseline";
-    } else if (f.marketCplBenchmark && f.marketCplBenchmark > 0) {
-      unitTarget = f.marketCplBenchmark;
+    } else if (marketCplBenchmark != null && marketCplBenchmark > 0) {
+      unitTarget = marketCplBenchmark;
       unitTargetSource = "cpl_benchmark";
     } else {
       unitTarget = effectiveCPA;

@@ -912,7 +912,12 @@ export function runEngine(
   funnel: FunnelInputs
 ): EngineResult {
   const baselines = snapshot.baselines;
-  const targets = deriveTargets(funnel, baselines);
+  // Batch 2 / ISSUE-009 — convert the user-entered monetary inputs from
+  // their inputCurrency to the account/snapshot currency before deriving
+  // targets. funnel.inputCurrency is `string | null`; deriveTargets accepts
+  // null/undefined as a safe no-op (so pre-migration rows behave identically
+  // to the pre-feature code path).
+  const targets = deriveTargets(funnel, baselines, funnel.inputCurrency, snapshot.currency);
   // Hotfix T2: bind the currency symbol for this run so every money() call
   // in this file (K1–K7, CB1/CB2, F1/F2, W1–W6, S1–S4, campaign reasons,
   // buildSummary) renders the account's currency, not a hardcoded "$".

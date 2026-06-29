@@ -521,6 +521,18 @@ export function DecisionTable({
       case "results":
         return num(a?.results ?? 0);
       case "cpa":
+        // Batch 2 / ISSUE-004 — in the default 3d view, the column must show
+        // the engine's cpa_3d (the exact figure behind the verdict). For
+        // every other range we keep the per-range aggregate behavior.
+        if (range === "3d") {
+          return cpaCell({
+            verdict: r.verdict,
+            results: r.conversions_3d,
+            cpa: r.cpa_3d,
+            target: unitTarget,
+            currency: currencySymbol,
+          }).value;
+        }
         return cpaCell({
           verdict: r.verdict,
           results: a?.results ?? 0,
@@ -556,6 +568,16 @@ export function DecisionTable({
   const cellClass = (r: EngineRow, key: ColKey): string => {
     const a = aggs.get(r.id);
     if (key === "cpa") {
+      // Batch 2 / ISSUE-004 — mirror the 3d source split used in cellValue.
+      if (range === "3d") {
+        return cpaCell({
+          verdict: r.verdict,
+          results: r.conversions_3d,
+          cpa: r.cpa_3d,
+          target: unitTarget,
+          currency: currencySymbol,
+        }).className;
+      }
       return cpaCell({
         verdict: r.verdict,
         results: a?.results ?? 0,
@@ -915,7 +937,11 @@ export function DecisionTable({
                     className="num cursor-pointer select-none whitespace-nowrap px-2 py-2 text-center font-medium hover:text-foreground"
                     onClick={() => clickSort(c.key)}
                   >
-                    {c.label} <SortIcon active={sort.key === c.key} dir={sort.dir} />
+                    {/* Batch 2 / ISSUE-004 / FR-019 — CPA header indicates the
+                        3-day window in the default view, range-appropriate
+                        label otherwise so range-aware values aren't mislabeled. */}
+                    {c.key === "cpa" && range === "3d" ? "تكلفة العميل (٣ أيام)" : c.label}{" "}
+                    <SortIcon active={sort.key === c.key} dir={sort.dir} />
                   </th>
                 ))}
                 <th
