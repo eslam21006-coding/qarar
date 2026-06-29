@@ -79,10 +79,22 @@ Pure. Precedence: `contact.name` → `contact.firstName`+`contact.lastName` →
 whitespace-collapsed, never empty (FR-004 / R-007).
 
 ### `provisionUserFromGhl(input: { email: string; name: string; contactId: string|null }): Promise<{ userId: string; created: boolean }>`
-Creates an active, email-verified user + credential account with a 32-char random
-temp password via Better Auth server context (R-001/R-002/R-003). Sets
-`ghlContactId` when provided. Idempotent on unique-email collision → returns
-`{ created: false }` and the existing user's id (R-008). Throws on other failure.
+Creates them atomically, or rolls back the created user if any later write fails,
+via Better Auth server context (R-001/R-002/R-003). Sets `ghlContactId` when
+provided. Idempotent on unique-email collision → returns `{ created: false }`
+and the existing user's id (R-008). Throws on other failure.
+
+Atomicity contract: the three writes (`createUser` → `linkAccount` →
+`updateUser`) are NOT wrapped in a single DB transaction (Better Auth ^1.6.19
+exposes adapter-level transactions, not inter-method atomicity). Instead the
+helper uses a **best-effort rollback** — if `linkAccount` or `updateUser`
+throws after `createUser` succeeded, the helper calls
+`internalAdapter.deleteUser` on the partial row so the next webhook sees
+"not found" and retries from a clean slate. If the rollback itself fails,
+both errors are logged; the row remains and the next webhook will treat it
+as an existing user (no second account). No state in which a user has
+`subscriptionStatus: "active"` but no credential row.
+
 
 ## Token generation change (server/passwordReset.ts)
 
@@ -93,11 +105,19 @@ expiry semantics unchanged (FR-007 / R-004). Existing callers unaffected.
 ## Reset-password endpoint fix (server/_core/index.ts — R-006 carve-out)
 
 `POST /api/auth/reset-password` MUST actually set the password:
-1. `verifyPasswordResetToken(token)` → email (existing).
+1. Atomically consume the verification row with
+   `internalAdapter.consumeVerificationValue(identifier)` — the single-use
+   token is consumed before any other work; concurrent retries receive
+   `null` and the same 400. Expired rows are also deleted by that call.
 2. Resolve user by email; hash `password` via `auth.$context`; write the
    credential hash (`internalAdapter.updatePassword` / credential update).
-3. Delete the token (one-time use; existing).
-4. `200 { success: true }` (unchanged shape) / `400` invalid token / `500` error.
+3. `200 { success: true }` (unchanged shape) / `400` invalid token / `500` error.
+
+Atomicity contract: the consume-on-step-1 IS the atomic claim. The token
+row never lives past the consume: if the password write fails afterwards,
+the buyer simply requests a new reset link. There is no window in which a
+token can be replayed because the verification row has already been
+deleted before the hash/write step begins.
 
 This makes SC-002 (set password → log in → dashboard) achievable. No request/
 response shape change for `ResetPassword.tsx` (still `{ token, password }` →
