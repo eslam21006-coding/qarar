@@ -371,7 +371,7 @@ describe("extractName (T005 / US1 / FR-004 / R-007)", () => {
   });
 
   it("never returns an empty string for any payload shape", () => {
-    expect(extractName({}).length).toBeGreaterThan(0);
+    expect(extractName({}, "").length).toBeGreaterThan(0);
     expect(extractName(null, "").length).toBeGreaterThan(0);
     expect(extractName(undefined, "").length).toBeGreaterThan(0);
   });

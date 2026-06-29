@@ -45,18 +45,24 @@ because password-set (R-006) updates this row's hash.
 
 ### Verification / reset token (`verification` table) — WRITE + READ + DELETE
 
-Reused by `passwordReset.ts` for one-time set-password tokens.
+Reused by `passwordReset.ts` for one-time set-password tokens. The
+identifier is the token itself so Better Auth's
+`consumeVerificationValue(identifier)` can perform an atomic single-use
+check-and-delete (`POST /api/auth/reset-password` consumes the row
+before any password write).
 
 | Field | Type | Notes |
 |-------|------|-------|
 | `id` | varchar(36) PK | `crypto.randomUUID()` |
-| `identifier` | varchar(255) | `password_reset_<email>` (existing convention) |
-| `value` | text | The token (`randomBytes(32).hex`) |
+| `identifier` | varchar(255) | `password_reset_<token>` — token IS the identifier for atomic consume |
+| `value` | text | The buyer email (normalized) |
 | `expiresAt` | timestamp | **`now + 72h`** for provisioning (was fixed 1h); 1h retained for forgot-password (R-004) |
 | `createdAt` / `updatedAt` | timestamp | — |
 
-**Token rules**: one-time use (deleted on successful verify/reset), expiry
-enforced on read (expired rows deleted). 72h TTL for provisioning links (FR-007).
+**Token rules**: one-time use (deleted atomically by
+`consumeVerificationValue` on successful consume/reset), expiry enforced
+on read (expired rows deleted by `verifyPasswordResetToken`).
+72h TTL for provisioning links (FR-007).
 
 ## In-memory shapes (helper outputs — not persisted)
 

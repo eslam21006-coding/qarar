@@ -67,7 +67,7 @@ Express monolith. Feature files:
 ### Tests for User Story 1 (write first, must fail) ⚠️
 
 - [x] T005 [US1] Unit-test `extractName` with a payload-shape table (contact.name; contact first+last; top-level name; top-level first+last; email-prefix fallback) in `server/ghl-webhook.test.ts` (FR-004).
-- [x] T006 [US1] Unit-test the temp-password generator returns a ≥32-char random string (assert length and uniqueness across calls) in `server/ghl-webhook.test.ts` (FR-002).
+- [x] T006 [US1] Unit-test the temp-password generator returns a ≥32-char random string matching the `[A-Za-z0-9_-]+` base64url alphabet (length + base64url format check, plus tolerance for the extraordinarily rare random collision across 5 sampled outputs) in `server/ghl-webhook.test.ts` (FR-002 / R-003).
 - [x] T007 [US1] Integration-test (mocked `getDb()` + mocked `provisionUserFromGhl`/`auth.$context`): `InvoicePaid` unknown email AND `ContactTagUpdate` adding the active tag unknown email → `200 { ok:true, status:"active", newUser:true, setPasswordUrl: ".../auth/reset-password?token=..." }`; assert provision called once and the two log lines fire in `server/ghl-webhook.test.ts` (FR-008/FR-017).
 - [x] T008 [US1] Integration-test: token generation throws after the user is created → `200 { ok:true, status:"active", newUser:true }` with **no** `setPasswordUrl` in `server/ghl-webhook.test.ts` (FR-015 / R-009).
 

@@ -10,17 +10,32 @@ import { verification } from "../drizzle/auth-schema";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let _pool: any = null;
 let _db: any = null;
+// Memoize the in-flight initialization so concurrent first-time callers
+// share one pool instead of each racing through `createPool` and overwriting
+// each other's `_db`/`_pool` (which would leak pooled connections).
+let _dbInit: Promise<any> | null = null;
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 async function getDb(): Promise<any> {
   if (_db) return _db;
+  if (_dbInit) return _dbInit;
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not configured");
-  const { default: mysql } = await import("mysql2/promise");
-  const { drizzle } = await import("drizzle-orm/mysql2");
-  _pool = mysql.createPool(url);
-  _db = drizzle(_pool, { schema: { user: verification, verification }, mode: "default" });
-  return _db;
+  _dbInit = (async () => {
+    const { default: mysql } = await import("mysql2/promise");
+    const { drizzle } = await import("drizzle-orm/mysql2");
+    _pool = mysql.createPool(url);
+    _db = drizzle(_pool, { schema: { user: verification, verification }, mode: "default" });
+    return _db;
+  })();
+  try {
+    return await _dbInit;
+  } catch (err) {
+    // Failed init — let the next caller try again rather than pinning a
+    // poisoned promise for the lifetime of the process.
+    _dbInit = null;
+    throw err;
+  }
 }
 
 /**

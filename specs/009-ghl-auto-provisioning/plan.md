@@ -23,15 +23,17 @@ path so activating events provision instead of ignoring. Reuse the existing
 `buildPasswordResetUrl()` (driven by `BETTER_AUTH_URL`).
 
 > **Cross-cutting dependency surfaced during planning (see research R-006):** the
-> mounted `POST /api/auth/reset-password` endpoint is currently a **no-op stub**
-> (`server/_core/index.ts:88` — it verifies the token but never writes the new
-> password). The spec assumed this endpoint works (C-003 / Assumptions). For the
-> feature's SC-002 ("buyer sets a password and logs in") to be achievable, the
-> stub must be made functional. This plan treats that as the single permitted
-> use of the `server/_core/` carve-out in C-002 ("a route mount … to expose
-> existing password-reset functionality"). It is flagged explicitly so it can be
-> de-scoped by decision if the founder prefers to handle password-setting
-> separately.
+> mounted `POST /api/auth/reset-password` endpoint was originally a **no-op stub**
+> in `server/_core/index.ts` (it verified the token but never wrote the new
+> password). The spec assumed this endpoint would work (C-003 / Assumptions).
+> For the feature's SC-002 ("buyer sets a password and logs in") to be
+> achievable, the route was implemented end-to-end via
+> `server/_core/passwordResetRoute.ts` — it consumes the verification row
+> atomically (`auth.$context.internalAdapter.consumeVerificationValue`),
+> hashes the new password via Better Auth, and writes it via
+> `internalAdapter.updatePassword`. This is the single permitted use of the
+> `server/_core/` carve-out in C-002 ("a route mount … to expose existing
+> password-reset functionality").
 
 ## Technical Context
 
