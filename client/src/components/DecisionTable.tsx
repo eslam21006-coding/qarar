@@ -463,6 +463,13 @@ export function DecisionTable({
           return r.spend_share_pct ?? -1;
         case "frequency":
           return r.frequency_3d ?? -1;
+        case "cpa":
+          // Batch 2 / ISSUE-004 — match the render path. In the default
+          // 3d view the column shows r.cpa_3d; for every other range we
+          // fall back to the per-range aggregate CPA so the sort order
+          // matches the on-screen value.
+          if (range === "3d") return r.cpa_3d ?? -1;
+          return a?.cpa ?? -1;
         default: {
           const v = a?.[sort.key as keyof FilterAgg];
           return typeof v === "number" ? v : -1;
@@ -475,7 +482,7 @@ export function DecisionTable({
         return String(a).localeCompare(String(b), "ar") * sort.dir;
       return (a - b) * sort.dir;
     });
-  }, [visible, aggs, sort]);
+  }, [visible, aggs, sort, range]);
 
   const activeCols = ALL_COLUMNS.filter(
     c => visibleCols.includes(c.key) && (!c.adOnly || level === "ad")

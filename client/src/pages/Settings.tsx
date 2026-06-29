@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { currencySymbol, money } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { deriveTargets, type FunnelInputs } from "@shared/qarar";
+import { deriveTargets, SUPPORTED_CURRENCIES, type FunnelInputs } from "@shared/qarar";
 import { AlertTriangle, ArrowRight, Calculator, ChevronDown, Loader2, Save } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -36,7 +36,10 @@ type FormState = {
   bestInterest: string;
   geoTiers: string;
   // Batch 2 / ISSUE-009 — the currency the user-entered prices are in.
-  // Defaults to the account's currency; hydrated from saved settings.
+  // Initialized to "" so we never lock in a wrong fallback before the
+  // account currency is known; the loading effect below replaces it
+  // with the real account currency OR the saved value as soon as
+  // either arrives.
   inputCurrency: string;
 };
 
@@ -55,14 +58,8 @@ const DEFAULTS: FormState = {
   arena: "broad",
   bestInterest: "",
   geoTiers: "",
-  inputCurrency: "USD",
+  inputCurrency: "",
 };
-
-// Batch 2 / ISSUE-009 — the 10 supported currency codes (same set as
-// shared/qarar.ts#EXCHANGE_RATES_TO_USD and client/src/lib/format.ts).
-const SUPPORTED_CURRENCIES = [
-  "USD", "AED", "SAR", "EGP", "EUR", "GBP", "KWD", "QAR", "BHD", "OMR",
-] as const;
 
 function toNumber(s: string, fallback = 0): number {
   const n = parseFloat(s);
@@ -90,7 +87,20 @@ export default function Settings() {
 
   useEffect(() => {
     const s = funnel.data?.settings;
-    if (s && !loadedFromServer) {
+    // Path A — no saved settings row yet. As soon as the account currency
+    // is known (meta.accounts resolved), default inputCurrency to it. This
+    // covers first-time non-USD accounts where funnel.get returns null.
+    if (!s) {
+      if (accountCurrency && form.inputCurrency === "") {
+        setForm(prev => ({ ...prev, inputCurrency: accountCurrency }));
+      }
+      return;
+    }
+    // Path B — saved settings row. Hydrate once, but ALWAYS use the saved
+    // inputCurrency when present (don't overwrite it with the account
+    // currency). Re-run if accountCurrency arrives later so the fallback
+    // uses the real account currency, not the empty placeholder.
+    if (s && !loadedFromServer && accountCurrency) {
       setForm({
         archetype: s.archetype,
         liveComponent: s.liveComponent,
@@ -113,7 +123,7 @@ export default function Settings() {
       });
       setLoadedFromServer(true);
     }
-  }, [funnel.data, loadedFromServer, accountCurrency]);
+  }, [funnel.data, loadedFromServer, accountCurrency, form.inputCurrency]);
 
   const inputs: FunnelInputs = useMemo(
     () => ({

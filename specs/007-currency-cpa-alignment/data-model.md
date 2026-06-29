@@ -20,8 +20,12 @@ the rest are in-memory type/constant changes shared between client and server.
 **Migration**: additive column, applied via `pnpm db:push`. No backfill (intentionally — see
 R2). Existing rows read as `NULL`.
 
-**Constitution IV (isolation)**: the column is only ever read/written inside `funnel.get` /
-`funnel.save`, both gated by `requireAccount(userId, adAccountId)`. No new query path.
+**Constitution IV (isolation)**: the column is read/written inside `funnel.get` /
+`funnel.save` (both gated by `requireAccount(userId, adAccountId)`) and is also
+read by the daily refresh cron via `dailyRefresh.ts#getFunnelForRun()` →
+`runEngine()` so the cron path applies the same conversion as the dashboard.
+Every read path is `userId`-scoped (the cron enumerates `db.listAllUsers()`
+and then filters by `userId`); no new query path is introduced.
 
 **`FunnelSettings` select type** automatically gains `inputCurrency: string | null` via
 `typeof funnelSettings.$inferSelect`.

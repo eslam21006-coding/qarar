@@ -809,3 +809,54 @@ describe("ISSUE-009 — deriveTargets currency extension (Batch 2)", () => {
     expect(conv.unitTargetSource).toBe("cpl_benchmark");
   });
 });
+
+// ===========================================================================
+// ISSUE-009 — runEngine currency-propagation wiring (Batch 2 / FR-010)
+// ===========================================================================
+// Locks down that server/engine.ts#runEngine() forwards `funnel.inputCurrency`
+// and `snapshot.currency` into deriveTargets() — the deriveTargets() unit
+// cases above do not cover the call site.
+
+describe("ISSUE-009 — runEngine forwards currencies into deriveTargets", () => {
+  it("USD-priced funnel + AED account ⇒ engine targets scale by 3.67", () => {
+    // Build a snapshot whose currency is AED. The engine call must use
+    // that as `accountCurrency` and convert the user-entered USD prices.
+    const snap = buildDemoSnapshot();
+    snap.currency = "AED";
+    const funnel: FunnelInputs = {
+      ...(DEMO_FUNNEL as FunnelInputs),
+      inputCurrency: "USD",
+    };
+    const noConv = runEngine(buildDemoSnapshot(), { ...funnel, inputCurrency: "USD" });
+    const conv = runEngine(snap, funnel);
+
+    // rawTargetCPA scales by the AED rate (3.67). The summary target
+    // (effectiveCPA) is the same field exposed to the dashboard.
+    const noCpa = noConv.targets.rawTargetCPA ?? 0;
+    const convCpa = conv.targets.rawTargetCPA ?? 0;
+    expect(convCpa).toBeCloseTo(noCpa * 3.67, 1);
+    // fullBuyerValue scales the same way.
+    expect(conv.targets.fullBuyerValue).toBeCloseTo(
+      noConv.targets.fullBuyerValue * 3.67,
+      1
+    );
+  });
+
+  it("equal currencies (USD/USD) ⇒ engine targets match the no-currency call", () => {
+    const snap = buildDemoSnapshot();
+    snap.currency = "USD";
+    const baseline = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+    const explicit = runEngine(snap, {
+      ...(DEMO_FUNNEL as FunnelInputs),
+      inputCurrency: "USD",
+    });
+    expect(explicit.targets.rawTargetCPA).toBeCloseTo(
+      baseline.targets.rawTargetCPA ?? 0,
+      5
+    );
+    expect(explicit.targets.effectiveCPA).toBeCloseTo(
+      baseline.targets.effectiveCPA,
+      5
+    );
+  });
+});

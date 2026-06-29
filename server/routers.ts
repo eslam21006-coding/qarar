@@ -25,6 +25,7 @@ import { deriveTargets, runEngine } from "./engine";
 import {
   AccountSnapshotPayload,
   FunnelInputs,
+  SUPPORTED_CURRENCIES,
 } from "../shared/qarar";
 import crypto from "crypto";
 
@@ -67,7 +68,19 @@ const funnelInputSchema = z.object({
   bestInterest: z.string().max(500).optional().nullable(),
   geoTiers: z.array(z.string()).optional().nullable(),
   // Batch 2 / ISSUE-009 — user's price currency; null/undefined ⇒ no-op.
-  inputCurrency: z.string().max(8).optional().nullable(),
+  // Restrict to the supported set (shared/qarar.ts) so a stale/malformed
+  // client cannot silently save an unsupported code and get unconverted
+  // verdicts back from convertCurrency's safe-no-op path. `.refine` keeps
+  // the inferred type as a plain string (matching the client form state)
+  // while still rejecting unknown codes at the API boundary.
+  inputCurrency: z
+    .string()
+    .max(8)
+    .refine(v => (SUPPORTED_CURRENCIES as readonly string[]).includes(v), {
+      message: "Unsupported currency code",
+    })
+    .optional()
+    .nullable(),
 });
 
 async function requireAccount(userId: string, adAccountId: number) {

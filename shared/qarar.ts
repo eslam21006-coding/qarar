@@ -352,18 +352,38 @@ export const ATTRIBUTION_CHANGE_DATE = "2026-03-01";
 // Frozen, shared table. No external/network rate source (constitution).
 // Pivots through USD: amount / rate[from] * rate[to].
 
-export const EXCHANGE_RATES_TO_USD: Readonly<Record<string, number>> = Object.freeze({
-  USD: 1.0,
-  AED: 3.67,
-  SAR: 3.75,
-  EGP: 50.0,
-  EUR: 0.92,
-  GBP: 0.79,
-  KWD: 0.31,
-  QAR: 3.64,
-  BHD: 0.376,
-  OMR: 0.385,
-});
+/**
+ * The canonical list of currency codes the product supports. Single source
+ * of truth shared by the conversion table, the Settings UI selector, and the
+ * server-side zod validator. Adding a new code means appending to this
+ * tuple AND adding a matching rate AND adding a matching symbol in
+ * `client/src/lib/format.ts#currencySymbol()`.
+ */
+export const SUPPORTED_CURRENCIES = [
+  "USD", "AED", "SAR", "EGP", "EUR", "GBP", "KWD", "QAR", "BHD", "OMR",
+] as const;
+
+export type CurrencyCode = (typeof SUPPORTED_CURRENCIES)[number];
+
+export const EXCHANGE_RATES_TO_USD: Readonly<Record<string, number>> = Object.freeze(
+  SUPPORTED_CURRENCIES.reduce<Record<string, number>>((acc, code) => {
+    acc[code] = (
+      {
+        USD: 1.0,
+        AED: 3.67,
+        SAR: 3.75,
+        EGP: 50.0,
+        EUR: 0.92,
+        GBP: 0.79,
+        KWD: 0.31,
+        QAR: 3.64,
+        BHD: 0.376,
+        OMR: 0.385,
+      } as const
+    )[code];
+    return acc;
+  }, {})
+);
 
 /**
  * Pure, deterministic currency conversion via USD as the pivot.
