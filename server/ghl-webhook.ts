@@ -71,6 +71,12 @@ export function isUniqueEmailRaceError(err: unknown): boolean {
  * constraint violation the existing user is re-resolved and returned with
  * `created: false` so the caller falls through to the existing-user path
  * (R-008 / FR-013).
+ *
+ * Atomic-ish: if a write succeeds but a later write fails (e.g. linkAccount
+ * or updateUser throws after createUser succeeded), the half-created user
+ * is rolled back via `deleteUser` so the next webhook call sees "not found"
+ * and tries again from scratch — never a stranded user with `active`
+ * status but no credential row, never two accounts on retry.
  */
 export async function provisionUserFromGhl(input: {
   email: string;
@@ -105,19 +111,36 @@ export async function provisionUserFromGhl(input: {
     throw err;
   }
 
-  await ctx.internalAdapter.linkAccount({
-    userId: createdUserId,
-    providerId: "credential",
-    accountId: createdUserId,
-    password: hashed,
-  } as unknown as Parameters<typeof ctx.internalAdapter.linkAccount>[0]);
+  // From here on, if any write fails, roll back the user so we do not
+  // leave behind a row that "looks active" but cannot sign in.
+  try {
+    await ctx.internalAdapter.linkAccount({
+      userId: createdUserId,
+      providerId: "credential",
+      accountId: createdUserId,
+      password: hashed,
+    } as unknown as Parameters<typeof ctx.internalAdapter.linkAccount>[0]);
 
-  await ctx.internalAdapter.updateUser(createdUserId, {
-    subscriptionStatus: "active",
-    ...(contactId ? { ghlContactId: contactId } : {}),
-  } as unknown as Parameters<typeof ctx.internalAdapter.updateUser>[1]);
+    await ctx.internalAdapter.updateUser(createdUserId, {
+      subscriptionStatus: "active",
+      ...(contactId ? { ghlContactId: contactId } : {}),
+    } as unknown as Parameters<typeof ctx.internalAdapter.updateUser>[1]);
 
-  return { userId: createdUserId, created: true };
+    return { userId: createdUserId, created: true };
+  } catch (err) {
+    try {
+      await ctx.internalAdapter.deleteUser(createdUserId);
+    } catch (rollbackErr) {
+      // Both the original write AND the rollback failed — surface the
+      // original so the caller decides; the next webhook will treat the
+      // row as "user exists" and the activation path will re-write
+      // subscriptionStatus and re-mint a token if needed.
+      console.error(
+        `[GHL Webhook] provisionUserFromGhl rollback failed for user ${createdUserId}: ${rollbackErr}`
+      );
+    }
+    throw err;
+  }
 }
 
 const ACTIVE_TAG_DEFAULT = "qarar-active";

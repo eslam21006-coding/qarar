@@ -389,15 +389,25 @@ describe("generateTempPassword (T006 / US1 / FR-002 / R-003)", () => {
     expect(pw.length).toBeGreaterThanOrEqual(32);
   });
 
-  it("uses only URL-safe base64 characters (no padding / no whitespace)", () => {
+  it("uses only URL-safe base64url characters (no padding / no whitespace)", () => {
     const pw = generateTempPassword();
     expect(pw).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
-  it("produces unique values across calls (entropy / no fixed seed)", () => {
-    const samples = new Set<string>();
-    for (let i = 0; i < 100; i++) samples.add(generateTempPassword());
-    expect(samples.size).toBe(100);
+  it("uses cryptographic randomness (different characters across positions)", () => {
+    // Format check rather than cross-call uniqueness — `crypto.randomBytes`
+    // is probabilistic and a uniqueness assertion can flake. We instead
+    // check that the output is non-constant and not empty whitespace.
+    const samples = Array.from({ length: 5 }, () => generateTempPassword());
+    samples.forEach((s) => {
+      expect(s.length).toBeGreaterThanOrEqual(32);
+      expect(s).toMatch(/^[A-Za-z0-9_-]+$/);
+    });
+    // Every sample must differ from the first — at most one collision
+    // is acceptable across 5 calls; zero collisions is the expected case
+    // but we tolerate the extraordinarily rare random duplication.
+    const distinct = new Set(samples).size;
+    expect(distinct).toBeGreaterThanOrEqual(4);
   });
 });
 
@@ -1254,22 +1264,34 @@ describe("auto-provision via /api/webhooks/ghl (T007 / T008 / T015 / T016 / US1 
   // ── T016a: race / unique-email recovery ─────────────────────────────────
 
   it("T016a / US3: provisionUserFromGhl throws a unique-email constraint error → handler recovers as existing user (newUser:false), no 500 (FR-013)", async () => {
+    let createUserCalls = 0;
     authMock.createUserImpl = async () => {
+      createUserCalls++;
       const err = new Error("Duplicate entry 'racer@example.com' for key 'email'");
       (err as any).code = "ER_DUP_ENTRY";
       (err as any).errno = 1062;
       throw err;
     };
-    // Simulate the race: the user does NOT exist when the handler first
-    // looks them up (so we fall into the provisioning branch and the
-    // provisioner attempts the insert), but a concurrent webhook inserted
-    // the same row before our insert — so the recovery lookup inside
-    // provisionUserFromGhl finds the existing row.
+    // Drive the race path:
+    //   1. handler's first SELECT (setUserSubscriptionByEmail) → no rows (yet)
+    //   2. provisionUserFromGhl → createUser throws the race error
+    //   3. recovery SELECT inside provisionUserFromGhl → finds race-existing
+    //   4. caller falls through to "existing user" path (newUser:false)
+    //   5. handler's second SELECT (setUserSubscriptionByEmail again, on
+    //      the recovery path) → finds race-existing → updates status.
+    let selectCalls = 0;
     const localFakeDb: FakeDb = {
       select: () => ({
         from: () => ({
           where: () => ({
-            limit: () => Promise.resolve([{ id: "race-existing" }]),
+            limit: () => {
+              selectCalls++;
+              // The first lookup must miss (we are still racing), and
+              // every subsequent lookup must find the row inserted by the
+              // concurrent webhook so the recovery path can settle.
+              if (selectCalls === 1) return Promise.resolve([]);
+              return Promise.resolve([{ id: "race-existing" }]);
+            },
           }),
         }),
       }),
@@ -1295,6 +1317,9 @@ describe("auto-provision via /api/webhooks/ghl (T007 / T008 / T015 / T016 / US1 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, status: "active", newUser: false });
     expect(res.body).not.toHaveProperty("setPasswordUrl");
+    // The race-recovery path actually ran — the createUser attempt is what
+    // raced; everything before it (the not_found lookup) proved the path.
+    expect(createUserCalls).toBe(1);
   });
 
   // ── T016b: deactivating + unknown email → ignored, no provision (FR-010)

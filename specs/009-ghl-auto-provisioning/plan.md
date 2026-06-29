@@ -15,7 +15,7 @@ set-password link. The handler stays idempotent (at most one account per email),
 recovers from duplicate-email races, and never crashes.
 
 Technical approach: add a `provisionUserFromGhl()` helper that creates the user
-+ credential account via Better Auth's server context (hashing a 32-char random
+and credential account via Better Auth's server context (hashing a 32-char random
 temp password, marking `emailVerified: true` and `subscriptionStatus: "active"`),
 extend `passwordReset.ts` to accept a custom token TTL (default unchanged 1h;
 72h for provisioning), and branch the webhook handler's existing "not_found"

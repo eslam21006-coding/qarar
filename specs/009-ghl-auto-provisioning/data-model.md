@@ -30,7 +30,9 @@ Existing users: `inactive <-> active` flips only, exactly as Phase C today.
 ### Account (`account` table) — WRITE (create credential row)
 
 The credential row holds the hashed password. Created by Better Auth's
-`internalAdapter.linkAccount` (or `signUpEmail`) during provisioning.
+`internalAdapter.linkAccount` during provisioning. (`auth.api.signUpEmail`
+is intentionally not used — it would create an unwanted session cookie
+side effect, per research R-001.)
 
 | Field | Type | Notes |
 |-------|------|-------|

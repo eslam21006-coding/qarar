@@ -13,21 +13,8 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { sdk } from "./sdk";
 import { runDailyRefresh } from "../dailyRefresh";
-import { generatePasswordResetToken, verifyPasswordResetToken, buildPasswordResetUrl } from "../passwordReset";
-import { eq } from "drizzle-orm";
-import { getDb } from "../db";
-import { user, verification } from "../../drizzle/auth-schema";
-
-/**
- * Delete every verification row matching the given identifier. One-time-use
- * semantics for password-reset tokens: once the password is set, the token
- * is consumed and cannot be reused.
- */
-async function deleteVerificationRow(identifier: string): Promise<void> {
-  const db = await getDb();
-  if (!db) return;
-  await db.delete(verification).where(eq(verification.identifier, identifier));
-}
+import { generatePasswordResetToken, buildPasswordResetUrl } from "../passwordReset";
+import { registerPasswordResetRoutes } from "./passwordResetRoute";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -59,11 +46,16 @@ async function startServer() {
   server.headersTimeout = 195_000;
 
   // Phase B / T010 / FR-001 + FR-002 — Better Auth HTTP handler.
-  // MUST be mounted BEFORE express.json()/urlencoded() so the handler can
-  // read the raw request body for sign-in/sign-up POSTs. If a body parser
-  // runs first the stream is consumed and Better Auth gets an empty body,
-  // breaking auth.
+  // The catch-all pattern `/api/auth/*` would otherwise shadow any
+  // explicitly mounted route under `/api/auth` (e.g. our
+  // `/api/auth/reset-password`). Better Auth's own
+  // `/api/auth/reset-password` does not exist in ^1.6.19, so the
+  // application-owned route is safe to register first — and MUST be
+  // mounted before the catch-all so Express matches it on the way down.
+  registerPasswordResetRoutes(app);
+
   app.all("/api/auth/*", toNodeHandler(auth));
+
   // Phase C / T008 / FR-001–FR-003 — GHL webhook.
   // MUST sit BEFORE express.json()/urlencoded() so the route-scoped
   // express.raw() inside the router reads the exact signed bytes GHL sent.
@@ -76,7 +68,8 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
 
-  // Password reset endpoints
+  // Password reset (token generation) endpoint — kept after the global
+  // body parser since this is JSON-in / JSON-out.
   app.post("/api/auth/forgot-password", async (req, res) => {
     try {
       const { email } = req.body;
@@ -95,57 +88,6 @@ async function startServer() {
       res.json({ success: true });
     } catch (err: any) {
       console.error("Error in forgot-password:", err);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
-  app.post("/api/auth/reset-password", async (req, res) => {
-    try {
-      const { token, password } = req.body;
-      if (!token || typeof token !== "string") {
-        return res.status(400).json({ error: "Token is required" });
-      }
-      if (!password || typeof password !== "string") {
-        return res.status(400).json({ error: "Password is required" });
-      }
-
-      // 1. Verify token and get the email (single-use token; reusing it
-      //    after this consume should fail).
-      const email = await verifyPasswordResetToken(token);
-      if (!email) {
-        return res.status(400).json({ error: "Invalid or expired token" });
-      }
-
-      // 2. Resolve the user row by email.
-      const db = await getDb();
-      if (!db) {
-        console.error("[Password Reset] DB unavailable");
-        return res.status(500).json({ error: "Internal server error" });
-      }
-      const rows = await db
-        .select({ id: user.id })
-        .from(user)
-        .where(eq(user.email, email.trim().toLowerCase()))
-        .limit(1);
-      const userRow = rows[0];
-      if (!userRow) {
-        return res.status(400).json({ error: "Invalid or expired token" });
-      }
-
-      // 3. Hash the new password via Better Auth's hashing and write it to
-      //    the credential row (`internalAdapter.updatePassword`).
-      const ctx = await auth.$context;
-      const hashed = await ctx.password.hash(password);
-      await ctx.internalAdapter.updatePassword(userRow.id, hashed);
-
-      // 4. Delete the (now-consumed) verification row. Done last so a
-      //    failure mid-write still leaves the token usable.
-      await deleteVerificationRow(`password_reset_${email}`);
-
-      console.log(`[Password Reset] Reset password for ${email}`);
-      res.json({ success: true });
-    } catch (err: any) {
-      console.error("Error in reset-password:", err);
       res.status(500).json({ error: "Internal server error" });
     }
   });
