@@ -103,6 +103,15 @@ export const funnelSettings = mysqlTable("funnelSettings", {
   /** market CPL benchmark used when account has no history (free_lead) */
   marketCplBenchmark: double("marketCplBenchmark"),
   /**
+   * ISSUE-009 / Batch 2 — the currency the user's entered prices
+   * (aov / htoPrice / ticketPrice / marketCplBenchmark) are denominated in.
+   * Nullable, no DB default. A NULL/absent value is treated as the
+   * account's currency at read time ⇒ conversion is a safe no-op for
+   * every pre-migration row and first-time save.
+   * See specs/007-currency-cpa-alignment/data-model.md §1.
+   */
+  inputCurrency: varchar("inputCurrency", { length: 8 }),
+  /**
    * W5 signal — user-reported: ليدات/مبيعات LTO جيدة لكن لا حضور/مبيعات HTO.
    * Meta's API cannot see post-conversion funnel data, so this is an explicit
    * funnel-level input per the rulebook ("حُكم على مستوى الفانل").

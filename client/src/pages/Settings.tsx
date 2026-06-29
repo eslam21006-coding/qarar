@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { currencySymbol, money } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
-import { deriveTargets, type FunnelInputs } from "@shared/qarar";
+import { deriveTargets, SUPPORTED_CURRENCIES, type FunnelInputs } from "@shared/qarar";
 import { AlertTriangle, ArrowRight, Calculator, ChevronDown, Loader2, Save } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -35,6 +35,12 @@ type FormState = {
   arena: FunnelInputs["arena"];
   bestInterest: string;
   geoTiers: string;
+  // Batch 2 / ISSUE-009 — the currency the user-entered prices are in.
+  // Initialized to "" so we never lock in a wrong fallback before the
+  // account currency is known; the loading effect below replaces it
+  // with the real account currency OR the saved value as soon as
+  // either arrives.
+  inputCurrency: string;
 };
 
 const DEFAULTS: FormState = {
@@ -52,6 +58,7 @@ const DEFAULTS: FormState = {
   arena: "broad",
   bestInterest: "",
   geoTiers: "",
+  inputCurrency: "",
 };
 
 function toNumber(s: string, fallback = 0): number {
@@ -80,7 +87,20 @@ export default function Settings() {
 
   useEffect(() => {
     const s = funnel.data?.settings;
-    if (s && !loadedFromServer) {
+    // Path A — no saved settings row yet. As soon as the account currency
+    // is known (meta.accounts resolved), default inputCurrency to it. This
+    // covers first-time non-USD accounts where funnel.get returns null.
+    if (!s) {
+      if (accountCurrency && form.inputCurrency === "") {
+        setForm(prev => ({ ...prev, inputCurrency: accountCurrency }));
+      }
+      return;
+    }
+    // Path B — saved settings row. Hydrate once, but ALWAYS use the saved
+    // inputCurrency when present (don't overwrite it with the account
+    // currency). Re-run if accountCurrency arrives later so the fallback
+    // uses the real account currency, not the empty placeholder.
+    if (s && !loadedFromServer && accountCurrency) {
       setForm({
         archetype: s.archetype,
         liveComponent: s.liveComponent,
@@ -96,10 +116,14 @@ export default function Settings() {
         arena: s.arena,
         bestInterest: s.bestInterest ?? "",
         geoTiers: ((s.geoTiers as string[] | null) ?? []).join("، "),
+        // Batch 2 / ISSUE-009 — hydrate from the stored inputCurrency, fall
+        // back to the account currency (the spec's "no foreign currency ⇒
+        // no-op" default) when the row has no value yet.
+        inputCurrency: (s as { inputCurrency?: string | null }).inputCurrency ?? accountCurrency,
       });
       setLoadedFromServer(true);
     }
-  }, [funnel.data, loadedFromServer]);
+  }, [funnel.data, loadedFromServer, accountCurrency, form.inputCurrency]);
 
   const inputs: FunnelInputs = useMemo(
     () => ({
@@ -119,12 +143,24 @@ export default function Settings() {
       geoTiers: form.geoTiers
         ? form.geoTiers.split(/[،,]/).map(s => s.trim()).filter(Boolean)
         : null,
+      // Batch 2 / ISSUE-009 — carrier for deriveTargets() (data-model.md §7).
+      inputCurrency: form.inputCurrency,
     }),
     [form]
   );
 
   // live derived targets — pure shared function, no round-trip
-  const targets = useMemo(() => deriveTargets(inputs, null), [inputs]);
+  // Batch 2 / ISSUE-009 — compute both views from the same FunnelInputs so
+  // the user can verify the conversion (research R5):
+  //   targetsInInput   = deriveTargets(inputs, null) — no conversion ⇒ input currency
+  //   targetsInAccount = deriveTargets(inputs, null, inputCurrency, accountCurrency)
+  const targetsInInput = useMemo(() => deriveTargets(inputs, null), [inputs]);
+  const targetsInAccount = useMemo(
+    () => deriveTargets(inputs, null, form.inputCurrency, accountCurrency),
+    [inputs, form.inputCurrency, accountCurrency]
+  );
+  const targets = targetsInAccount;
+  const showDualCurrency = form.inputCurrency !== accountCurrency;
   const valid = inputs.aov > 0 && inputs.frontEndRoas > 0;
 
   const save = trpc.funnel.save.useMutation({
@@ -226,8 +262,35 @@ export default function Settings() {
               <CardTitle className="text-base">أرقام البيع لديك</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
+              {/* Batch 2 / ISSUE-009 — price-currency selector (FR-011/FR-012).
+                  Positioned ABOVE the price fields. Defaults to the account
+                  currency; the conversion notice below appears only when the
+                  user picks a different currency. */}
+              <div className="space-y-2 sm:col-span-2">
+                <Label>ما عملة أسعارك؟</Label>
+                <Select
+                  value={form.inputCurrency}
+                  onValueChange={v => set("inputCurrency", v)}
+                >
+                  <SelectTrigger className="num">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SUPPORTED_CURRENCIES.map(c => (
+                      <SelectItem key={c} value={c}>
+                        {currencySymbol(c)} — {c}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {showDualCurrency && (
+                  <p className="rounded-md border border-v-watch/30 bg-v-watch/5 p-2 text-xs leading-relaxed text-v-watch">
+                    سيتم تحويل الأسعار تلقائيًا إلى {currencySymbol(accountCurrency)} — كل ما تكتبه هنا بعملتك، والتطبيق يحسب الأهداف بعملة حسابك.
+                  </p>
+                )}
+              </div>
               <Field
-                label={`متوسط قيمة الطلب الواحد (${sym})`}
+                label={`متوسط قيمة الطلب الواحد (${currencySymbol(form.inputCurrency)})`}
                 hint="كم يدفع العميل في المتوسط عند أول شراء؟"
                 value={form.aov}
                 onChange={v => set("aov", v)}
@@ -240,7 +303,7 @@ export default function Settings() {
                 step="0.05"
               />
               <Field
-                label={`سعر المنتج الغالي (${sym})`}
+                label={`سعر المنتج الغالي (${currencySymbol(form.inputCurrency)})`}
                 hint="العرض الكبير الذي تبيعه بعد المنتج الرخيص"
                 value={form.htoPrice}
                 onChange={v => set("htoPrice", v)}
@@ -259,7 +322,7 @@ export default function Settings() {
               />
               {form.archetype === "free_lead" && (
                 <Field
-                  label={`سعر العميل المحتمل المعتاد في مجالك (${sym}) — اختياري`}
+                  label={`سعر العميل المحتمل المعتاد في مجالك (${currencySymbol(form.inputCurrency)}) — اختياري`}
                   hint="إن كان حسابك جديدًا ولا يوجد تاريخ نقيس عليه"
                   value={form.marketCplBenchmark}
                   onChange={v => set("marketCplBenchmark", v)}
@@ -335,12 +398,22 @@ export default function Settings() {
                 </p>
               ) : (
                 <>
-                  {/* The one number that matters */}
+                  {/* The one number that matters — Batch 2 / ISSUE-009 shows
+                      both currencies when they differ so the user can verify
+                      the conversion (FR-014). */}
                   <div className="rounded-lg border border-primary/40 bg-primary/10 p-4 text-center">
                     <p className="text-sm font-bold">هدف تكلفة العميل</p>
-                    <p className="num my-1 text-3xl font-extrabold text-primary">
-                      {money(targets.effectiveCPA, sym)}
-                    </p>
+                    {showDualCurrency ? (
+                      <p className="num my-1 text-2xl font-extrabold text-primary">
+                        {currencySymbol(form.inputCurrency)}{money(targetsInInput.effectiveCPA, currencySymbol(form.inputCurrency)).replace(/^[^\d-]+/, "")}
+                        {" = "}
+                        {money(targetsInAccount.effectiveCPA, sym)}
+                      </p>
+                    ) : (
+                      <p className="num my-1 text-3xl font-extrabold text-primary">
+                        {money(targets.effectiveCPA, sym)}
+                      </p>
+                    )}
                     <p className="text-[11px] leading-relaxed text-muted-foreground">
                       إن كلفك العميل أقل من هذا الرقم = جيد، وأكثر منه = خسارة.
                       <br />يحكم التطبيق على كل إعلان بهذا الرقم.
@@ -360,7 +433,9 @@ export default function Settings() {
                     <TargetRow
                       label="أقصى تكلفة للعميل المحتمل"
                       sub="إن دفعت أكثر من ذلك للعميل المحتمل الواحد فأنت تخسر"
-                      value={money(targets.cplCeiling, sym)}
+                      value={showDualCurrency
+                        ? `${currencySymbol(form.inputCurrency)}${money(targetsInInput.cplCeiling, currencySymbol(form.inputCurrency)).replace(/^[^\d-]+/, "")} = ${money(targetsInAccount.cplCeiling, sym)}`
+                        : money(targets.cplCeiling, sym)}
                     />
                   )}
 
@@ -374,17 +449,23 @@ export default function Settings() {
                       <TargetRow
                         label="تكلفة العميل من البيع الأول"
                         sub="متوسط قيمة الطلب ÷ العائد المطلوب"
-                        value={money(targets.rawTargetCPA, sym)}
+                        value={showDualCurrency
+                          ? `${currencySymbol(form.inputCurrency)}${money(targetsInInput.rawTargetCPA, currencySymbol(form.inputCurrency)).replace(/^[^\d-]+/, "")} = ${money(targetsInAccount.rawTargetCPA, sym)}`
+                          : money(targets.rawTargetCPA, sym)}
                       />
                       <TargetRow
                         label="القيمة الكاملة للعميل"
                         sub="البيع الأول + نصيبه من المنتج الغالي"
-                        value={money(targets.fullBuyerValue, sym)}
+                        value={showDualCurrency
+                          ? `${currencySymbol(form.inputCurrency)}${money(targetsInInput.fullBuyerValue, currencySymbol(form.inputCurrency)).replace(/^[^\d-]+/, "")} = ${money(targetsInAccount.fullBuyerValue, sym)}`
+                          : money(targets.fullBuyerValue, sym)}
                       />
                       <TargetRow
                         label="أقصى تكلفة مسموحة"
                         sub="نصف القيمة الكاملة — لتربح الضعف دائمًا"
-                        value={money(targets.maxCPA, sym)}
+                        value={showDualCurrency
+                          ? `${currencySymbol(form.inputCurrency)}${money(targetsInInput.maxCPA, currencySymbol(form.inputCurrency)).replace(/^[^\d-]+/, "")} = ${money(targetsInAccount.maxCPA, sym)}`
+                          : money(targets.maxCPA, sym)}
                       />
                       <p className="text-[11px] leading-relaxed text-muted-foreground">
                         هدفك = الأصغر بين الرقم الأول والثالث، لنبقى دائمًا في الجانب الآمن.

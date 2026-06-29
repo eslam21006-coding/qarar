@@ -25,6 +25,7 @@ import { deriveTargets, runEngine } from "./engine";
 import {
   AccountSnapshotPayload,
   FunnelInputs,
+  SUPPORTED_CURRENCIES,
 } from "../shared/qarar";
 import crypto from "crypto";
 
@@ -44,6 +45,9 @@ function funnelToInputs(f: NonNullable<Awaited<ReturnType<typeof db.getFunnel>>>
     arena: f.arena,
     bestInterest: f.bestInterest,
     geoTiers: (f.geoTiers as string[] | null) ?? null,
+    // Batch 2 / ISSUE-009 — carrier for runEngine() → deriveTargets().
+    // type is `string | null`; stored column is nullable (data-model.md §1).
+    inputCurrency: f.inputCurrency,
   };
 }
 
@@ -63,6 +67,20 @@ const funnelInputSchema = z.object({
   arena: z.enum(["interests", "broad"]),
   bestInterest: z.string().max(500).optional().nullable(),
   geoTiers: z.array(z.string()).optional().nullable(),
+  // Batch 2 / ISSUE-009 — user's price currency; null/undefined ⇒ no-op.
+  // Restrict to the supported set (shared/qarar.ts) so a stale/malformed
+  // client cannot silently save an unsupported code and get unconverted
+  // verdicts back from convertCurrency's safe-no-op path. `.refine` keeps
+  // the inferred type as a plain string (matching the client form state)
+  // while still rejecting unknown codes at the API boundary.
+  inputCurrency: z
+    .string()
+    .max(8)
+    .refine(v => (SUPPORTED_CURRENCIES as readonly string[]).includes(v), {
+      message: "Unsupported currency code",
+    })
+    .optional()
+    .nullable(),
 });
 
 async function requireAccount(userId: string, adAccountId: number) {
@@ -191,18 +209,35 @@ export const appRouter = router({
     get: activeProcedure
       .input(z.object({ adAccountId: z.number() }))
       .query(async ({ ctx, input }) => {
-        await requireAccount(ctx.user.id, input.adAccountId);
+        const account = await requireAccount(ctx.user.id, input.adAccountId);
         const f = await db.getFunnel(ctx.user.id, input.adAccountId);
         if (!f) return { settings: null, targets: null };
-        const targets = deriveTargets(funnelToInputs(f), null);
+        // Batch 2 / ISSUE-009 — pass the stored input currency + account
+        // currency so derived targets reflect the conversion (no-op when
+        // they match or when inputCurrency is null).
+        const targets = deriveTargets(
+          funnelToInputs(f),
+          null,
+          f.inputCurrency,
+          account.currency ?? null
+        );
         return { settings: f, targets };
       }),
 
     save: activeProcedure.input(funnelInputSchema).mutation(async ({ ctx, input }) => {
-      await requireAccount(ctx.user.id, input.adAccountId);
+      const account = await requireAccount(ctx.user.id, input.adAccountId);
       const { adAccountId, ...data } = input;
       const saved = await db.upsertFunnel(ctx.user.id, adAccountId, data as any);
-      const targets = saved ? deriveTargets(funnelToInputs(saved), null) : null;
+      // Batch 2 / ISSUE-009 — derive with currencies so the saved funnel's
+      // inputCurrency is honored on the return value (no-op when equal/null).
+      const targets = saved
+        ? deriveTargets(
+            funnelToInputs(saved),
+            null,
+            saved.inputCurrency,
+            account.currency ?? null
+          )
+        : null;
       return { settings: saved, targets };
     }),
 

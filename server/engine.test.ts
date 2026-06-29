@@ -709,3 +709,154 @@ describe("ISSUE-005 — engine output contains no internal step labels", () => {
     }
   });
 });
+
+// ===========================================================================
+// ISSUE-009 — currency-aware target derivation (Batch 2 / FR-006 / FR-007)
+// ===========================================================================
+// deriveTargets() now accepts two optional currency params. When supplied,
+// the user-entered monetary inputs (aov, htoPrice, ticketPrice, marketCplBenchmark)
+// are converted from `inputCurrency` to `accountCurrency` BEFORE any target
+// math. Baselines (baselines.cpaMedian30) are NEVER converted — they are
+// already in account currency.
+//
+// Backward-compat invariant: no params / equal / unknown ⇒ bit-for-bit
+// identical to the pre-feature output. The existing test suite above is the
+// primary proof; the cases below are the explicit conversion/equality
+// contracts (contracts/derive-targets.md).
+
+describe("ISSUE-009 — deriveTargets currency extension (Batch 2)", () => {
+  it("no-param call is unchanged (backward-compat baseline)", () => {
+    const a = deriveTargets(baseFunnel);
+    const b = deriveTargets(baseFunnel, null, undefined, undefined);
+    expect(b).toEqual(a);
+  });
+
+  it("(\"USD\",\"USD\") == no-param (backward-compat, equal currencies)", () => {
+    const a = deriveTargets(baseFunnel);
+    const b = deriveTargets(baseFunnel, null, "USD", "USD");
+    expect(b).toEqual(a);
+  });
+
+  it("(\"USD\",\"AED\") scales monetary targets by ×3.67 within float tolerance", () => {
+    const noConv = deriveTargets(baseFunnel);
+    const conv = deriveTargets(baseFunnel, null, "USD", "AED");
+    // rawTargetCPA = AOV / ROAS = 43 / 1 = 43 → 43 × 3.67 ≈ 157.81
+    expect(noConv.rawTargetCPA).toBeCloseTo(43, 2);
+    expect(conv.rawTargetCPA).toBeCloseTo(43 * 3.67, 2);
+    expect(conv.rawTargetCPA).toBeCloseTo((noConv.rawTargetCPA ?? 0) * 3.67, 2);
+    // fullBuyerValue = 43 + 3500*0.03 = 148 → 148 × 3.67 ≈ 543.16
+    expect(noConv.fullBuyerValue).toBeCloseTo(148, 2);
+    expect(conv.fullBuyerValue).toBeCloseTo(148 * 3.67, 2);
+    // maxCPA = 148/2 = 74 → 74 × 3.67 ≈ 271.58
+    expect(noConv.maxCPA).toBeCloseTo(74, 2);
+    expect(conv.maxCPA).toBeCloseTo(74 * 3.67, 2);
+    // effectiveCPA is min(raw, max) → 43 (not capped) → 43 × 3.67 ≈ 157.81
+    expect(noConv.effectiveCPA).toBeCloseTo(43, 2);
+    expect(conv.effectiveCPA).toBeCloseTo(43 * 3.67, 2);
+  });
+
+  it("unknown source code → no-op (safe fallback, same as no-param)", () => {
+    const a = deriveTargets(baseFunnel);
+    const b = deriveTargets(baseFunnel, null, "FOO", "AED");
+    expect(b).toEqual(a);
+  });
+
+  it("null source code (string|null funnel) → no-op (no error)", () => {
+    const a = deriveTargets(baseFunnel);
+    const b = deriveTargets(baseFunnel, null, null, "AED");
+    expect(b).toEqual(a);
+  });
+
+  it("free_lead: baseline-derived unitTarget NOT converted (no double-conversion)", () => {
+    // free_lead with cpaMedian30 set ⇒ unitTarget = cpaMedian30 (already AED).
+    // When converting USD→AED, the baseline must stay the same.
+    const baselines = {
+      ctrLinkMedian90: 1.7,
+      cpmAvg14: 18,
+      cpaMedian30: 2.1, // AED
+      cpmNow: 18,
+    };
+    const freeLead: FunnelInputs = {
+      ...baseFunnel,
+      archetype: "free_lead",
+      marketCplBenchmark: 4, // user-entered in USD; should be converted to AED
+    };
+    const conv = deriveTargets(freeLead, baselines, "USD", "AED");
+    expect(conv.unitTarget).toBeCloseTo(2.1, 2);
+    expect(conv.unitTargetSource).toBe("cpl_baseline");
+    // leadValue = htoPrice * (htoConversionRate/100) = 3500 * 0.03 = 105 → × 3.67
+    expect(conv.leadValue).toBeCloseTo(105 * 3.67, 2);
+    // cplCeiling = 0.7 * leadValue → × 3.67 too
+    expect(conv.cplCeiling).toBeCloseTo(0.7 * 105 * 3.67, 2);
+  });
+
+  it("free_lead with no cpaMedian30 but marketCplBenchmark set → benchmark IS converted", () => {
+    const baselines = {
+      ctrLinkMedian90: 1.7,
+      cpmAvg14: 18,
+      cpaMedian30: null, // no baseline
+      cpmNow: 18,
+    };
+    const freeLead: FunnelInputs = {
+      ...baseFunnel,
+      archetype: "free_lead",
+      marketCplBenchmark: 4, // user-entered USD → 4 × 3.67 = 14.68 AED
+    };
+    const noConv = deriveTargets(freeLead, baselines, "USD", "USD");
+    const conv = deriveTargets(freeLead, baselines, "USD", "AED");
+    expect(noConv.unitTarget).toBeCloseTo(4, 2);
+    expect(conv.unitTarget).toBeCloseTo(4 * 3.67, 2);
+    expect(conv.unitTargetSource).toBe("cpl_benchmark");
+  });
+});
+
+// ===========================================================================
+// ISSUE-009 — runEngine currency-propagation wiring (Batch 2 / FR-010)
+// ===========================================================================
+// Locks down that server/engine.ts#runEngine() forwards `funnel.inputCurrency`
+// and `snapshot.currency` into deriveTargets() — the deriveTargets() unit
+// cases above do not cover the call site.
+
+describe("ISSUE-009 — runEngine forwards currencies into deriveTargets", () => {
+  it("USD-priced funnel + AED account ⇒ engine targets scale by 3.67", () => {
+    // Build a snapshot whose currency is AED. The engine call must use
+    // that as `accountCurrency` and convert the user-entered USD prices.
+    const snap = buildDemoSnapshot();
+    snap.currency = "AED";
+    const funnel: FunnelInputs = {
+      ...(DEMO_FUNNEL as FunnelInputs),
+      inputCurrency: "USD",
+    };
+    const noConv = runEngine(buildDemoSnapshot(), { ...funnel, inputCurrency: "USD" });
+    const conv = runEngine(snap, funnel);
+
+    // rawTargetCPA scales by the AED rate (3.67). The summary target
+    // (effectiveCPA) is the same field exposed to the dashboard.
+    const noCpa = noConv.targets.rawTargetCPA ?? 0;
+    const convCpa = conv.targets.rawTargetCPA ?? 0;
+    expect(convCpa).toBeCloseTo(noCpa * 3.67, 1);
+    // fullBuyerValue scales the same way.
+    expect(conv.targets.fullBuyerValue).toBeCloseTo(
+      noConv.targets.fullBuyerValue * 3.67,
+      1
+    );
+  });
+
+  it("equal currencies (USD/USD) ⇒ engine targets match the no-currency call", () => {
+    const snap = buildDemoSnapshot();
+    snap.currency = "USD";
+    const baseline = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+    const explicit = runEngine(snap, {
+      ...(DEMO_FUNNEL as FunnelInputs),
+      inputCurrency: "USD",
+    });
+    expect(explicit.targets.rawTargetCPA).toBeCloseTo(
+      baseline.targets.rawTargetCPA ?? 0,
+      5
+    );
+    expect(explicit.targets.effectiveCPA).toBeCloseTo(
+      baseline.targets.effectiveCPA,
+      5
+    );
+  });
+});

@@ -121,6 +121,9 @@ async function getFunnelForRun(
       arena: row.arena,
       bestInterest: row.bestInterest,
       geoTiers: row.geoTiers as string[] | null,
+      // Batch 2 / ISSUE-009 — carrier so the daily cron's runEngine()
+      // converts monetary inputs identically to the live dashboard path.
+      inputCurrency: row.inputCurrency,
     };
   } catch {
     return null;
