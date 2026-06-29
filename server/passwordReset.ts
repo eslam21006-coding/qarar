@@ -1,19 +1,37 @@
 import crypto from "crypto";
-import { drizzle } from "drizzle-orm/mysql2";
-import { eq } from "drizzle-orm";
-import mysql from "mysql2/promise";
+import type { MySql2Database } from "drizzle-orm/mysql2";
+import type { Pool } from "mysql2/promise";
 import { user, verification } from "../drizzle/auth-schema";
 
-const pool = mysql.createPool(process.env.DATABASE_URL!);
-const db = drizzle(pool, { schema: { user, verification }, mode: "default" });
+type Db = MySql2Database<{ user: typeof user; verification: typeof verification }>;
+
+let _pool: Pool | null = null;
+let _db: Db | null = null;
+
+async function getDb(): Promise<Db> {
+  if (_db) return _db;
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not configured");
+  const { default: mysql } = await import("mysql2/promise");
+  const { drizzle } = await import("drizzle-orm/mysql2");
+  _pool = mysql.createPool(url);
+  _db = drizzle(_pool, { schema: { user, verification }, mode: "default" });
+  return _db;
+}
 
 /**
  * Generate a secure password reset token and store it in the verification table.
- * Token expires in 1 hour.
+ * Default TTL is 1 hour (existing forgot-password flow); callers may pass a
+ * custom `ttlMs` (e.g. GHL auto-provisioning passes 72h) — backwards compatible
+ * with every existing caller (R-004 / FR-007).
  */
-export async function generatePasswordResetToken(email: string): Promise<string> {
+export async function generatePasswordResetToken(
+  email: string,
+  ttlMs: number = 60 * 60 * 1000
+): Promise<string> {
   const token = crypto.randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+  const expiresAt = new Date(Date.now() + ttlMs);
+  const db = await getDb();
 
   await db.insert(verification).values({
     id: crypto.randomUUID(),
@@ -32,6 +50,8 @@ export async function generatePasswordResetToken(email: string): Promise<string>
  * Returns null if token is invalid or expired.
  */
 export async function verifyPasswordResetToken(token: string): Promise<string | null> {
+  const db = await getDb();
+  const { eq } = await import("drizzle-orm");
   const records = await db.select().from(verification).where(eq(verification.value, token)).limit(1);
   const record = records[0];
 
@@ -55,7 +75,7 @@ export async function verifyPasswordResetToken(token: string): Promise<string | 
  */
 export async function resetUserPassword(
   email: string,
-  newPassword: string,
+  _newPassword: string,
   token: string
 ): Promise<boolean> {
   try {
@@ -66,6 +86,8 @@ export async function resetUserPassword(
     }
 
     // Get the user
+    const db = await getDb();
+    const { eq } = await import("drizzle-orm");
     const users = await db.select().from(user).where(eq(user.email, email)).limit(1);
     const userData = users[0];
 
@@ -74,9 +96,9 @@ export async function resetUserPassword(
     }
 
     // Hash the new password using better-auth's password hashing
-    // For now, we'll use bcrypt via the auth system
-    // This requires calling the auth API or using a password hashing library
-    // Since better-auth handles password hashing internally, we need to update via the auth system
+    // (the actual write is performed by the POST /api/auth/reset-password
+    // route handler, which now resolves the user, hashes via
+    // auth.$context.password, and updates the credential row — R-006).
     
     // Clean up the token
     const records = await db.select().from(verification).where(eq(verification.value, token)).limit(1);
