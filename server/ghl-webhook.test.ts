@@ -122,7 +122,6 @@ vi.mock("./passwordReset", () => ({
     return `https://mock.test/auth/reset-password?token=${token}`;
   },
   verifyPasswordResetToken: async () => null,
-  resetUserPassword: async () => false,
 }));
 
 const TEST_SECRET = "test-ghl-secret-1234567890";

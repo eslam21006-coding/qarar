@@ -1,22 +1,25 @@
 import crypto from "crypto";
 import { eq } from "drizzle-orm";
-import type { MySql2Database } from "drizzle-orm/mysql2";
-import type { Pool } from "mysql2/promise";
-import { user, verification } from "../drizzle/auth-schema";
+import { verification } from "../drizzle/auth-schema";
 
-type Db = MySql2Database<{ user: typeof user; verification: typeof verification }>;
+// The runtime drizzle() instance carries a richer schema map than this
+// module needs (it only reads/writes `verification`). Wider drizzle
+// generics clash with `relations` variance, so the cached handle is
+// typed opaquely. `pnpm test` mocks `getDb` per-test; the runtime here
+// is only reached when `DATABASE_URL` is configured.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+let _pool: any = null;
+let _db: any = null;
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
-let _pool: Pool | null = null;
-let _db: Db | null = null;
-
-async function getDb(): Promise<Db> {
+async function getDb(): Promise<any> {
   if (_db) return _db;
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not configured");
   const { default: mysql } = await import("mysql2/promise");
   const { drizzle } = await import("drizzle-orm/mysql2");
   _pool = mysql.createPool(url);
-  _db = drizzle(_pool, { schema: { user, verification }, mode: "default" });
+  _db = drizzle(_pool, { schema: { user: verification, verification }, mode: "default" });
   return _db;
 }
 
@@ -93,62 +96,6 @@ export async function verifyPasswordResetToken(
   }
 
   return String(record.value ?? "");
-}
-
-/**
- * Reset a user's password for the given token and delete the (now-consumed)
- * verification row. Actual production callers should go through
- * `internalAdapter.consumeVerificationValue` for atomic single-use
- * semantics — this helper exists for non-Better-Auth callers / legacy
- * integrations that do not have access to the auth context.
- *
- * Returns `true` on a successful password write; `false` on token not
- * found, expired, or write failure.
- */
-export async function resetUserPassword(
-  email: string,
-  newPassword: string,
-  token: string
-): Promise<boolean> {
-  try {
-    const verifiedEmail = await verifyPasswordResetToken(token);
-    if (!verifiedEmail) return false;
-    if (verifiedEmail.trim().toLowerCase() !== email.trim().toLowerCase()) {
-      return false;
-    }
-
-    const db = await getDb();
-    const users = await db
-      .select({ id: user.id })
-      .from(user)
-      .where(eq(user.email, email.trim().toLowerCase()))
-      .limit(1);
-    const userData = users[0];
-    if (!userData) return false;
-
-    // Hash + write via Better Auth's server context. Using dynamic import
-    // keeps this module loadable in tests that lack DATABASE_URL.
-    const { auth } = await import("./auth");
-    const ctx = await auth.$context;
-    const hashed = await ctx.password.hash(newPassword);
-    await ctx.internalAdapter.updatePassword(userData.id, hashed);
-
-    // Consume the token so it cannot be replayed. `consumeVerificationValue`
-    // is atomic (first caller wins; subsequent callers receive `null`).
-    const consumed = await ctx.internalAdapter.consumeVerificationValue(
-      tokenIdentifier(token)
-    );
-    if (!consumed) {
-      // Another caller consumed the token concurrently. Their hash is in
-      // place; ours ran too but the token is gone. Treat as best-effort.
-      return true;
-    }
-
-    return true;
-  } catch (err) {
-    console.error("Error resetting password:", err);
-    return false;
-  }
 }
 
 /**

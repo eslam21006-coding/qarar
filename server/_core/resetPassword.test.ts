@@ -23,7 +23,6 @@ vi.mock("../passwordReset", () => ({
   verifyPasswordResetToken: vi.fn(async () => null),
   generatePasswordResetToken: vi.fn(async () => "t"),
   buildPasswordResetUrl: (t: string) => `https://x.test/auth/reset-password?token=${t}`,
-  resetUserPassword: async () => false,
 }));
 
 type AuthMock = {
