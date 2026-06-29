@@ -87,8 +87,11 @@ import * as db from "./db";
 import {
   classifyEvent,
   extractContactId,
+  extractContactIdFlat,
   extractEmail,
+  extractEmailFlat,
   extractName,
+  extractNameFlat,
   generateTempPassword,
   ghlWebhookRouter,
   isUniqueEmailRaceError,
@@ -119,7 +122,11 @@ vi.mock("./passwordReset", () => ({
   buildPasswordResetUrl: (token: string) => {
     __passwordResetMock.urlCalls.push({ token });
     if (__passwordResetMock.urlImpl) return __passwordResetMock.urlImpl(token);
-    return `https://mock.test/auth/reset-password?token=${token}`;
+    // Honor BETTER_AUTH_URL so production URLs flow through; falls back
+    // to https://mock.test when not configured so legacy assertions still
+    // have a stable fixture.
+    const base = process.env.BETTER_AUTH_URL || "https://mock.test";
+    return `${base}/auth/reset-password?token=${token}`;
   },
   verifyPasswordResetToken: async () => null,
 }));
@@ -1431,5 +1438,177 @@ describe("T012 / US2: existing-user activate/deactivate returns newUser:false (F
     expect(res.body).toEqual({ ok: true, status: "inactive", newUser: false });
     expect(res.body).not.toHaveProperty("setPasswordUrl");
     expect(authMock.linkCalls).toHaveLength(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// POST /api/webhooks/ghl/provision — GHL workflow integration (dedicated
+// provisioning endpoint). Distinct from the signed POST / handler above:
+// no signature, flat JSON payload, no `type` classification, always
+// activates / provisions when an email is present.
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("extractEmailFlat / extractContactIdFlat / extractNameFlat", () => {
+  it("extractEmailFlat reads body.email and normalizes trim+lowercase", () => {
+    expect(extractEmailFlat({ email: "  WORKFLOW@Example.COM  " })).toBe(
+      "workflow@example.com"
+    );
+  });
+  it("extractEmailFlat returns null on missing / empty / whitespace", () => {
+    expect(extractEmailFlat({})).toBeNull();
+    expect(extractEmailFlat({ email: "" })).toBeNull();
+    expect(extractEmailFlat({ email: "   " })).toBeNull();
+    expect(extractEmailFlat(null)).toBeNull();
+    expect(extractEmailFlat("not-an-object")).toBeNull();
+  });
+  it("extractContactIdFlat reads body.contactId", () => {
+    expect(extractContactIdFlat({ contactId: "ghl_wf_1" })).toBe("ghl_wf_1");
+    expect(extractContactIdFlat({})).toBeNull();
+  });
+  it("extractNameFlat prefers body.name", () => {
+    expect(extractNameFlat({ name: "Workflow Buyer" }, "x@y.co")).toBe(
+      "Workflow Buyer"
+    );
+  });
+  it("extractNameFlat joins firstName + lastName when name is missing", () => {
+    expect(
+      extractNameFlat(
+        { firstName: "Jane", lastName: "Doe" },
+        "jane@example.com"
+      )
+    ).toBe("Jane Doe");
+  });
+  it("extractNameFlat falls back to email prefix", () => {
+    expect(extractNameFlat({}, "jane.doe@example.com")).toBe("jane.doe");
+  });
+});
+
+describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
+  let app: express.Express;
+  let fakeDb: FakeDb;
+  let calls: FakeCalls;
+  const originalSecret = process.env.GHL_WEBHOOK_SECRET;
+  const originalAuthUrl = process.env.BETTER_AUTH_URL;
+  const originalLog = console.log;
+  let logSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    // /provision must NOT require signature verification.
+    process.env.BETTER_AUTH_URL = "https://app.adqarar.com";
+    logSpy = vi.fn();
+    console.log = logSpy;
+    authMock.reset();
+    __passwordResetMock.reset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    console.log = originalLog;
+    if (originalSecret === undefined) delete process.env.GHL_WEBHOOK_SECRET;
+    else process.env.GHL_WEBHOOK_SECRET = originalSecret;
+    if (originalAuthUrl === undefined) delete process.env.BETTER_AUTH_URL;
+    else process.env.BETTER_AUTH_URL = originalAuthUrl;
+  });
+
+  it("provisions a new user when the email is unknown and returns setPasswordUrl", async () => {
+    authMock.createUserImpl = async () => ({ id: "wf-user-1" });
+    const built = buildFakeDb({ matchingUser: null });
+    fakeDb = built.fakeDb;
+    calls = built.calls;
+    vi.mocked(db.getDb).mockResolvedValue(fakeDb as any);
+    app = buildApp();
+
+    const res = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .send({
+        email: "fresh-buyer@example.com",
+        name: "Fresh Buyer",
+        contactId: "ghl_wf_99",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.status).toBe("active");
+    expect(res.body.newUser).toBe(true);
+    expect(res.body.setPasswordUrl).toBe(
+      "https://app.adqarar.com/auth/reset-password?token=mock-token-fresh-buyer@example.com-259200000"
+    );
+    expect(res.body).not.toHaveProperty("ignored");
+
+    expect(authMock.linkCalls).toHaveLength(1);
+    expect(authMock.updateCalls).toHaveLength(1);
+    expect(__passwordResetMock.tokenCalls).toHaveLength(1);
+    expect(__passwordResetMock.tokenCalls[0]).toEqual({
+      email: "fresh-buyer@example.com",
+      ttlMs: 72 * 60 * 60 * 1000,
+    });
+
+    const auditLogs = logSpy.mock.calls.map((c) => c[0]);
+    expect(auditLogs).toContain(
+      "[GHL Provision] email=fresh-buyer@example.com newUser=true"
+    );
+  });
+
+  it("activates an existing user without re-issuing a setPasswordUrl", async () => {
+    const built = buildFakeDb({ matchingUser: { id: "buyer-known" } });
+    fakeDb = built.fakeDb;
+    calls = built.calls;
+    vi.mocked(db.getDb).mockResolvedValue(fakeDb as any);
+    app = buildApp();
+
+    const res = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .send({ email: "buyer-known@example.com", name: "Known" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, status: "active", newUser: false });
+    expect(res.body).not.toHaveProperty("setPasswordUrl");
+
+    // Activation update fired exactly once.
+    expect(calls.updateCalls).toHaveLength(1);
+    expect(calls.updateCalls[0].set).toEqual({
+      subscriptionStatus: "active",
+    });
+    // Provisioner / token generator never reached for an existing user.
+    expect(authMock.linkCalls).toHaveLength(0);
+    expect(__passwordResetMock.tokenCalls).toHaveLength(0);
+
+    const auditLogs = logSpy.mock.calls.map((c) => c[0]);
+    expect(auditLogs).toContain(
+      "[GHL Provision] email=buyer-known@example.com newUser=false"
+    );
+  });
+
+  it("returns 200 { ignored: true } when no email is in the body", async () => {
+    app = buildApp();
+    const res = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .send({ name: "No Email" });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ignored: true });
+    // Neither provisioning nor activation should have run.
+    expect(authMock.linkCalls).toHaveLength(0);
+    // No audit log entry — the request was a no-op.
+    const auditLogs = logSpy.mock.calls.map((c) => c[0]);
+    expect(
+      auditLogs.some(
+        (m) => typeof m === "string" && m.startsWith("[GHL Provision]")
+      )
+    ).toBe(false);
+  });
+
+  it("returns 200 { ignored: true } when the body email is empty / whitespace", async () => {
+    app = buildApp();
+    const empty = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .send({ email: "" });
+    expect(empty.status).toBe(200);
+    expect(empty.body).toEqual({ ignored: true });
+
+    const whitespace = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .send({ email: "   " });
+    expect(whitespace.status).toBe(200);
+    expect(whitespace.body).toEqual({ ignored: true });
   });
 });

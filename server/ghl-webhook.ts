@@ -362,6 +362,158 @@ export async function setUserSubscriptionByEmail(
 export const ghlWebhookRouter = express.Router();
 
 /**
+ * Flat-payload email extractor for the GHL workflow integration. The
+ * Phase C / Batch 5 webhook uses a nested GHL payload (body.email /
+ * body.contact.email / body.invoice.contact.email); the workflow
+ * integration sends a flat object — `email` is just `body.email`.
+ * Returns `null` for non-strings, empty strings, or whitespace-only values
+ * after trim; normalizes the address with `trim().toLowerCase()` to match
+ * the storage and lookup conventions used elsewhere in this module.
+ */
+export function extractEmailFlat(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const b = body as Record<string, unknown>;
+  if (typeof b.email === "string" && b.email.trim().length > 0) {
+    return b.email.trim().toLowerCase();
+  }
+  return null;
+}
+
+/**
+ * Flat-payload contact-id extractor (workflow integration shape). Mirrors
+ * `extractContactId` but reads from the top-level `contactId` field that
+ * the GHL workflow sends, rather than the nested GHL contact blocks.
+ */
+export function extractContactIdFlat(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const b = body as Record<string, unknown>;
+  if (typeof b.contactId === "string" && b.contactId.length > 0) {
+    return b.contactId;
+  }
+  return null;
+}
+
+/**
+ * Flat-payload display-name extractor (workflow integration shape).
+ * Precedence (per the integration spec):
+ *   body.name      →  body.firstName + " " + body.lastName  →  email prefix
+ * Trimmed, whitespace-collapsed, never empty — falls back to the email
+ * prefix (the substring before `@`) and finally to the full email when
+ * the prefix is unavailable.
+ */
+export function extractNameFlat(body: unknown, email: string): string {
+  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  const fromName = typeof b.name === "string" ? b.name.trim() : null;
+  if (fromName && fromName.length > 0) {
+    return fromName.replace(/\s+/g, " ");
+  }
+  const first = typeof b.firstName === "string" ? b.firstName.trim() : "";
+  const last = typeof b.lastName === "string" ? b.lastName.trim() : "";
+  const joined = `${first} ${last}`.replace(/\s+/g, " ").trim();
+  if (joined.length > 0) return joined;
+
+  const normalizedEmail = (email ?? "").trim();
+  const atIndex = normalizedEmail.indexOf("@");
+  const prefix = atIndex > 0 ? normalizedEmail.slice(0, atIndex).trim() : "";
+  if (prefix.length > 0) return prefix;
+  return normalizedEmail.length > 0 ? normalizedEmail : "user";
+}
+
+/**
+ * Dedicated provisioning endpoint for GHL workflow integration
+ * (POST /api/webhooks/ghl/provision).
+ *
+ * Differences vs the existing `POST /api/webhooks/ghl` (which handles
+ * signed GHL webhook events):
+ *   - no signature verification (GHL workflow webhooks don't support signing)
+ *   - JSON body parsing (express.json()), not raw bytes
+ *   - flat payload shape — `email`, `name`/`firstName`+`lastName`,
+ *     `contactId` are read directly off the top-level body
+ *   - any request carrying a valid email triggers provisioning; there is
+ *     no event-type classification
+ *
+ * Behavior:
+ *   - email missing/empty              → 200 { ignored: true }
+ *   - user already exists              → 200 { ok, status:'active', newUser:false }
+ *   - user does not yet exist          → 200 { ok, status:'active',
+ *                                          newUser:true, setPasswordUrl }
+ *     - falls back to 200 without `setPasswordUrl` if the reset-token
+ *       store call fails (FR-015 / R-009 — buyer can always use the
+ *       forgot-password flow to recover a link)
+ *   - provisioning / update throws     → 500 { error: 'internal_error' }
+ *
+ * The set-password URL is built via `buildPasswordResetUrl(token)` which
+ * reads `BETTER_AUTH_URL` (prod: https://app.adqarar.com → exactly the
+ * contract response described).
+ */
+ghlWebhookRouter.post(
+  "/provision",
+  express.json(),
+  async (req: Request, res: Response) => {
+    let loggedEmailForAudit = "<none>";
+    try {
+      const body = req.body as unknown;
+      const email = extractEmailFlat(body);
+      if (!email) {
+        res.status(200).json({ ignored: true });
+        return;
+      }
+      loggedEmailForAudit = email;
+      const name = extractNameFlat(body, email);
+      const contactId = extractContactIdFlat(body);
+
+      const result = await setUserSubscriptionByEmail(email, "active", contactId);
+      if (result === "updated") {
+        console.log(`[GHL Provision] email=${email} newUser=false`);
+        res.status(200).json({ ok: true, status: "active", newUser: false });
+        return;
+      }
+
+      // Activate + unknown email → auto-provision (FR-001).
+      const provision = await provisionUserFromGhl({ email, name, contactId });
+      if (!provision.created) {
+        // Race-recovery path (R-008 / FR-013): the user now exists; fall
+        // through to the existing-user activation path so the row's
+        // subscriptionStatus is ensured "active" — no second setPasswordUrl
+        // because the link was already issued.
+        await setUserSubscriptionByEmail(email, "active", contactId);
+        console.log(`[GHL Provision] email=${email} newUser=false`);
+        res.status(200).json({ ok: true, status: "active", newUser: false });
+        return;
+      }
+
+      // FR-015 — token failure must not lose the activation; the buyer can
+      // still use the forgot-password flow to obtain a fresh link.
+      try {
+        const token = await generatePasswordResetToken(
+          email,
+          72 * 60 * 60 * 1000
+        );
+        const setPasswordUrl = buildPasswordResetUrl(token);
+        console.log(`[GHL Provision] email=${email} newUser=true`);
+        res.status(200).json({
+          ok: true,
+          status: "active",
+          newUser: true,
+          setPasswordUrl,
+        });
+        return;
+      } catch {
+        console.log(`[GHL Provision] email=${email} newUser=true`);
+        res.status(200).json({ ok: true, status: "active", newUser: true });
+        return;
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(
+        `[GHL Provision] error email=${loggedEmailForAudit} message=${message}`
+      );
+      res.status(500).json({ error: "internal_error" });
+    }
+  }
+);
+
+/**
  * Single route — `POST /`. `express.raw({ type: "application/json" })` is
  * route-scoped so only this path receives `req.body` as a Buffer; every other
  * route keeps using the global JSON parser (FR-002 / FR-003).
