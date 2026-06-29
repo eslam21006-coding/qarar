@@ -387,8 +387,9 @@ export function extractEmailFlat(body: unknown): string | null {
 export function extractContactIdFlat(body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
   const b = body as Record<string, unknown>;
-  if (typeof b.contactId === "string" && b.contactId.length > 0) {
-    return b.contactId;
+  if (typeof b.contactId === "string") {
+    const trimmed = b.contactId.trim();
+    if (trimmed.length > 0) return trimmed;
   }
   return null;
 }
@@ -420,19 +421,69 @@ export function extractNameFlat(body: unknown, email: string): string {
 }
 
 /**
+ * Validate the configured shared secret against the inbound /provision
+ * request. GHL workflow webhooks can't sign, so we rely on a high-entropy
+ * shared secret configured at deploy time. The secret is read from the
+ * `x-ghl-provision-secret` header (preferred — headers don't land in
+ * URL logs), with the legacy `?token=<secret>` query parameter accepted
+ * for back-compat with workflow builders that can only emit query
+ * strings. When `GHL_PROVISION_SECRET` is unset the route refuses every
+ * request — failing closed is the only safe default for an
+ * unauthenticated, state-changing endpoint.
+ */
+function authorizeProvisionRequest(req: Request): boolean {
+  const expected = process.env.GHL_PROVISION_SECRET;
+  if (!expected || expected.length === 0) return false;
+  const headerSecret = req.get("x-ghl-provision-secret");
+  if (
+    typeof headerSecret === "string" &&
+    headerSecret.length > 0 &&
+    timingSafeEqualString(headerSecret, expected)
+  ) {
+    return true;
+  }
+  const queryToken = req.query.token;
+  if (
+    typeof queryToken === "string" &&
+    queryToken.length > 0 &&
+    timingSafeEqualString(queryToken, expected)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Constant-time string compare so the secret isn't revealed through a
+ * timing side channel. `crypto.timingSafeEqual` requires equal-length
+ * buffers, so length-mismatch returns `false` without comparing bytes.
+ */
+function timingSafeEqualString(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
+/**
  * Dedicated provisioning endpoint for GHL workflow integration
  * (POST /api/webhooks/ghl/provision).
  *
  * Differences vs the existing `POST /api/webhooks/ghl` (which handles
  * signed GHL webhook events):
- *   - no signature verification (GHL workflow webhooks don't support signing)
+ *   - no HMAC signature verification (GHL workflow webhooks can't sign)
  *   - JSON body parsing (express.json()), not raw bytes
  *   - flat payload shape — `email`, `name`/`firstName`+`lastName`,
  *     `contactId` are read directly off the top-level body
  *   - any request carrying a valid email triggers provisioning; there is
  *     no event-type classification
+ *   - authentication via a configured shared secret
+ *     (`GHL_PROVISION_SECRET`) sent in the `x-ghl-provision-secret`
+ *     header (or `?token=<secret>` for back-compat). When the secret
+ *     is unset, the route refuses every request (fail closed).
  *
  * Behavior:
+ *   - missing/invalid secret             → 401 { error: 'unauthorized' }
  *   - email missing/empty              → 200 { ignored: true }
  *   - user already exists              → 200 { ok, status:'active', newUser:false }
  *   - user does not yet exist          → 200 { ok, status:'active',
@@ -452,6 +503,12 @@ ghlWebhookRouter.post(
   async (req: Request, res: Response) => {
     let loggedEmailForAudit = "<none>";
     try {
+      if (!authorizeProvisionRequest(req)) {
+        console.warn("[GHL Provision] Unauthorized request rejected");
+        res.status(401).json({ error: "unauthorized" });
+        return;
+      }
+
       const body = req.body as unknown;
       const email = extractEmailFlat(body);
       if (!email) {

@@ -1488,12 +1488,26 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
   let fakeDb: FakeDb;
   let calls: FakeCalls;
   const originalSecret = process.env.GHL_WEBHOOK_SECRET;
+  const originalProvisionSecret = process.env.GHL_PROVISION_SECRET;
   const originalAuthUrl = process.env.BETTER_AUTH_URL;
   const originalLog = console.log;
   let logSpy: ReturnType<typeof vi.fn>;
 
+  // High-entropy shared secret used for /provision authorization. The
+  // route reads `GHL_PROVISION_SECRET` at request time, so this must be
+  // set before each request — and the request must include it via the
+  // `x-ghl-provision-secret` header (or `?token=<secret>` query).
+  const PROVISION_SECRET = "test-ghl-provision-secret-0123456789abcdef";
+
   beforeEach(() => {
-    // /provision must NOT require signature verification.
+    // Configure the signed-webhook secret so a regression that
+    // accidentally wires signature verification into /provision would be
+    // caught by these tests (signature mismatches would 401 the request
+    // and the assertions on 200 / setPasswordUrl would fail).
+    process.env.GHL_WEBHOOK_SECRET = TEST_SECRET;
+    // Configure the workflow shared secret so the authorized path is
+    // exercised. The route fails closed when this is unset.
+    process.env.GHL_PROVISION_SECRET = PROVISION_SECRET;
     process.env.BETTER_AUTH_URL = "https://app.adqarar.com";
     logSpy = vi.fn();
     console.log = logSpy;
@@ -1506,6 +1520,8 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
     console.log = originalLog;
     if (originalSecret === undefined) delete process.env.GHL_WEBHOOK_SECRET;
     else process.env.GHL_WEBHOOK_SECRET = originalSecret;
+    if (originalProvisionSecret === undefined) delete process.env.GHL_PROVISION_SECRET;
+    else process.env.GHL_PROVISION_SECRET = originalProvisionSecret;
     if (originalAuthUrl === undefined) delete process.env.BETTER_AUTH_URL;
     else process.env.BETTER_AUTH_URL = originalAuthUrl;
   });
@@ -1520,6 +1536,7 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
 
     const res = await request(app)
       .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", PROVISION_SECRET)
       .send({
         email: "fresh-buyer@example.com",
         name: "Fresh Buyer",
@@ -1558,6 +1575,7 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
 
     const res = await request(app)
       .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", PROVISION_SECRET)
       .send({ email: "buyer-known@example.com", name: "Known" });
 
     expect(res.status).toBe(200);
@@ -1583,6 +1601,7 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
     app = buildApp();
     const res = await request(app)
       .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", PROVISION_SECRET)
       .send({ name: "No Email" });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ignored: true });
@@ -1601,14 +1620,91 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
     app = buildApp();
     const empty = await request(app)
       .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", PROVISION_SECRET)
       .send({ email: "" });
     expect(empty.status).toBe(200);
     expect(empty.body).toEqual({ ignored: true });
 
     const whitespace = await request(app)
       .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", PROVISION_SECRET)
       .send({ email: "   " });
     expect(whitespace.status).toBe(200);
     expect(whitespace.body).toEqual({ ignored: true });
+  });
+
+  it("returns 401 when the x-ghl-provision-secret header is missing", async () => {
+    const built = buildFakeDb({ matchingUser: null });
+    fakeDb = built.fakeDb;
+    calls = built.calls;
+    vi.mocked(db.getDb).mockResolvedValue(fakeDb as any);
+    app = buildApp();
+
+    const res = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .send({ email: "noauth@example.com" });
+
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: "unauthorized" });
+    // No provisioning or activation work happened.
+    expect(authMock.linkCalls).toHaveLength(0);
+    expect(calls.updateCalls).toHaveLength(0);
+  });
+
+  it("returns 401 when the x-ghl-provision-secret header is wrong", async () => {
+    app = buildApp();
+    const res = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", "definitely-not-the-secret")
+      .send({ email: "wrongauth@example.com" });
+
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: "unauthorized" });
+  });
+
+  it("accepts the legacy ?token=<secret> query parameter when the header is absent", async () => {
+    const built = buildFakeDb({ matchingUser: { id: "buyer-q" } });
+    fakeDb = built.fakeDb;
+    calls = built.calls;
+    vi.mocked(db.getDb).mockResolvedValue(fakeDb as any);
+    app = buildApp();
+
+    const res = await request(app)
+      .post(`/api/webhooks/ghl/provision?token=${encodeURIComponent(PROVISION_SECRET)}`)
+      .send({ email: "buyer-q@example.com" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, status: "active", newUser: false });
+  });
+
+  it("returns 401 when GHL_PROVISION_SECRET is unset (fail closed)", async () => {
+    delete process.env.GHL_PROVISION_SECRET;
+    app = buildApp();
+    const res = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", "anything")
+      .send({ email: "anything@example.com" });
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: "unauthorized" });
+  });
+});
+
+describe("extractContactIdFlat (workflow helper)", () => {
+  it("returns the trimmed contactId on a normal value", () => {
+    expect(extractContactIdFlat({ contactId: "ghl_wf_42" })).toBe("ghl_wf_42");
+  });
+  it("trims surrounding whitespace before accepting", () => {
+    expect(extractContactIdFlat({ contactId: "  ghl_wf_42  " })).toBe(
+      "ghl_wf_42"
+    );
+  });
+  it("returns null on whitespace-only input (does not persist truthy empty)", () => {
+    expect(extractContactIdFlat({ contactId: "   " })).toBeNull();
+    expect(extractContactIdFlat({ contactId: "\t\n" })).toBeNull();
+  });
+  it("returns null when contactId is missing or non-string", () => {
+    expect(extractContactIdFlat({})).toBeNull();
+    expect(extractContactIdFlat({ contactId: 0 })).toBeNull();
+    expect(extractContactIdFlat(null)).toBeNull();
   });
 });
