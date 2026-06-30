@@ -1,8 +1,18 @@
 import express, { type Express, type Request, type Response } from "express";
-import { eq } from "drizzle-orm";
+import { and, eq, like, or } from "drizzle-orm";
 import { getDb } from "../db";
-import { user } from "../../drizzle/auth-schema";
+import { user, verification } from "../../drizzle/auth-schema";
 import { auth } from "../auth";
+
+/**
+ * Minimum length of the configured `GHL_PROVISION_SECRET`, in bytes. Below
+ * this the request handler fails closed — a short or default secret
+ * would otherwise let a misconfigured deployment ship a public
+ * account-activating endpoint. 32 bytes matches the entropy budget of
+ * the rest of our secrets (token = `randomBytes(32).toString("hex")` is
+ * 64 hex chars).
+ */
+export const MIN_GHL_PROVISION_SECRET_BYTES = 32;
 
 /**
  * Mount the application-owned password-reset routes.
@@ -23,50 +33,103 @@ import { auth } from "../auth";
  * same call. Once the token is consumed we proceed to look up the user,
  * hash the submitted password via `auth.$context.password.hash`, and
  * persist it via `internalAdapter.updatePassword`.
+ *
+ * Compatibility: the route accepts BOTH the current storage layout
+ * (identifier = `password_reset_<token>`, value = <email>) AND the legacy
+ * pre-deploy layout (identifier = `password_reset_<email>`, value =
+ * <token>). The lookup first matches the current layout by identifier,
+ * then falls back to a `value = token` + `identifier LIKE
+ * 'password_reset_%'` search so any in-flight tokens issued before this
+ * batch shipped still resolve. The consume call targets whichever
+ * identifier the row actually has, so a row from either layout is
+ * claimed atomically.
  */
 export function registerPasswordResetRoutes(app: Express): void {
   app.post(
     "/api/auth/reset-password",
     express.json(),
     async (req: Request, res: Response) => {
-try {
-      // `express.json()` does not guarantee a usable body shape. A request
-      // without a body, with the wrong content type, or with malformed JSON
-      // can leave `req.body` as undefined or a non-object — destructuring
-      // would then throw a TypeError and turn a client-side mistake into a
-      // 500. Coerce to an empty object first so the existing validators
-      // produce the right 400.
-      const body = (req.body ?? {}) as Record<string, unknown>;
-      const { token, password } = body;
-      if (!token || typeof token !== "string") {
-        return res.status(400).json({ error: "Token is required" });
-      }
-      if (!password || typeof password !== "string") {
-        return res.status(400).json({ error: "Password is required" });
-      }
-
-        // 1. Atomically consume the verification row by token identifier.
-        //    First concurrent caller wins; subsequent callers (incl. all
-        //    replays) get null and a 400 — single-use guarantee.
-        const ctx = await auth.$context;
-        const identifier = `password_reset_${token}`;
-        const row = await ctx.internalAdapter.consumeVerificationValue(
-          identifier
-        );
-        if (!row) {
-          return res.status(400).json({ error: "Invalid or expired token" });
+      try {
+        // `express.json()` does not guarantee a usable body shape. A request
+        // without a body, with the wrong content type, or with malformed JSON
+        // can leave `req.body` as undefined or a non-object — destructuring
+        // would then throw a TypeError and turn a client-side mistake into a
+        // 500. Coerce to an empty object first so the existing validators
+        // produce the right 400.
+        const body = (req.body ?? {}) as Record<string, unknown>;
+        const { token, password } = body;
+        if (!token || typeof token !== "string") {
+          return res.status(400).json({ error: "Token is required" });
         }
-        const email = String(row.value ?? "").trim().toLowerCase();
-        if (!email) {
-          return res.status(400).json({ error: "Invalid or expired token" });
+        if (!password || typeof password !== "string") {
+          return res.status(400).json({ error: "Password is required" });
         }
 
-        // 2. Resolve the user by email.
+        // 1. Resolve the verification row across BOTH storage layouts so
+        //    in-flight tokens issued before this batch shipped still
+        //    resolve. The match is `OR` so a single SELECT handles both
+        //    schemas: the new layout stores the token in `identifier`,
+        //    while the pre-deploy layout stores the token in `value`.
         const db = await getDb();
         if (!db) {
           console.error("[Password Reset] DB unavailable");
           return res.status(500).json({ error: "Internal server error" });
         }
+        const newIdentifier = `password_reset_${token}`;
+        const matchingRows = await db
+          .select()
+          .from(verification)
+          .where(
+            or(
+              eq(verification.identifier, newIdentifier),
+              and(
+                eq(verification.value, token),
+                like(verification.identifier, "password_reset_%")
+              )
+            )
+          )
+          .limit(1);
+        const verificationRow = matchingRows[0];
+        if (!verificationRow) {
+          return res.status(400).json({ error: "Invalid or expired token" });
+        }
+        if (new Date() > verificationRow.expiresAt) {
+          // Best-effort cleanup of an expired row.
+          await db
+            .delete(verification)
+            .where(eq(verification.id, verificationRow.id));
+          return res.status(400).json({ error: "Invalid or expired token" });
+        }
+
+        // 2. Atomically consume the verification row by the discovered
+        //    identifier. First concurrent caller wins; subsequent callers
+        //    (incl. all replays) get null and a 400 — single-use guarantee.
+        const ctx = await auth.$context;
+        const consumed = await ctx.internalAdapter.consumeVerificationValue(
+          verificationRow.identifier
+        );
+        if (!consumed) {
+          return res.status(400).json({ error: "Invalid or expired token" });
+        }
+
+        // 3. The email is in the value field for the current layout. For
+        //    the pre-deploy layout, value IS the token and the email
+        //    lives in the identifier (stripped of the `password_reset_`
+        //    prefix). Disambiguate by which side matched.
+        let email: string;
+        if (verificationRow.identifier === newIdentifier) {
+          email = String(consumed.value ?? "").trim().toLowerCase();
+        } else {
+          email = String(consumed.identifier ?? "")
+            .replace(/^password_reset_/, "")
+            .trim()
+            .toLowerCase();
+        }
+        if (!email) {
+          return res.status(400).json({ error: "Invalid or expired token" });
+        }
+
+        // 4. Resolve the user by email.
         const rows = await db
           .select({ id: user.id })
           .from(user)
@@ -79,7 +142,7 @@ try {
           return res.status(400).json({ error: "Invalid or expired token" });
         }
 
-        // 3. Hash and write.
+        // 5. Hash and write.
         const hashed = await ctx.password.hash(password);
         await ctx.internalAdapter.updatePassword(userRow.id, hashed);
 

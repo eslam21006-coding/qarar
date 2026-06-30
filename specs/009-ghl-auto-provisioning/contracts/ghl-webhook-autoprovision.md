@@ -1,136 +1,172 @@
-# Contract: `POST /api/webhooks/ghl` — Auto-Provisioning Extension (Batch 5)
+# Contract: `POST /api/webhooks/ghl/provision` — Auto-Provisioning (Batch 5)
 
-Extends the Phase C contract
-([spec 004 `contracts/ghl-webhook.md`](../../004-ghl-webhook-access-gating/contracts/ghl-webhook.md)).
-Everything in that contract still holds — signature verification, event
-classification, email/contactId extraction, and the existing-user activate/
-deactivate behavior are **unchanged**. This document specifies only the new
-branch: what happens when an **activating** event arrives for an email **not**
-already in the database.
+Documents the application-owned provisioning endpoint mounted under the GHL
+webhook router. This route is the integration surface for GHL workflow
+builders that cannot sign requests; it is **not** the Phase C signed
+webhook (`POST /api/webhooks/ghl`). The signed-webhook contract remains
+separate — see `specs/004-ghl-webhook-access-gating/contracts/ghl-webhook.md`.
 
-## What changes vs. Phase C
-
-Phase C processing step 7 was:
-> Lookup user by normalized email → if none, `200 { ignored: true, reason: "user not found" }`.
-
-That single behavior splits by action:
-
-| Event action | Email known? | Phase C | Batch 5 |
-|--------------|--------------|---------|---------|
-| activate | yes | `200 { ok, status:"active" }` | `200 { ok, status:"active", newUser:false }` |
-| activate | **no** | `200 { ignored:true, reason:"user not found" }` | **provision** → `200 { ok, status:"active", newUser:true, setPasswordUrl }` |
-| deactivate | yes | `200 { ok, status:"inactive" }` | `200 { ok, status:"inactive", newUser:false }` |
-| deactivate | **no** | `200 { ignored:true, reason:"user not found" }` | `200 { ignored:true, reason:"user not found" }` (unchanged — never provision) |
-| ignore | — | `200 { ignored:true, reason }` | unchanged |
-| no email | — | `200 { ignored:true, reason:"no email" }` | unchanged |
-| bad signature | — | `401` | unchanged |
-| error | — | `500 { error }` | unchanged |
-
-> Adding `newUser` to the existing-user activate/deactivate responses is a
-> superset of the Phase C body and keeps the response shape uniform. Existing
-> tests asserting `{ ok: true, status }` should be updated to also accept
-> `newUser: false` (additive, no semantic change).
-
-## New processing order (replaces Phase C step 7–8)
+## Mount
 
 ```
-7. Lookup user by normalized email.
-   7a. If found:
-       - extractContactId; update the single row (subscriptionStatus + ghlContactId if present).
-       - return 200 { ok: true, status, newUser: false }.   // no setPasswordUrl
-   7b. If NOT found:
-       - if action === "deactivate":
-            return 200 { ignored: true, reason: "user not found" }.   // never provision
-       - if action === "activate":
-            i.   name = extractName(body, email); contactId = extractContactId(body).
-            ii.  provisionUserFromGhl({ email, name, contactId })
-                   - on unique-email race → treat as found → go to 7a behavior (newUser:false).
-                   - on other DB failure → throw → 500 (step 9).
-            iii. log "[GHL Webhook] Created new user: <email>".
-            iv.  try:
-                   token = generatePasswordResetToken(email, 72h)
-                   url   = buildPasswordResetUrl(token)
-                   log "[GHL Webhook] Set-password URL generated for: <email>"
-                   return 200 { ok:true, status:"active", newUser:true, setPasswordUrl:url }.
-                 catch (token/url failure):
-                   log "[GHL Webhook] DB error <message>"
-                   return 200 { ok:true, status:"active", newUser:true }.   // no URL (FR-015)
-9. Any thrown error → 500 { error } (unchanged).
+app.use("/api/webhooks/ghl", ghlWebhookRouter);
+// ghlWebhookRouter exposes:
+//   POST /api/webhooks/ghl/            — signed, event-classified (Phase C)
+//   POST /api/webhooks/ghl/provision   — this contract (Batch 5)
 ```
 
-## New response bodies
+Both routes share the same `ghlWebhookRouter`; ordering inside the
+router is "provision first, signed handler second" so neither path
+shadows the other.
+
+## Authentication
+
+`GHL_PROVISION_SECRET` is a high-entropy shared secret configured at
+deploy time. The request must include it via EITHER:
+
+- `x-ghl-provision-secret` header (preferred — headers don't land in
+  URL logs)
+- `?token=<secret>` query parameter (back-compat for workflow builders
+  that can only emit query strings)
+
+The configured secret must be at least `MIN_GHL_PROVISION_SECRET_BYTES`
+(32 bytes) — the route fails closed (401) for any shorter value so a
+misconfigured deployment cannot ship a public account-activating
+endpoint.
+
+When the env is unset OR shorter than the minimum, every request to
+`/provision` returns `401 { error: "unauthorized"`. The secret compare
+uses `crypto.timingSafeEqual` so the value isn't revealed through a
+timing side channel.
+
+## Request shape
+
+`POST /api/webhooks/ghl/provision` with JSON body:
+
+```jsonc
+{
+  "email":     "buyer@example.com",          // required, non-empty
+  "name":      "Buyer Name",                  // optional, fallback to
+                                              // firstName + lastName, then
+                                              // email prefix
+  "firstName": "Buyer",                      // optional
+  "lastName":  "Name",                       // optional
+  "contactId": "ghl_contact_42"              // optional, trimmed
+}
+```
+
+Validation:
+
+- `email` is trimmed + lowercased. Missing/empty → `200 { ignored: true }`.
+- `name` is whitespace-collapsed and never empty. Falls back to
+  `firstName + " " + lastName`, then to the email prefix (substring
+  before `@`), then to `"user"`.
+- `contactId` is trimmed; whitespace-only values are treated as missing.
+
+## Processing order
+
+```
+1. authorizeProvisionRequest(req)            → 401 on failure.
+2. Extract email/name/contactId from the body. Missing email → 200 { ignored: true }.
+3. setUserSubscriptionByEmail(email, "active", contactId)
+   3a. "updated"                  → 200 { ok, status:"active", newUser:false }.
+   3b. "not_found"                → continue.
+4. provisionUserFromGhl({ email, name, contactId })
+   4a. unique-email race          → treat as 3a (newUser:false).
+   4b. other DB failure           → 500 { error:"internal_error" }.
+   4c. created                    → continue.
+5. generatePasswordResetToken(email, 72h)
+   5a. success                    → 200 { ok, status:"active",
+                                          newUser:true, setPasswordUrl }.
+   5b. token-store failure        → 200 { ok, status:"active",
+                                          newUser:true } (FR-015: the
+                                          buyer can still use the
+                                          forgot-password flow).
+6. Any unexpected throw           → 500 { error:"internal_error" }.
+```
+
+## Response bodies
 
 | Status | Body | When |
 |--------|------|------|
-| `200` | `{ ok:true, status:"active", newUser:true, setPasswordUrl:"<base>/auth/reset-password?token=…" }` | New buyer provisioned, token minted (FR-008) |
-| `200` | `{ ok:true, status:"active", newUser:true }` | New buyer provisioned but token generation failed (FR-015) |
-| `200` | `{ ok:true, status:"active"\|"inactive", newUser:false }` | Existing user flipped (FR-009) — **never** a `setPasswordUrl` |
-| `200` | `{ ignored:true, reason:"user not found" }` | Deactivating event, unknown email (FR-010) |
-| `500` | `{ error:"internal_error" }` | Non-recoverable account-creation/DB error (FR-014) |
+| `200` | `{ ok:true, status:"active", newUser:true, setPasswordUrl:"<base>/auth/reset-password?token=…" }` | New buyer provisioned, token minted |
+| `200` | `{ ok:true, status:"active", newUser:true }` | New buyer provisioned, token store failed (FR-015) |
+| `200` | `{ ok:true, status:"active", newUser:false }` | Existing user activated |
+| `200` | `{ ignored:true }` | Missing/empty email |
+| `401` | `{ error:"unauthorized" }` | Missing, weak, or wrong `GHL_PROVISION_SECRET` |
+| `500` | `{ error:"internal_error" }` | Non-recoverable provisioning/DB error |
 
-`setPasswordUrl` base = `BETTER_AUTH_URL` (prod: `https://app.adqarar.com`), via
-`buildPasswordResetUrl` (FR-006 / R-005).
+`setPasswordUrl` is built by `buildPasswordResetUrl(token)` which reads
+`BETTER_AUTH_URL` (prod: `https://app.adqarar.com`). The URL host is
+read from configuration, not hard-coded.
 
-## New helpers (server/ghl-webhook.ts)
+## Audit log
 
-### `extractName(body: unknown, email: string): string`
-Pure. Precedence: `contact.name` → `contact.firstName`+`contact.lastName` →
-`name` → `firstName`+`lastName` → email prefix (before `@`). Trimmed,
-whitespace-collapsed, never empty (FR-004 / R-007).
+Every handled request emits exactly one `[GHL Provision]` line:
 
-### `provisionUserFromGhl(input: { email: string; name: string; contactId: string|null }): Promise<{ userId: string; created: boolean }>`
-Creates them atomically, or rolls back the created user if any later write fails,
-via Better Auth server context (R-001/R-002/R-003). Sets `ghlContactId` when
-provided. Idempotent on unique-email collision → returns `{ created: false }`
-and the existing user's id (R-008). Throws on other failure.
+- `email=<email> newUser=true`  — new user provisioned (with or without setPasswordUrl)
+- `email=<email> newUser=false` — existing user activated
+
+Unauthorized requests emit `[GHL Provision] Unauthorized request rejected`
+via `console.warn` with no email (the email was never read on that path).
+
+## Helpers (server/ghl-webhook.ts)
+
+### `extractEmailFlat(body)`
+Reads `body.email`, trims + lowercases. Returns `null` for non-strings
+or empty values.
+
+### `extractContactIdFlat(body)`
+Reads `body.contactId`, trims. Returns `null` for non-strings,
+whitespace-only, or empty values.
+
+### `extractNameFlat(body, email)`
+`body.name` → `body.firstName + " " + body.lastName` → email prefix
+(`<email>.split("@")[0]`) → `"user"`. Whitespace-collapsed, never empty.
+
+### `provisionUserFromGhl({ email, name, contactId })`
+Creates an active, email-verified user + credential account with a
+32-char random temp password via Better Auth server context
+(R-001/R-002/R-003). Sets `ghlContactId` when provided. Idempotent on
+unique-email collision → returns `{ created: false }` and the existing
+user's id (R-008). Throws on other failure.
 
 Atomicity contract: the three writes (`createUser` → `linkAccount` →
-`updateUser`) are NOT wrapped in a single DB transaction (Better Auth ^1.6.19
-exposes adapter-level transactions, not inter-method atomicity). Instead the
-helper uses a **best-effort rollback** — if `linkAccount` or `updateUser`
-throws after `createUser` succeeded, the helper calls
-`internalAdapter.deleteUser` on the partial row so the next webhook sees
-"not found" and retries from a clean slate. If the rollback itself fails,
-both errors are logged; the row remains and the next webhook will treat it
-as an existing user (no second account). No state in which a user has
-`subscriptionStatus: "active"` but no credential row.
+`updateUser`) are NOT wrapped in a single DB transaction (Better Auth
+^1.6.19 exposes adapter-level transactions, not inter-method atomicity).
+Instead the helper uses a **best-effort rollback** — if `linkAccount`
+or `updateUser` throws after `createUser` succeeded, the helper calls
+`internalAdapter.deleteUser` on the partial row so the next webhook
+sees "not found" and retries from a clean slate. If the rollback
+itself fails, both errors are logged; the row remains and the next
+webhook will treat it as an existing user (no second account). No
+state in which a user has `subscriptionStatus: "active"` but no
+credential row.
 
+## Difference from the Phase C signed webhook
 
-## Token generation change (server/passwordReset.ts)
-
-`generatePasswordResetToken(email: string, ttlMs: number = 60*60*1000): Promise<string>`
-— additive optional TTL; provisioning passes `72*60*60*1000`. One-time use and
-expiry semantics unchanged (FR-007 / R-004). Existing callers unaffected.
-
-## Reset-password endpoint fix (server/_core/index.ts — R-006 carve-out)
-
-`POST /api/auth/reset-password` MUST actually set the password:
-1. Atomically consume the verification row with
-   `internalAdapter.consumeVerificationValue(identifier)` — the single-use
-   token is consumed before any other work; concurrent retries receive
-   `null` and the same 400. Expired rows are also deleted by that call.
-2. Resolve user by email; hash `password` via `auth.$context`; write the
-   credential hash (`internalAdapter.updatePassword` / credential update).
-3. `200 { success: true }` (unchanged shape) / `400` invalid token / `500` error.
-
-Atomicity contract: the consume-on-step-1 IS the atomic claim. The token
-row never lives past the consume: if the password write fails afterwards,
-the buyer simply requests a new reset link. There is no window in which a
-token can be replayed because the verification row has already been
-deleted before the hash/write step begins.
-
-This makes SC-002 (set password → log in → dashboard) achievable. No request/
-response shape change for `ResetPassword.tsx` (still `{ token, password }` →
-`{ success }`).
+| | `POST /api/webhooks/ghl` (Phase C) | `POST /api/webhooks/ghl/provision` (Batch 5) |
+|---|---|---|
+| Auth | HMAC `x-ghl-signature` (FR-006) | Shared secret `GHL_PROVISION_SECRET` |
+| Body | raw bytes (HMAC over exact bytes) | `express.json()` |
+| Classification | `classifyEvent` (activate / deactivate / ignore) | None — any request with email triggers provision |
+| Trigger | GHL signed webhook events | GHL workflow integration |
+| Activation of existing user | yes (activate/deactivate branch) | yes (always activate) |
+| Auto-provision on activate | yes (FR-001) | yes (same path) |
+| Auto-provision on deactivate | no (FR-010) | n/a (always activate) |
+| `setPasswordUrl` on new buyer | yes (FR-008) | yes (same path) |
+| `setPasswordUrl` on existing buyer | no (FR-009) | no (FR-009) |
 
 ## Invariants (carried from Phase C + new)
 
-- Signature failure → `401`, no DB access. *(unchanged)*
-- Known-safe events → `200` so GHL does not retry. *(unchanged)*
-- Accounts are **never** created on deactivating or ignored events (FR-010).
-- At most one `user` row per email; unique index is the arbiter (FR-012/13).
+- Authentication failure → `401`, no DB access.
+- Known-safe events (any of the 4 `200` shapes) → `200` so GHL does
+  not retry.
+- Accounts are **never** created on unauthorized or deactivating
+  requests.
+- At most one `user` row per email; the unique index is the arbiter
+  (R-008 / FR-012 / FR-013).
 - Handler never crashes; duplicates are safe (FR-016).
-- Existing-user responses never include `setPasswordUrl` (FR-009).
-- Logging: `[GHL Webhook] Created new user: <email>` and
-  `[GHL Webhook] Set-password URL generated for: <email>`; existing
-  `type=…/email=…` and signature logs unchanged (FR-017).
+- Existing-user responses never include `setPasswordUrl`.
+- Set-password URL host is read from `BETTER_AUTH_URL` — never
+  hard-coded — so links stay correct across environments.

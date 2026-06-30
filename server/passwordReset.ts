@@ -87,20 +87,37 @@ export async function generatePasswordResetToken(
  * Verify a password-reset token and return the email it was issued for.
  * Returns `null` if the token is invalid, expired, or already consumed.
  *
- * This reads the row WITHOUT deleting it; for atomic single-use
- * consumption, callers should go through `internalAdapter.consumeVerificationValue`
+ * Compatibility: this helper matches BOTH the current storage layout
+ * (identifier = `password_reset_<token>`, value = <email>) and the
+ * pre-deploy layout (identifier = `password_reset_<email>`, value =
+ * <token>). For the pre-deploy layout the email is the identifier with
+ * the `password_reset_` prefix stripped; for the current layout the
+ * email is the value column.
+ *
+ * Reads the row WITHOUT deleting it; for atomic single-use consumption,
+ * callers should go through `internalAdapter.consumeVerificationValue`
  * directly (as `POST /api/auth/reset-password` does).
  */
 export async function verifyPasswordResetToken(
   token: string
 ): Promise<string | null> {
   const db = await getDb();
-  const records = await db
+  const { and, like, or } = await import("drizzle-orm");
+  const newIdentifier = tokenIdentifier(token);
+  const rows = await db
     .select()
     .from(verification)
-    .where(eq(verification.identifier, tokenIdentifier(token)))
+    .where(
+      or(
+        eq(verification.identifier, newIdentifier),
+        and(
+          eq(verification.value, token),
+          like(verification.identifier, "password_reset_%")
+        )
+      )
+    )
     .limit(1);
-  const record = records[0];
+  const record = rows[0];
 
   if (!record) return null;
 
@@ -110,7 +127,12 @@ export async function verifyPasswordResetToken(
     return null;
   }
 
-  return String(record.value ?? "");
+  if (record.identifier === newIdentifier) {
+    // Current layout: value is the email.
+    return String(record.value ?? "");
+  }
+  // Pre-deploy layout: identifier is `password_reset_<email>`.
+  return String(record.identifier ?? "").replace(/^password_reset_/, "");
 }
 
 /**

@@ -437,9 +437,24 @@ export function extractNameFlat(body: unknown, email: string): string {
  * request — failing closed is the only safe default for an
  * unauthenticated, state-changing endpoint.
  */
+/**
+ * Minimum length of the configured `GHL_PROVISION_SECRET`, in bytes.
+ * Below this the route refuses every request — a short or default
+ * secret would otherwise let a misconfigured deployment ship a
+ * public account-activating endpoint. 32 bytes matches the entropy
+ * budget of the rest of our secrets (token = `randomBytes(32).toString("hex")`
+ * is 64 hex chars).
+ */
+const MIN_GHL_PROVISION_SECRET_BYTES = 32;
+
 function authorizeProvisionRequest(req: Request): boolean {
   const expected = process.env.GHL_PROVISION_SECRET;
-  if (!expected || expected.length === 0) return false;
+  if (
+    !expected ||
+    Buffer.byteLength(expected, "utf8") < MIN_GHL_PROVISION_SECRET_BYTES
+  ) {
+    return false;
+  }
   const headerSecret = req.get("x-ghl-provision-secret");
   if (
     typeof headerSecret === "string" &&
@@ -561,7 +576,15 @@ ghlWebhookRouter.post(
           setPasswordUrl,
         });
         return;
-      } catch {
+      } catch (tokenErr: unknown) {
+        // FR-015: token failure must not lose the activation. Surface the
+        // actual cause to operators so they can debug when an account
+        // is provisioned but no setPasswordUrl is returned.
+        const tokenMsg =
+          tokenErr instanceof Error ? tokenErr.message : String(tokenErr);
+        console.error(
+          `[GHL Provision] reset-token generation failed user=${provision.userId} message=${tokenMsg}`
+        );
         console.log(`[GHL Provision] email=${email} newUser=true`);
         res.status(200).json({ ok: true, status: "active", newUser: true });
         return;

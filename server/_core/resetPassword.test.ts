@@ -73,14 +73,35 @@ type FakeDb = {
 function buildFakeDb(opts: {
   matchingUser?: { id: string } | null;
   throwOnHash?: boolean;
+  /** Verification row returned by the first SELECT in the route. */
+  matchingVerification?: {
+    id: string;
+    identifier: string;
+    value: string;
+    expiresAt: Date;
+  } | null;
 }): { fakeDb: FakeDb; selectCalls: { count: number } } {
   const counters = { selectCalls: { count: 0 } };
+  // Two distinct SELECT calls happen on the happy path: the first
+  // looks up the verification row (token), the second looks up the
+  // user by email. Tests that don't supply a `matchingVerification`
+  // get the second call alone (back-compat for tests that only care
+  // about the user lookup).
   const fakeDb: FakeDb = {
     select: () => ({
       from: () => ({
         where: () => ({
           limit: () => {
             counters.selectCalls.count++;
+            // First select: the route looks up the verification row.
+            if (
+              opts.matchingVerification !== undefined &&
+              counters.selectCalls.count === 1
+            ) {
+              return Promise.resolve(
+                opts.matchingVerification ? [opts.matchingVerification] : []
+              );
+            }
             return Promise.resolve(opts.matchingUser ? [opts.matchingUser] : []);
           },
         }),
@@ -147,7 +168,16 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
   });
 
   it("happy path: consumes token atomically, hashes the password, writes the credential hash", async () => {
-    const { fakeDb, selectCalls } = buildFakeDb({ matchingUser: { id: "buyer-1" } });
+    const futureExpiry = new Date(Date.now() + 60 * 60 * 1000);
+    const { fakeDb, selectCalls } = buildFakeDb({
+      matchingUser: { id: "buyer-1" },
+      matchingVerification: {
+        id: "v-1",
+        identifier: "password_reset_tok-1",
+        value: "email@example.com",
+        expiresAt: futureExpiry,
+      },
+    });
     vi.mocked(db.getDb).mockResolvedValue(fakeDb as any);
     const app = buildApp();
 
@@ -157,7 +187,7 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ success: true });
-    // Atomic single-use consumption (no separate verifyPasswordResetToken call).
+    // The token row was looked up (SELECT) then consumed (consume call).
     expect(__testAuthMock.consumeCalls).toEqual([
       { identifier: "password_reset_tok-1" },
     ]);
@@ -165,10 +195,12 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
     expect(__testAuthMock.updatePasswordCalls).toEqual([
       { userId: "buyer-1", password: "hashed:NewStrong!Pass1" },
     ]);
-    expect(selectCalls.count).toBe(1);
+    // Two SELECTs: one for the verification row, one for the user.
+    expect(selectCalls.count).toBe(2);
   });
 
   it("atomic replay: same token used twice → second returns 400 (FR-007 / R-006)", async () => {
+    const futureExpiry = new Date(Date.now() + 60 * 60 * 1000);
     let consumeCalls = 0;
     const ctx = await importedAuth.$context;
     ctx.internalAdapter.consumeVerificationValue = async (identifier: string) => {
@@ -180,7 +212,15 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
       return null;
     };
 
-    const { fakeDb } = buildFakeDb({ matchingUser: { id: "buyer-2" } });
+    const { fakeDb } = buildFakeDb({
+      matchingUser: { id: "buyer-2" },
+      matchingVerification: {
+        id: "v-r",
+        identifier: "password_reset_tok-r",
+        value: "buyer@example.com",
+        expiresAt: futureExpiry,
+      },
+    });
     vi.mocked(db.getDb).mockResolvedValue(fakeDb as any);
     const app = buildApp();
 
@@ -200,7 +240,16 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
   });
 
   it("missing password → 400 and the token is NOT consumed (no side effects)", async () => {
-    const { fakeDb, selectCalls } = buildFakeDb({ matchingUser: { id: "x" } });
+    const futureExpiry = new Date(Date.now() + 60 * 60 * 1000);
+    const { fakeDb, selectCalls } = buildFakeDb({
+      matchingUser: { id: "x" },
+      matchingVerification: {
+        id: "v-3",
+        identifier: "password_reset_tok-3",
+        value: "x@example.com",
+        expiresAt: futureExpiry,
+      },
+    });
     vi.mocked(db.getDb).mockResolvedValue(fakeDb as any);
     const app = buildApp();
     const res = await request(app)
@@ -225,12 +274,21 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
   });
 
   it("consume returns null (already used / expired) → 400", async () => {
+    const futureExpiry = new Date(Date.now() + 60 * 60 * 1000);
     const ctx = await importedAuth.$context;
     ctx.internalAdapter.consumeVerificationValue = async (identifier: string) => {
       __testAuthMock.consumeCalls.push({ identifier });
       return null;
     };
-    const { fakeDb } = buildFakeDb({ matchingUser: { id: "ignored" } });
+    const { fakeDb } = buildFakeDb({
+      matchingUser: { id: "ignored" },
+      matchingVerification: {
+        id: "v-exp",
+        identifier: "password_reset_expired",
+        value: "ignored@example.com",
+        expiresAt: futureExpiry,
+      },
+    });
     vi.mocked(db.getDb).mockResolvedValue(fakeDb as any);
     const app = buildApp();
     const res = await request(app)
@@ -243,7 +301,16 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
   });
 
   it("routing ordering: Better Auth catch-all MUST NOT shadow reset-password", async () => {
-    const { fakeDb } = buildFakeDb({ matchingUser: { id: "buyer" } });
+    const futureExpiry = new Date(Date.now() + 60 * 60 * 1000);
+    const { fakeDb } = buildFakeDb({
+      matchingUser: { id: "buyer" },
+      matchingVerification: {
+        id: "v-order",
+        identifier: "password_reset_tok-order",
+        value: "buyer@example.com",
+        expiresAt: futureExpiry,
+      },
+    });
     vi.mocked(db.getDb).mockResolvedValue(fakeDb as any);
     const app = buildApp({ registerBetterAuthCatchAll: true });
 
@@ -265,5 +332,37 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
       .set("Content-Type", "application/json");
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "Token is required" });
+  });
+
+  it("accepts pre-deploy layout (identifier = password_reset_<email>, value = token)", async () => {
+    // Legacy storage: identifier = `password_reset_<email>`, value = <token>.
+    // The legacy SELECT clause (value=token AND identifier LIKE 'password_reset_%')
+    // should match this row, and the email is recovered from the identifier.
+    const futureExpiry = new Date(Date.now() + 60 * 60 * 1000);
+    const { fakeDb } = buildFakeDb({
+      matchingUser: { id: "legacy-buyer" },
+      matchingVerification: {
+        id: "v-legacy",
+        identifier: "password_reset_legacy@example.com",
+        value: "legacy-token-1",
+        expiresAt: futureExpiry,
+      },
+    });
+    vi.mocked(db.getDb).mockResolvedValue(fakeDb as any);
+    const app = buildApp();
+
+    const res = await request(app)
+      .post("/api/auth/reset-password")
+      .send({ token: "legacy-token-1", password: "NewStrong!Pass1" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
+    // Consume was called with the legacy identifier, not the new one.
+    expect(__testAuthMock.consumeCalls).toEqual([
+      { identifier: "password_reset_legacy@example.com" },
+    ]);
+    expect(__testAuthMock.updatePasswordCalls).toEqual([
+      { userId: "legacy-buyer", password: "hashed:NewStrong!Pass1" },
+    ]);
   });
 });

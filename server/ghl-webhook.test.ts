@@ -1690,6 +1690,19 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ error: "unauthorized" });
   });
+
+  it("returns 401 when GHL_PROVISION_SECRET is shorter than the 32-byte minimum (fail closed)", async () => {
+    // A misconfigured short secret cannot be used to authorize any request,
+    // even if the client supplies the same short string.
+    process.env.GHL_PROVISION_SECRET = "short-secret";
+    app = buildApp();
+    const res = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", "short-secret")
+      .send({ email: "weak-secret@example.com" });
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: "unauthorized" });
+  });
 });
 
 describe("extractContactIdFlat (workflow helper)", () => {
