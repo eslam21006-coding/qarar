@@ -1,13 +1,58 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Mail, ArrowRight } from "lucide-react";
-import { useState } from "react";
+import { Loader2, Mail, ArrowRight, Clock } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 
 const MSG_GENERIC = "حدث خطأ، حاول مرة أخرى";
 const MSG_SENT = "تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني";
-const MSG_RATE_LIMIT = "لقد قمت بالعديد من المحاولات.. برجاء المحاولة مرة أخرى لاحقاً";
+
+/** Format remaining seconds as mm:ss */
+function formatCountdown(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/** Countdown display component */
+function RateLimitError({ retryAfterMs }: { retryAfterMs: number }) {
+  const [remaining, setRemaining] = useState(() =>
+    Math.max(0, Math.ceil((retryAfterMs - Date.now()) / 1000))
+  );
+
+  useEffect(() => {
+    if (remaining <= 0) return;
+    const id = setInterval(() => {
+      setRemaining(prev => {
+        const next = Math.max(0, Math.ceil((retryAfterMs - Date.now()) / 1000));
+        if (next <= 0) clearInterval(id);
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [retryAfterMs]);
+
+  return (
+    <div
+      role="alert"
+      className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-sm text-amber-300"
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <Clock className="h-4 w-4 shrink-0" />
+        <span className="font-medium">لقد قمت بالعديد من المحاولات</span>
+      </div>
+      {remaining > 0 ? (
+        <p className="text-amber-400/80 text-xs">
+          برجاء المحاولة مرة أخرى بعد{" "}
+          <span className="font-mono font-bold text-amber-300">{formatCountdown(remaining)}</span>
+        </p>
+      ) : (
+        <p className="text-amber-400/80 text-xs">يمكنك المحاولة الآن</p>
+      )}
+    </div>
+  );
+}
 
 /**
  * Arabic forgot password screen (`/auth/forgot-password`).
@@ -22,12 +67,14 @@ export default function ForgotPassword() {
   const [, navigate] = useLocation();
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [rateLimitedUntil, setRateLimitedUntil] = useState<number | null>(null);
   const [success, setSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const submit = async () => {
     if (submitting) return;
     setError(null);
+    setRateLimitedUntil(null);
 
     const trimmedEmail = email.trim();
     if (!trimmedEmail) {
@@ -44,7 +91,10 @@ export default function ForgotPassword() {
       });
 
       if (response.status === 429) {
-        setError(MSG_RATE_LIMIT);
+        const data = await response.json().catch(() => ({}));
+        // Use retryAfter from server if available, else fall back to 1 hour from now
+        const retryAfterMs = typeof data.retryAfter === "number" ? data.retryAfter : Date.now() + 60 * 60 * 1000;
+        setRateLimitedUntil(retryAfterMs);
         return;
       }
 
@@ -173,7 +223,11 @@ export default function ForgotPassword() {
             />
           </div>
 
-          {error && (
+          {rateLimitedUntil !== null && (
+            <RateLimitError retryAfterMs={rateLimitedUntil} />
+          )}
+
+          {error && !rateLimitedUntil && (
             <div
               role="alert"
               className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300"

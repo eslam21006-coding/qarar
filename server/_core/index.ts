@@ -17,7 +17,7 @@ import { generatePasswordResetToken, buildPasswordResetUrl } from "../passwordRe
 import { registerPasswordResetRoutes } from "./passwordResetRoute";
 import { sendPasswordResetEmail } from "../email";
 import { getAllUsers } from "../adminApi";
-import { checkRateLimit } from "../rateLimiting";
+import { checkRateLimit, getRateLimitStatus } from "../rateLimiting";
 import { logAuditEvent } from "../auditLog";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -76,7 +76,13 @@ async function startServer() {
       const isAllowed = await checkRateLimit(email, "forgot_password");
       if (!isAllowed) {
         console.warn(`[Forgot Password] Rate limit exceeded for ${email}`);
-        return res.status(429).json({ error: "Too many requests. Please try again later." });
+        // Include retryAfter timestamp so the client can show a countdown timer
+        const status = await getRateLimitStatus(email, "forgot_password");
+        const retryAfter = status.resetTime ? status.resetTime.getTime() : Date.now() + 60 * 60 * 1000;
+        return res.status(429).json({
+          error: "Too many requests. Please try again later.",
+          retryAfter,
+        });
       }
 
       // Generate reset token
