@@ -1,24 +1,80 @@
 import crypto from "crypto";
-import { drizzle } from "drizzle-orm/mysql2";
 import { eq } from "drizzle-orm";
-import mysql from "mysql2/promise";
-import { user, verification } from "../drizzle/auth-schema";
+import { verification } from "../drizzle/auth-schema";
 
-const pool = mysql.createPool(process.env.DATABASE_URL!);
-const db = drizzle(pool, { schema: { user, verification }, mode: "default" });
+// The runtime drizzle() instance carries a richer schema map than this
+// module needs (it only reads/writes `verification`). Wider drizzle
+// generics clash with `relations` variance, so the cached handle is
+// typed opaquely. `pnpm test` mocks `getDb` per-test; the runtime here
+// is only reached when `DATABASE_URL` is configured.
+/* eslint-disable @typescript-eslint/no-explicit-any */
+let _pool: any = null;
+let _db: any = null;
+// Memoize the in-flight initialization so concurrent first-time callers
+// share one pool instead of each racing through `createPool` and overwriting
+// each other's `_db`/`_pool` (which would leak pooled connections).
+let _dbInit: Promise<any> | null = null;
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+async function getDb(): Promise<any> {
+  if (_db) return _db;
+  if (_dbInit) return _dbInit;
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is not configured");
+  _dbInit = (async () => {
+    const { default: mysql } = await import("mysql2/promise");
+    const { drizzle } = await import("drizzle-orm/mysql2");
+    _pool = mysql.createPool(url);
+    _db = drizzle(_pool, { schema: { user: verification, verification }, mode: "default" });
+    return _db;
+  })();
+  try {
+    return await _dbInit;
+  } catch (err) {
+    // Failed init — let the next caller try again rather than pinning a
+    // poisoned promise for the lifetime of the process.
+    _dbInit = null;
+    throw err;
+  }
+}
 
 /**
- * Generate a secure password reset token and store it in the verification table.
- * Token expires in 1 hour.
+ * Identifier used to look up the verification row for a token. Using the
+ * token itself as the identifier lets Better Auth's
+ * `consumeVerificationValue(identifier)` perform an atomic single-use
+ * check-and-delete — only the first concurrent caller proceeds; every
+ * subsequent caller receives `null`. Expired rows are also deleted by
+ * that call.
  */
-export async function generatePasswordResetToken(email: string): Promise<string> {
+function tokenIdentifier(token: string): string {
+  return `password_reset_${token}`;
+}
+
+/**
+ * Generate a one-time password-reset token and store it in the verification
+ * table. Default TTL is 1 hour (existing forgot-password flow); callers may
+ * pass a custom `ttlMs` (e.g. GHL auto-provisioning passes 72h) — backwards
+ * compatible with every existing caller (R-004 / FR-007).
+ *
+ * Storage layout for atomic single-use consumption:
+ *   identifier: `password_reset_<token>`
+ *   value:      <email>
+ *
+ * The endpoint consumes the row by identifier with
+ * `internalAdapter.consumeVerificationValue(...)`.
+ */
+export async function generatePasswordResetToken(
+  email: string,
+  ttlMs: number = 60 * 60 * 1000
+): Promise<string> {
   const token = crypto.randomBytes(32).toString("hex");
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+  const expiresAt = new Date(Date.now() + ttlMs);
+  const db = await getDb();
 
   await db.insert(verification).values({
     id: crypto.randomUUID(),
-    identifier: `password_reset_${email}`,
-    value: token,
+    identifier: tokenIdentifier(token),
+    value: email,
     expiresAt,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -28,69 +84,55 @@ export async function generatePasswordResetToken(email: string): Promise<string>
 }
 
 /**
- * Verify a password reset token and return the associated email.
- * Returns null if token is invalid or expired.
+ * Verify a password-reset token and return the email it was issued for.
+ * Returns `null` if the token is invalid, expired, or already consumed.
+ *
+ * Compatibility: this helper matches BOTH the current storage layout
+ * (identifier = `password_reset_<token>`, value = <email>) and the
+ * pre-deploy layout (identifier = `password_reset_<email>`, value =
+ * <token>). For the pre-deploy layout the email is the identifier with
+ * the `password_reset_` prefix stripped; for the current layout the
+ * email is the value column.
+ *
+ * Reads the row WITHOUT deleting it; for atomic single-use consumption,
+ * callers should go through `internalAdapter.consumeVerificationValue`
+ * directly (as `POST /api/auth/reset-password` does).
  */
-export async function verifyPasswordResetToken(token: string): Promise<string | null> {
-  const records = await db.select().from(verification).where(eq(verification.value, token)).limit(1);
-  const record = records[0];
+export async function verifyPasswordResetToken(
+  token: string
+): Promise<string | null> {
+  const db = await getDb();
+  const { and, like, or } = await import("drizzle-orm");
+  const newIdentifier = tokenIdentifier(token);
+  const rows = await db
+    .select()
+    .from(verification)
+    .where(
+      or(
+        eq(verification.identifier, newIdentifier),
+        and(
+          eq(verification.value, token),
+          like(verification.identifier, "password_reset_%")
+        )
+      )
+    )
+    .limit(1);
+  const record = rows[0];
 
-  if (!record || !record.identifier.startsWith("password_reset_")) {
-    return null;
-  }
+  if (!record) return null;
 
-  // Check if token is expired
   if (new Date() > record.expiresAt) {
-    // Clean up expired token
+    // Best-effort cleanup of an expired row.
     await db.delete(verification).where(eq(verification.id, record.id));
     return null;
   }
 
-  const email = record.identifier.replace("password_reset_", "");
-  return email;
-}
-
-/**
- * Reset user password and clean up the verification token.
- */
-export async function resetUserPassword(
-  email: string,
-  newPassword: string,
-  token: string
-): Promise<boolean> {
-  try {
-    // Verify token first
-    const verifiedEmail = await verifyPasswordResetToken(token);
-    if (verifiedEmail !== email) {
-      return false;
-    }
-
-    // Get the user
-    const users = await db.select().from(user).where(eq(user.email, email)).limit(1);
-    const userData = users[0];
-
-    if (!userData) {
-      return false;
-    }
-
-    // Hash the new password using better-auth's password hashing
-    // For now, we'll use bcrypt via the auth system
-    // This requires calling the auth API or using a password hashing library
-    // Since better-auth handles password hashing internally, we need to update via the auth system
-    
-    // Clean up the token
-    const records = await db.select().from(verification).where(eq(verification.value, token)).limit(1);
-    const record = records[0];
-
-    if (record) {
-      await db.delete(verification).where(eq(verification.id, record.id));
-    }
-
-    return true;
-  } catch (err) {
-    console.error("Error resetting password:", err);
-    return false;
+  if (record.identifier === newIdentifier) {
+    // Current layout: value is the email.
+    return String(record.value ?? "");
   }
+  // Pre-deploy layout: identifier is `password_reset_<email>`.
+  return String(record.identifier ?? "").replace(/^password_reset_/, "");
 }
 
 /**
