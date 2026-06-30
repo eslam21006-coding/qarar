@@ -58,21 +58,8 @@ async function startServer() {
   // mounted before the catch-all so Express matches it on the way down.
   registerPasswordResetRoutes(app);
 
-  app.all("/api/auth/*", toNodeHandler(auth));
-
-  // Phase C / T008 / FR-001–FR-003 — GHL webhook.
-  // MUST sit BEFORE express.json()/urlencoded() so the route-scoped
-  // express.raw() inside the router reads the exact signed bytes GHL sent.
-  // Side-by-side with the Better Auth raw mount above; both paths need the
-  // raw stream preserved for HMAC verification.
-  app.use("/api/webhooks/ghl", ghlWebhookRouter);
-
-  // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
-  registerStorageProxy(app);
-
   // Forgot password endpoint - initiates password reset flow
+  // MUST be registered BEFORE the catch-all so Express matches it first
   app.post("/api/auth/forgot-password", async (req, res) => {
     console.log("[Forgot Password] Endpoint hit");
     try {
@@ -121,6 +108,22 @@ async function startServer() {
       res.status(500).json({ error: "Internal server error" });
     }
   });
+
+  app.all("/api/auth/*", toNodeHandler(auth));
+
+  // Phase C / T008 / FR-001–FR-003 — GHL webhook.
+  // MUST sit BEFORE express.json()/urlencoded() so the route-scoped
+  // express.raw() inside the router reads the exact signed bytes GHL sent.
+  // Side-by-side with the Better Auth raw mount above; both paths need the
+  // raw stream preserved for HMAC verification.
+  app.use("/api/webhooks/ghl", ghlWebhookRouter);
+
+  // Configure body parser with larger size limit for file uploads
+  app.use(express.json({ limit: "50mb" }));
+  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  registerStorageProxy(app);
+
+
 
   // Password reset (token generation) endpoint — kept after the global
   // body parser since this is JSON-in / JSON-out.
