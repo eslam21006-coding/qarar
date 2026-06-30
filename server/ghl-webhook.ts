@@ -16,6 +16,7 @@
 import crypto from "node:crypto";
 import express, { type Request, type Response } from "express";
 import { eq } from "drizzle-orm";
+import axios from "axios";
 import { getDb } from "./db";
 import { user } from "../drizzle/schema";
 import {
@@ -490,6 +491,74 @@ function timingSafeEqualString(a: string, b: string): boolean {
 }
 
 /**
+ * GHL Contacts API endpoint and version. Pushing the set-password URL
+ * back into the contact's custom field via the workflow's contactId
+ * means a downstream GHL automation can email the buyer the link
+ * without needing the webhook response to round-trip.
+ */
+const GHL_CONTACTS_API_BASE = "https://services.leadconnectorhq.com";
+const GHL_CONTACTS_API_VERSION = "2021-07-28";
+const GHL_SETPASSWORD_FIELD_ID = "contact.setpasswordurl";
+const GHL_CONTACT_UPDATE_TIMEOUT_MS = 5_000;
+
+/**
+ * Push the generated set-password URL back into the GHL contact record
+ * via the Contacts API. Caller is responsible for skipping the call
+ * when `contactId` or `GHL_API_KEY` is missing. A failure here is
+ * non-fatal: the account was already provisioned and the buyer can
+ * still reach the dashboard via the forgot-password flow. We log and
+ * return so the calling route can still respond `200 { ok, newUser:true, setPasswordUrl }`.
+ */
+async function pushSetPasswordUrlToGhl(
+  contactId: string,
+  setPasswordUrl: string
+): Promise<void> {
+  const apiKey = process.env.GHL_API_KEY;
+  if (!apiKey || apiKey.length === 0) {
+    console.log(
+      "[GHL Provision] GHL_API_KEY not set, skipping contact field update"
+    );
+    return;
+  }
+  if (!contactId || contactId.length === 0) {
+    console.log(
+      "[GHL Provision] No contactId available, skipping contact field update"
+    );
+    return;
+  }
+
+  try {
+    await axios.put(
+      `${GHL_CONTACTS_API_BASE}/contacts/${encodeURIComponent(contactId)}`,
+      {
+        customFields: [
+          {
+            id: GHL_SETPASSWORD_FIELD_ID,
+            value: setPasswordUrl,
+          },
+        ],
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Version: GHL_CONTACTS_API_VERSION,
+          "Content-Type": "application/json",
+        },
+        timeout: GHL_CONTACT_UPDATE_TIMEOUT_MS,
+        validateStatus: (s) => s >= 200 && s < 300,
+      }
+    );
+  } catch (err: unknown) {
+    // Non-fatal: account was already provisioned. Log the underlying
+    // error so operators can debug, but do not bubble to the caller.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[GHL Provision] Failed to update GHL contact custom field: ${msg}`
+    );
+  }
+}
+
+/**
  * Dedicated provisioning endpoint for GHL workflow integration
  * (POST /api/webhooks/ghl/provision).
  *
@@ -571,6 +640,12 @@ ghlWebhookRouter.post(
           72 * 60 * 60 * 1000
         );
         const setPasswordUrl = buildPasswordResetUrl(token);
+        // Push the URL back to the GHL contact record so a downstream
+        // workflow can email the buyer. Non-fatal — the route still
+        // returns 200 with `setPasswordUrl` even if the upstream call
+        // fails or is skipped. Fire-and-await before the response so
+        // GHL's automation sees the updated field on the same tick.
+        await pushSetPasswordUrlToGhl(contactId ?? "", setPasswordUrl);
         console.log(`[GHL Provision] email=${email} newUser=true`);
         res.status(200).json({
           ok: true,
