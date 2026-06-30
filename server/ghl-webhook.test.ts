@@ -114,13 +114,19 @@ const __passwordResetMock = {
 };
 
 // Mock axios so the GHL Contacts API call made by the /provision route
-// is observable in tests. Each test can override `__axiosMock.putCalls`
-// / `__axiosMock.putImpl` to drive behavior.
+// is observable in tests. The mock records the full request config
+// (url, body, headers, timeout, validateStatus) so regressions that
+// drop any of the production settings — e.g. removing the 5s timeout
+// or the validateStatus guard — are caught by the existing assertions.
 const __axiosMock = {
   putCalls: [] as Array<{
     url: string;
     data: unknown;
-    headers: Record<string, string>;
+    config: {
+      headers: Record<string, string>;
+      timeout?: number;
+      validateStatus?: (status: number) => boolean;
+    };
   }>,
   putImpl: null as null | ((url: string) => Promise<{ status: number }>),
   reset() {
@@ -133,12 +139,24 @@ vi.mock("axios", () => ({
     put: async (
       url: string,
       data: unknown,
-      config: { headers?: Record<string, string> }
+      config: {
+        headers?: Record<string, string>;
+        timeout?: number;
+        validateStatus?: (status: number) => boolean;
+      } = {}
     ) => {
       __axiosMock.putCalls.push({
         url,
         data,
-        headers: config?.headers ?? {},
+        config: {
+          headers: config?.headers ?? {},
+          ...(config?.timeout !== undefined
+            ? { timeout: config.timeout }
+            : {}),
+          ...(config?.validateStatus !== undefined
+            ? { validateStatus: config.validateStatus }
+            : {}),
+        },
       });
       if (__axiosMock.putImpl) return __axiosMock.putImpl(url);
       return { status: 200, data: {} };
@@ -1767,7 +1785,7 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
     expect(res.body).toMatchObject({ ok: true, status: "active", newUser: true });
 
     // Exactly one PUT to the GHL Contacts API, with the right URL,
-    // body, and auth/version headers.
+    // body, full request config (timeout, validateStatus), and headers.
     expect(__axiosMock.putCalls).toHaveLength(1);
     expect(__axiosMock.putCalls[0].url).toBe(
       "https://services.leadconnectorhq.com/contacts/ghl_contact_push_1"
@@ -1780,11 +1798,20 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
         },
       ],
     });
-    expect(__axiosMock.putCalls[0].headers).toEqual({
+    expect(__axiosMock.putCalls[0].config.headers).toEqual({
       Authorization: "Bearer test-ghl-api-key-abcdef123456",
       Version: "2021-07-28",
       "Content-Type": "application/json",
     });
+    // Guard against regressions that drop the timeout or the
+    // validateStatus safety net (axios default would throw on 4xx/5xx
+    // without the guard, and a slow GHL could block the response).
+    expect(__axiosMock.putCalls[0].config.timeout).toBe(5_000);
+    expect(__axiosMock.putCalls[0].config.validateStatus).toBeDefined();
+    expect(__axiosMock.putCalls[0].config.validateStatus?.(200)).toBe(true);
+    expect(__axiosMock.putCalls[0].config.validateStatus?.(299)).toBe(true);
+    expect(__axiosMock.putCalls[0].config.validateStatus?.(300)).toBe(false);
+    expect(__axiosMock.putCalls[0].config.validateStatus?.(500)).toBe(false);
   });
 
   it("does NOT push to GHL when GHL_API_KEY is unset (silent skip)", async () => {
