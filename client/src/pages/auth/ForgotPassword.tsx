@@ -7,6 +7,7 @@ import { Link, useLocation } from "wouter";
 
 const MSG_GENERIC = "حدث خطأ، حاول مرة أخرى";
 const MSG_SENT = "تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني";
+const MSG_RATE_LIMIT = "لقد قمت بالعديد من المحاولات.. برجاء المحاولة مرة أخرى لاحقاً";
 
 /**
  * Arabic forgot password screen (`/auth/forgot-password`).
@@ -42,8 +43,13 @@ export default function ForgotPassword() {
         body: JSON.stringify({ email: trimmedEmail }),
       });
 
+      if (response.status === 429) {
+        setError(MSG_RATE_LIMIT);
+        return;
+      }
+
       if (!response.ok) {
-        // Even on error, show success message for security (don't reveal if email exists)
+        // For other errors, show generic success message for security (don't reveal if email exists)
         setSuccess(true);
         return;
       }
