@@ -72,6 +72,56 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
 
+  // Forgot password endpoint - initiates password reset flow
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    console.log("[Forgot Password] Endpoint hit");
+    try {
+      const { email } = req.body;
+      console.log(`[Forgot Password] Request received for email: ${email}`);
+      
+      if (!email || typeof email !== "string") {
+        console.warn("[Forgot Password] Invalid email in request");
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      // Check rate limiting (3 requests per email per hour)
+      const isAllowed = await checkRateLimit(email, "forgot_password");
+      if (!isAllowed) {
+        console.warn(`[Forgot Password] Rate limit exceeded for ${email}`);
+        return res.status(429).json({ error: "Too many requests. Please try again later." });
+      }
+
+      // Generate reset token
+      console.log(`[Forgot Password] Generating reset token for ${email}`);
+      const token = await generatePasswordResetToken(email);
+      const resetUrl = buildPasswordResetUrl(token);
+      console.log(`[Forgot Password] Reset URL built: ${resetUrl}`);
+
+      // Send email with reset link
+      console.log(`[Forgot Password] Sending password reset email to ${email}`);
+      const emailResult = await sendPasswordResetEmail(email, resetUrl);
+      if (!emailResult.success) {
+        console.warn(`[Forgot Password] Failed to send email to ${email}:`, emailResult.error);
+      } else {
+        console.log(`[Forgot Password] Email sent successfully to ${email}`);
+      }
+
+      // Log audit event
+      await logAuditEvent({
+        email,
+        eventType: "password_reset_requested",
+        status: emailResult.success ? "success" : "failed",
+        details: { emailSent: emailResult.success }
+      });
+
+      // Always return success for security (don't reveal if email exists)
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("[Forgot Password] Error in forgot-password:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // Password reset (token generation) endpoint — kept after the global
   // body parser since this is JSON-in / JSON-out.
   app.post("/api/auth/change-password", async (req, res) => {

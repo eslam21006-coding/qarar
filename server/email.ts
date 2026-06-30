@@ -9,12 +9,16 @@ export async function sendEmail(
   subject: string,
   html: string
 ): Promise<{ success: boolean; error?: string; messageId?: string }> {
+  console.log(`[Email] sendEmail called: to=${to}, subject=${subject}`);
+  
   if (!ENV.resendApiKey) {
     console.warn("[Email] Resend API key not configured, skipping email");
     return { success: true }; // Don't fail if not configured
   }
 
+  console.log("[Email] Resend API key found, attempting to send...");
   try {
+    console.log("[Email] Making request to Resend API...");
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -31,14 +35,15 @@ export async function sendEmail(
 
     if (!response.ok) {
       const error = await response.json();
-      console.error("[Email] Resend API error:", error);
+      console.error("[Email] Resend API error (status " + response.status + "):", error);
       return { success: false, error: error.message || "Failed to send email" };
     }
 
     const data = await response.json();
+    console.log("[Email] Email sent successfully, messageId:", data.id);
     return { success: true, messageId: data.id };
   } catch (err: any) {
-    console.error("[Email] Error sending email:", err);
+    console.error("[Email] Exception caught while sending email:", err.message, err.stack);
     return { success: false, error: err.message };
   }
 }
@@ -50,6 +55,7 @@ export async function sendPasswordResetEmail(
   email: string,
   resetUrl: string
 ): Promise<{ success: boolean; error?: string }> {
+  console.log(`[Email] sendPasswordResetEmail called for: ${email}`);
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h2>إعادة تعيين كلمة المرور</h2>
