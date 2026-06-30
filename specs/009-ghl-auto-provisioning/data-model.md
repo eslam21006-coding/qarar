@@ -59,9 +59,9 @@ before any password write).
 | `expiresAt` | timestamp | **`now + 72h`** for provisioning (was fixed 1h); 1h retained for forgot-password (R-004) |
 | `createdAt` / `updatedAt` | timestamp | — |
 
-**Token rules**: one-time use (deleted atomically by
-`consumeVerificationValue` on successful consume/reset), expiry enforced
-on read (expired rows deleted by `verifyPasswordResetToken`).
+**Token rules**: one-time use; the active reset route atomically consumes
+the row via `consumeVerificationValue` before any password write, and
+invalid or expired tokens never proceed past that step.
 72h TTL for provisioning links (FR-007).
 
 ## In-memory shapes (helper outputs — not persisted)

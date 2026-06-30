@@ -29,14 +29,21 @@ export function registerPasswordResetRoutes(app: Express): void {
     "/api/auth/reset-password",
     express.json(),
     async (req: Request, res: Response) => {
-      try {
-        const { token, password } = req.body as Record<string, unknown>;
-        if (!token || typeof token !== "string") {
-          return res.status(400).json({ error: "Token is required" });
-        }
-        if (!password || typeof password !== "string") {
-          return res.status(400).json({ error: "Password is required" });
-        }
+try {
+      // `express.json()` does not guarantee a usable body shape. A request
+      // without a body, with the wrong content type, or with malformed JSON
+      // can leave `req.body` as undefined or a non-object — destructuring
+      // would then throw a TypeError and turn a client-side mistake into a
+      // 500. Coerce to an empty object first so the existing validators
+      // produce the right 400.
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const { token, password } = body;
+      if (!token || typeof token !== "string") {
+        return res.status(400).json({ error: "Token is required" });
+      }
+      if (!password || typeof password !== "string") {
+        return res.status(400).json({ error: "Password is required" });
+      }
 
         // 1. Atomically consume the verification row by token identifier.
         //    First concurrent caller wins; subsequent callers (incl. all

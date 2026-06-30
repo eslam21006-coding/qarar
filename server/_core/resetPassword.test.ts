@@ -256,4 +256,14 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
     // The catch-all would have returned { source: 'better-auth-catch-all' }
     // — our route's success body proves it ran first.
   });
+
+  it("returns 400 (not 500) when the request has no body at all", async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post("/api/auth/reset-password")
+      // supertest by default sends no body for a POST without `.send()`.
+      .set("Content-Type", "application/json");
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "Token is required" });
+  });
 });

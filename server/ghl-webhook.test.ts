@@ -1042,6 +1042,7 @@ describe("auto-provision via /api/webhooks/ghl (T007 / T008 / T015 / T016 / US1 
   let fakeDb: FakeDb;
   let calls: FakeCalls;
   const originalSecret = process.env.GHL_WEBHOOK_SECRET;
+  const originalAuthUrl = process.env.BETTER_AUTH_URL;
   const originalLog = console.log;
   const originalError = console.error;
   let logSpy: ReturnType<typeof vi.fn>;
@@ -1069,6 +1070,8 @@ describe("auto-provision via /api/webhooks/ghl (T007 / T008 / T015 / T016 / US1 
     console.error = originalError;
     if (originalSecret === undefined) delete process.env.GHL_WEBHOOK_SECRET;
     else process.env.GHL_WEBHOOK_SECRET = originalSecret;
+    if (originalAuthUrl === undefined) delete process.env.BETTER_AUTH_URL;
+    else process.env.BETTER_AUTH_URL = originalAuthUrl;
   });
 
   // ── T007: InvoicePaid + ContactTagUpdate unknown email provisions ────────
@@ -1706,5 +1709,49 @@ describe("extractContactIdFlat (workflow helper)", () => {
     expect(extractContactIdFlat({})).toBeNull();
     expect(extractContactIdFlat({ contactId: 0 })).toBeNull();
     expect(extractContactIdFlat(null)).toBeNull();
+  });
+});
+
+describe("provisionUserFromGhl name clamping (drizzle/auth-schema.ts varchar(255))", () => {
+  it("clamps a 300-char display name to 255 chars before insert", async () => {
+    let captured: { email: string; name: string; emailVerified: boolean } | null =
+      null;
+    authMock.createUserImpl = async (u) => {
+      captured = u;
+      return { id: "clamp-user" };
+    };
+    const longName = "x".repeat(300);
+    const built = buildFakeDb({ matchingUser: null });
+    vi.mocked(db.getDb).mockResolvedValue(built.fakeDb as any);
+
+    const result = await provisionUserFromGhl({
+      email: "long-name@example.com",
+      name: longName,
+      contactId: null,
+    });
+
+    expect(result.created).toBe(true);
+    expect(captured).not.toBeNull();
+    expect(captured!.name.length).toBe(255);
+    expect(captured!.email).toBe("long-name@example.com");
+    expect(captured!.emailVerified).toBe(true);
+  });
+
+  it("falls back to email then 'user' when name is missing/blank (clamped output still valid)", async () => {
+    let captured: { name: string } | null = null;
+    authMock.createUserImpl = async (u) => {
+      captured = u;
+      return { id: "fallback-user" };
+    };
+    const built = buildFakeDb({ matchingUser: null });
+    vi.mocked(db.getDb).mockResolvedValue(built.fakeDb as any);
+
+    await provisionUserFromGhl({
+      email: "fallback@example.com",
+      name: "   ",
+      contactId: null,
+    });
+    expect(captured).not.toBeNull();
+    expect(captured!.name).toBe("fallback@example.com");
   });
 });

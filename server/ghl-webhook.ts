@@ -84,7 +84,13 @@ export async function provisionUserFromGhl(input: {
   contactId: string | null;
 }): Promise<{ userId: string; created: boolean }> {
   const email = (input.email ?? "").trim().toLowerCase();
-  const name = (input.name ?? "").trim() || email || "user";
+  // `user.name` is `varchar(255)` in drizzle/auth-schema.ts; GHL can return
+  // longer display names (org + contact field concatenated, multi-byte
+  // characters, etc.). Clamp before insert so a long name doesn't surface
+  // as a generic 500 to the webhook source.
+  const fallbackName = email || "user";
+  const trimmedName = (input.name ?? "").trim() || fallbackName;
+  const name = trimmedName.slice(0, 255);
   const contactId = input.contactId ?? null;
 
   const ctx = await getAuthContext();

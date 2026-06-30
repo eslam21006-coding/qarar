@@ -25,14 +25,15 @@ client, engine, or schema changes (Constitution + plan).
 
 Express monolith. Feature files:
 `server/ghl-webhook.ts`, `server/ghl-webhook.test.ts`, `server/passwordReset.ts`,
+`server/_core/passwordResetRoute.ts`, `server/_core/resetPassword.test.ts`,
 `server/_core/index.ts`. Read-only refs: `server/auth.ts`, `server/db.ts`,
 `drizzle/auth-schema.ts`.
 
 > **Same-file note**: Most tasks edit `server/ghl-webhook.ts` and its sibling
 > test `server/ghl-webhook.test.ts`. Tasks on the same file are **sequential**
 > (no `[P]`) to avoid edit conflicts. Only `server/passwordReset.ts` (T002) and
-> `server/_core/index.ts` (T010) are genuinely parallelizable against the
-> webhook file.
+> `server/_core/passwordResetRoute.ts` (T010) are genuinely parallelizable
+> against the webhook file.
 
 ---
 
@@ -74,7 +75,7 @@ Express monolith. Feature files:
 ### Implementation for User Story 1
 
 - [x] T009 [US1] In `server/ghl-webhook.ts`, branch the existing not-found path: when the email is unknown AND `classification.action === "activate"`, call `provisionUserFromGhl({ email, name: extractName(body, email), contactId: extractContactId(body) })`, log `[GHL Webhook] Created new user: <email>`, then (in a nested try/catch) `generatePasswordResetToken(email, 72*60*60*1000)` + `buildPasswordResetUrl(token)`, log `[GHL Webhook] Set-password URL generated for: <email>`, and return `200 { ok:true, status:"active", newUser:true, setPasswordUrl }`; on token failure return `200 { ok:true, status:"active", newUser:true }` (FR-006/FR-007/FR-008/FR-015/FR-017; contract step 7b).
-- [x] T010 [P] [US1] Make `POST /api/auth/reset-password` functional in `server/_core/index.ts` (R-006 carve-out): resolve user by the token's email, hash the submitted password via `auth.$context` `ctx.password.hash`, write the credential hash via `internalAdapter` (e.g. `updatePassword`), delete the token (one-time use), keep the existing `{ success: true }` / `400` / `500` shapes. Enables SC-002 end-to-end.
+- [x] T010 [P] [US1] Make `POST /api/auth/reset-password` functional in `server/_core/passwordResetRoute.ts` (R-006 carve-out) and mount it from `server/_core/index.ts` BEFORE the Better Auth catch-all so the route is not shadowed. The handler atomically consumes the verification row via `ctx.internalAdapter.consumeVerificationValue(identifier)`, resolves the user, hashes the password via `ctx.password.hash`, writes via `internalAdapter.updatePassword`, and keeps the existing `{ success: true }` / `400` / `500` shapes. A dedicated `server/_core/resetPassword.test.ts` covers the happy path, atomic replay, missing-field validation, missing-user, and routing-order (catch-all MUST NOT shadow) scenarios. Enables SC-002 end-to-end.
 - [x] T011 [US1] Run quickstart.md manual local flow (provision → open `setPasswordUrl` → set password → sign in → dashboard) to validate US1 end-to-end including the T010 fix.
 
 **Checkpoint**: A brand-new buyer can be provisioned and log in. MVP complete.

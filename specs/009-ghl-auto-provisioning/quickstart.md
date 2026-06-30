@@ -7,7 +7,7 @@ details live in [plan.md](./plan.md), [research.md](./research.md),
 
 ## Prerequisites
 
-- Node + project deps installed (`npm install`).
+- Node + project deps installed (`pnpm install`).
 - For unit/integration tests: nothing extra — `getDb()` and the Better Auth
   provisioner are mocked (see `server/ghl-webhook.test.ts` style).
 - For a manual local run: a reachable MySQL via `DATABASE_URL`, and
@@ -18,14 +18,14 @@ details live in [plan.md](./plan.md), [research.md](./research.md),
 ## Automated validation (primary)
 
 ```bash
-npm test -- server/ghl-webhook.test.ts   # feature + regression suite
-npm run check                            # zero TypeScript errors
-npm test                                 # full suite stays green
+pnpm exec vitest run server/ghl-webhook.test.ts   # feature + regression suite
+pnpm run check                                     # zero TypeScript errors
+pnpm test                                          # full suite stays green
 ```
 
 **Expected**: all existing GHL webhook tests pass unchanged (plus the additive
 `newUser:false` on existing-user responses), and the new auto-provision tests
-pass. `npm run check` reports no errors.
+pass. `pnpm run check` reports no errors.
 
 ### Scenarios the tests must cover (maps to spec acceptance criteria)
 

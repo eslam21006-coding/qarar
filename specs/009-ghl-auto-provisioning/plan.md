@@ -117,8 +117,9 @@ server/
 ├── auth.ts                 # READ ONLY — reuse `auth` instance / `auth.$context`
 ├── db.ts                   # READ ONLY — getDb() (mocked in tests)
 └── _core/
-    └── index.ts            # MODIFY (carve-out) — make /api/auth/reset-password
-                            #          actually set the password (R-006)
+    ├── index.ts            # MODIFY (carve-out) — mount the app-owned reset route
+    │                       #          (Better Auth catch-all shadows it otherwise)
+    └── passwordResetRoute.ts # NEW — implement /api/auth/reset-password (R-006)
 
 drizzle/
 ├── auth-schema.ts          # READ ONLY — user/account/verification shapes
@@ -127,9 +128,10 @@ drizzle/
 
 **Structure Decision**: Existing Express monolith. All work lands in `server/`,
 concentrated in `server/ghl-webhook.ts` (new helpers + branch) and
-`server/passwordReset.ts` (TTL param), with a scoped fix to the already-mounted
-reset-password route in `server/_core/index.ts`. No new files, no client, no
-schema. Tests extend the existing `server/ghl-webhook.test.ts` suite.
+`server/passwordReset.ts` (TTL param), with the scoped carve-out handled by a
+new `server/_core/passwordResetRoute.ts` mounted from `server/_core/index.ts`.
+No client, no schema. Tests extend the existing `server/ghl-webhook.test.ts`
+suite and a new `server/_core/resetPassword.test.ts`.
 
 ## Complexity Tracking
 

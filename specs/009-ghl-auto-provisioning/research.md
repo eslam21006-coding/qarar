@@ -99,7 +99,7 @@ Assumptions).
 
 **Decision**: Make the endpoint functional as part of this feature, using the
 same server-context path as R-001:
-```
+```ts
 const ctx = await auth.$context;
 const hashed = await ctx.password.hash(newPassword);
 await ctx.internalAdapter.updatePassword(userId, hashed); // or update the credential account row
