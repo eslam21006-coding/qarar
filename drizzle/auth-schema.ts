@@ -6,6 +6,8 @@ import {
   timestamp,
   boolean,
   index,
+  int,
+  mysqlEnum,
 } from "drizzle-orm/mysql-core";
 
 export const user = mysqlTable("user", {
@@ -103,3 +105,69 @@ export const accountRelations = relations(account, ({ one }) => ({
     references: [user.id],
   }),
 }));
+
+/**
+ * Audit log for tracking all authentication events.
+ * Used for security compliance, debugging, and user support.
+ */
+export const auditLog = mysqlTable(
+  "audit_log",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    userId: varchar("user_id", { length: 36 }).references(() => user.id, { onDelete: "cascade" }),
+    email: varchar("email", { length: 255 }),
+    eventType: mysqlEnum("event_type", [
+      "signup",
+      "login",
+      "logout",
+      "email_verified",
+      "password_reset_requested",
+      "password_reset_completed",
+      "password_changed",
+      "login_failed",
+      "account_created",
+    ]).notNull(),
+    status: mysqlEnum("status", ["success", "failed"]).default("success").notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    details: text("details"), // JSON string with additional context
+    createdAt: timestamp("created_at", { fsp: 3 }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("audit_log_userId_idx").on(table.userId),
+    index("audit_log_email_idx").on(table.email),
+    index("audit_log_eventType_idx").on(table.eventType),
+    index("audit_log_createdAt_idx").on(table.createdAt),
+  ]
+);
+
+export type AuditLog = typeof auditLog.$inferSelect;
+export type InsertAuditLog = typeof auditLog.$inferInsert;
+
+/**
+ * Rate limiting table for tracking password reset requests.
+ * Prevents brute force attacks by limiting requests per email.
+ */
+export const rateLimitLog = mysqlTable(
+  "rate_limit_log",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    email: varchar("email", { length: 255 }).notNull(),
+    action: varchar("action", { length: 64 }).notNull(), // e.g., "forgot_password", "verify_email"
+    requestCount: int("request_count").default(1).notNull(),
+    windowStart: timestamp("window_start", { fsp: 3 }).defaultNow().notNull(),
+    windowEnd: timestamp("window_end", { fsp: 3 }).notNull(), // 1 hour from windowStart
+    createdAt: timestamp("created_at", { fsp: 3 }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("rate_limit_email_action_idx").on(table.email, table.action),
+    index("rate_limit_windowEnd_idx").on(table.windowEnd),
+  ]
+);
+
+export type RateLimitLog = typeof rateLimitLog.$inferSelect;
+export type InsertRateLimitLog = typeof rateLimitLog.$inferInsert;

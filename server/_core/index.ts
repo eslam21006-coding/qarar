@@ -17,6 +17,8 @@ import { generatePasswordResetToken, buildPasswordResetUrl } from "../passwordRe
 import { registerPasswordResetRoutes } from "./passwordResetRoute";
 import { sendPasswordResetEmail } from "../email";
 import { getAllUsers } from "../adminApi";
+import { checkRateLimit } from "../rateLimiting";
+import { logAuditEvent } from "../auditLog";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
