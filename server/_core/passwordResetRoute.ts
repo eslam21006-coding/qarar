@@ -101,14 +101,25 @@ export function registerPasswordResetRoutes(app: Express): void {
           return res.status(400).json({ error: "Invalid or expired token" });
         }
 
-        // 2. Atomically consume the verification row by the discovered
-        //    identifier. First concurrent caller wins; subsequent callers
-        //    (incl. all replays) get null and a 400 — single-use guarantee.
+        // 2. Atomically consume the EXACT row by primary key. We MUST
+        //    not call `consumeVerificationValue(identifier)` here because
+        //    the pre-deploy layout uses `password_reset_<email>` as the
+        //    identifier — that value is shared across multiple outstanding
+        //    tokens for the same email, so a consume-by-identifier would
+        //    delete a sibling row and leave the matched token replayable.
+        //    Consuming by `id` is the only fully-unique atomic claim.
         const ctx = await auth.$context;
-        const consumed = await ctx.internalAdapter.consumeVerificationValue(
-          verificationRow.identifier
-        );
-        if (!consumed) {
+        const consumeResult = await db
+          .delete(verification)
+          .where(eq(verification.id, verificationRow.id));
+        const rowsDeleted =
+          // Drizzle returns `{ rowsAffected }` on supported drivers; fall
+          // back to the execute result shape if the dialect differs.
+          (consumeResult as unknown as { rowsAffected?: number })
+            .rowsAffected ?? 0;
+        if (rowsDeleted === 0) {
+          // Either a concurrent request consumed this exact row first
+          // (single-use guarantee preserved) or it was deleted under us.
           return res.status(400).json({ error: "Invalid or expired token" });
         }
 
@@ -118,9 +129,9 @@ export function registerPasswordResetRoutes(app: Express): void {
         //    prefix). Disambiguate by which side matched.
         let email: string;
         if (verificationRow.identifier === newIdentifier) {
-          email = String(consumed.value ?? "").trim().toLowerCase();
+          email = String(verificationRow.value ?? "").trim().toLowerCase();
         } else {
-          email = String(consumed.identifier ?? "")
+          email = String(verificationRow.identifier ?? "")
             .replace(/^password_reset_/, "")
             .trim()
             .toLowerCase();

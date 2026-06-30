@@ -116,7 +116,7 @@ function buildFakeDb(opts: {
       }),
     }),
     delete: () => ({
-      where: () => Promise.resolve(undefined),
+      where: () => Promise.resolve({ rowsAffected: 1 }),
     }),
   };
   return { fakeDb, selectCalls: counters.selectCalls };
@@ -167,7 +167,7 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
     vi.restoreAllMocks();
   });
 
-  it("happy path: consumes token atomically, hashes the password, writes the credential hash", async () => {
+  it("happy path: consumes token atomically (DELETE by id), hashes the password, writes the credential hash", async () => {
     const futureExpiry = new Date(Date.now() + 60 * 60 * 1000);
     const { fakeDb, selectCalls } = buildFakeDb({
       matchingUser: { id: "buyer-1" },
@@ -187,10 +187,9 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ success: true });
-    // The token row was looked up (SELECT) then consumed (consume call).
-    expect(__testAuthMock.consumeCalls).toEqual([
-      { identifier: "password_reset_tok-1" },
-    ]);
+    // Consume is now DELETE-by-id (not consumeVerificationValue), so the
+    // mock's consume calls stay empty.
+    expect(__testAuthMock.consumeCalls).toEqual([]);
     expect(__testAuthMock.hashCalls).toEqual([{ plain: "NewStrong!Pass1" }]);
     expect(__testAuthMock.updatePasswordCalls).toEqual([
       { userId: "buyer-1", password: "hashed:NewStrong!Pass1" },
@@ -200,27 +199,41 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
   });
 
   it("atomic replay: same token used twice → second returns 400 (FR-007 / R-006)", async () => {
+    // The new consume-by-id path makes the first DELETE succeed and the
+    // second DELETE find 0 rows (the row is already gone) — single-use
+    // guarantee preserved. The first SELECT returns the same row in both
+    // requests; the discriminator is the DELETE's rowsAffected.
     const futureExpiry = new Date(Date.now() + 60 * 60 * 1000);
-    let consumeCalls = 0;
-    const ctx = await importedAuth.$context;
-    ctx.internalAdapter.consumeVerificationValue = async (identifier: string) => {
-      consumeCalls++;
-      __testAuthMock.consumeCalls.push({ identifier });
-      if (consumeCalls === 1) {
-        return { identifier, value: "buyer@example.com" };
-      }
-      return null;
+    const deleteCounters = { count: 0 };
+    const fakeDb: FakeDb = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: "v-r",
+                  identifier: "password_reset_tok-r",
+                  value: "buyer@example.com",
+                  expiresAt: futureExpiry,
+                },
+              ]),
+          }),
+        }),
+      }),
+      update: () => ({
+        set: () => ({
+          where: () => Promise.resolve(undefined),
+        }),
+      }),
+      delete: () => ({
+        where: () => {
+          deleteCounters.count++;
+          // First delete succeeds; second finds 0 rows.
+          return Promise.resolve({ rowsAffected: deleteCounters.count === 1 ? 1 : 0 });
+        },
+      }),
     };
-
-    const { fakeDb } = buildFakeDb({
-      matchingUser: { id: "buyer-2" },
-      matchingVerification: {
-        id: "v-r",
-        identifier: "password_reset_tok-r",
-        value: "buyer@example.com",
-        expiresAt: futureExpiry,
-      },
-    });
     vi.mocked(db.getDb).mockResolvedValue(fakeDb as any);
     const app = buildApp();
 
@@ -273,22 +286,37 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
     expect(res.body).toEqual({ error: "Token is required" });
   });
 
-  it("consume returns null (already used / expired) → 400", async () => {
+  it("DELETE by id affects 0 rows (already used / expired) → 400", async () => {
+    // The new code path doesn't call consumeVerificationValue — it
+    // directly DELETEs WHERE id = ? and checks rowsAffected. A
+    // concurrent consume of the same row will leave rowsAffected=0
+    // and the route returns 400.
     const futureExpiry = new Date(Date.now() + 60 * 60 * 1000);
-    const ctx = await importedAuth.$context;
-    ctx.internalAdapter.consumeVerificationValue = async (identifier: string) => {
-      __testAuthMock.consumeCalls.push({ identifier });
-      return null;
+    const fakeDb: FakeDb = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: "v-exp",
+                  identifier: "password_reset_expired",
+                  value: "ignored@example.com",
+                  expiresAt: futureExpiry,
+                },
+              ]),
+          }),
+        }),
+      }),
+      update: () => ({
+        set: () => ({
+          where: () => Promise.resolve(undefined),
+        }),
+      }),
+      delete: () => ({
+        where: () => Promise.resolve({ rowsAffected: 0 }),
+      }),
     };
-    const { fakeDb } = buildFakeDb({
-      matchingUser: { id: "ignored" },
-      matchingVerification: {
-        id: "v-exp",
-        identifier: "password_reset_expired",
-        value: "ignored@example.com",
-        expiresAt: futureExpiry,
-      },
-    });
     vi.mocked(db.getDb).mockResolvedValue(fakeDb as any);
     const app = buildApp();
     const res = await request(app)
@@ -357,12 +385,58 @@ describe("POST /api/auth/reset-password (T010 / R-006 / C-003a)", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ success: true });
-    // Consume was called with the legacy identifier, not the new one.
-    expect(__testAuthMock.consumeCalls).toEqual([
-      { identifier: "password_reset_legacy@example.com" },
-    ]);
+    // No consumeVerificationValue call is made for legacy rows (we delete
+    // by id to avoid sharing the legacy identifier across multiple
+    // outstanding tokens).
+    expect(__testAuthMock.consumeCalls).toEqual([]);
     expect(__testAuthMock.updatePasswordCalls).toEqual([
       { userId: "legacy-buyer", password: "hashed:NewStrong!Pass1" },
     ]);
+  });
+
+  it("rejects with 400 when the atomic row delete affects 0 rows (concurrent consume)", async () => {
+    // The SELECT returns the verification row but the DELETE finds 0
+    // rows — typically a concurrent request consumed the row first.
+    const futureExpiry = new Date(Date.now() + 60 * 60 * 1000);
+    const counters = { deleteCalls: 0 };
+    const fakeDb: FakeDb = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () =>
+              Promise.resolve([
+                {
+                  id: "v-race",
+                  identifier: "password_reset_tok-race",
+                  value: "buyer@example.com",
+                  expiresAt: futureExpiry,
+                },
+              ]),
+          }),
+        }),
+      }),
+      update: () => ({
+        set: () => ({
+          where: () => Promise.resolve(undefined),
+        }),
+      }),
+      delete: () => ({
+        where: () => {
+          counters.deleteCalls++;
+          return Promise.resolve({ rowsAffected: 0 });
+        },
+      }),
+    };
+    vi.mocked(db.getDb).mockResolvedValue(fakeDb as any);
+    const app = buildApp();
+
+    const res = await request(app)
+      .post("/api/auth/reset-password")
+      .send({ token: "tok-race", password: "NewStrong!Pass1" });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "Invalid or expired token" });
+    expect(counters.deleteCalls).toBe(1);
+    expect(__testAuthMock.updatePasswordCalls).toEqual([]);
   });
 });

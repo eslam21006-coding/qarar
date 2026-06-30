@@ -20,7 +20,7 @@ defined in `drizzle/auth-schema.ts` (managed by Better Auth).
 | `createdAt` / `updatedAt` | timestamp | Managed by Better Auth |
 
 **Lifecycle (new in this feature)**:
-```
+```text
 (absent) --activating webhook, unknown email--> created: active + emailVerified=true + temp credential
 created  --buyer opens set-password link, submits--> password set by buyer (credential replaced)
 active   --buyer signs in--> dashboard (gate passes: active + verified)

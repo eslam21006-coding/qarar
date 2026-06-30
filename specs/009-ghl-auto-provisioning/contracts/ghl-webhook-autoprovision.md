@@ -8,7 +8,7 @@ separate — see `specs/004-ghl-webhook-access-gating/contracts/ghl-webhook.md`.
 
 ## Mount
 
-```
+```text
 app.use("/api/webhooks/ghl", ghlWebhookRouter);
 // ghlWebhookRouter exposes:
 //   POST /api/webhooks/ghl/            — signed, event-classified (Phase C)
@@ -58,14 +58,16 @@ timing side channel.
 Validation:
 
 - `email` is trimmed + lowercased. Missing/empty → `200 { ignored: true }`.
-- `name` is whitespace-collapsed and never empty. Falls back to
+- `name` is whitespace-collapsed, code-point-clamped to 255 (to
+  preserve emoji / non-BMP input), and never empty. Falls back to
   `firstName + " " + lastName`, then to the email prefix (substring
-  before `@`), then to `"user"`.
+  before `@`), then to the full normalized email when no prefix
+  exists.
 - `contactId` is trimmed; whitespace-only values are treated as missing.
 
 ## Processing order
 
-```
+```text
 1. authorizeProvisionRequest(req)            → 401 on failure.
 2. Extract email/name/contactId from the body. Missing email → 200 { ignored: true }.
 3. setUserSubscriptionByEmail(email, "active", contactId)
@@ -122,7 +124,8 @@ whitespace-only, or empty values.
 
 ### `extractNameFlat(body, email)`
 `body.name` → `body.firstName + " " + body.lastName` → email prefix
-(`<email>.split("@")[0]`) → `"user"`. Whitespace-collapsed, never empty.
+(`<email>.split("@")[0]`) → the full normalized email when no
+prefix exists. Whitespace-collapsed, never empty.
 
 ### `provisionUserFromGhl({ email, name, contactId })`
 Creates an active, email-verified user + credential account with a

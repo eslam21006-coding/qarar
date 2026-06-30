@@ -1767,4 +1767,30 @@ describe("provisionUserFromGhl name clamping (drizzle/auth-schema.ts varchar(255
     expect(captured).not.toBeNull();
     expect(captured!.name).toBe("fallback@example.com");
   });
+
+  it("clamps emoji / non-BMP names by code point (does not split surrogate pairs)", async () => {
+    // 300 😀 characters → 255 code points (each 😀 is one code point but
+    // two UTF-16 units). Naive slice(0, 255) would leave a dangling high
+    // surrogate; code-point clamp keeps valid UTF-16 output.
+    let captured: { name: string } | null = null;
+    authMock.createUserImpl = async (u) => {
+      captured = u;
+      return { id: "emoji-user" };
+    };
+    const built = buildFakeDb({ matchingUser: null });
+    vi.mocked(db.getDb).mockResolvedValue(built.fakeDb as any);
+
+    const emoji = "😀".repeat(300);
+    await provisionUserFromGhl({
+      email: "emoji@example.com",
+      name: emoji,
+      contactId: null,
+    });
+
+    expect(captured).not.toBeNull();
+    // Code-point length ≤ 255 (and every remaining char is a complete
+    // surrogate pair, not a dangling high surrogate).
+    expect(Array.from(captured!.name).length).toBeLessThanOrEqual(255);
+    expect(/[\uD800-\uDBFF]$/.test(captured!.name)).toBe(false);
+  });
 });
