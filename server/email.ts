@@ -22,7 +22,7 @@ export async function sendEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: "noreply@qarar.app",
+        from: "noreply@adqarar.com",
         to,
         subject,
         html,
