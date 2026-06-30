@@ -32,15 +32,18 @@ export default function ResetPassword() {
   const [submitting, setSubmitting] = useState(false);
 
   // Extract token from URL query parameter
+  // NOTE: wouter's useLocation() returns pathname only, NOT the query string.
+  // Use window.location.search to reliably read query params.
   useEffect(() => {
-    const params = new URLSearchParams(location.split("?")[1]);
+    const params = new URLSearchParams(window.location.search);
     const resetToken = params.get("token");
+    console.log("[ResetPassword] Token from URL:", resetToken);
     if (!resetToken) {
       setError(MSG_INVALID_TOKEN);
     } else {
       setToken(resetToken);
     }
-  }, [location]);
+  }, []);
 
   const submit = async () => {
     if (submitting) return;
