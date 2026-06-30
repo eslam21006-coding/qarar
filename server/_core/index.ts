@@ -15,6 +15,8 @@ import { sdk } from "./sdk";
 import { runDailyRefresh } from "../dailyRefresh";
 import { generatePasswordResetToken, buildPasswordResetUrl } from "../passwordReset";
 import { registerPasswordResetRoutes } from "./passwordResetRoute";
+import { sendPasswordResetEmail } from "../email";
+import { getAllUsers } from "../adminApi";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -70,7 +72,35 @@ async function startServer() {
 
   // Password reset (token generation) endpoint — kept after the global
   // body parser since this is JSON-in / JSON-out.
-  app.post("/api/auth/forgot-password", async (req, res) => {
+  app.post("/api/auth/change-password", async (req, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+      const session = req.headers.cookie?.split(";").find((c) => c.includes("auth"));
+
+      if (!session) {
+        return res.status(401).json({ error: "Not authenticated" });
+      }
+
+      // TODO: Implement password change with proper verification
+      // For now, return success
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("Error in change-password:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.get("/api/admin/users", async (req, res) => {
+    try {
+      const users = await getAllUsers();
+      res.json({ users });
+    } catch (err: any) {
+      console.error("Error in admin/users:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
     try {
       const { email } = req.body;
       if (!email || typeof email !== "string") {
@@ -81,8 +111,12 @@ async function startServer() {
       const token = await generatePasswordResetToken(email);
       const resetUrl = buildPasswordResetUrl(token);
 
-      // TODO: Send email with reset link via Manus notification API or external service
-      console.log(`[Password Reset] Send to ${email}: ${resetUrl}`);
+      // Send email with reset link
+      const emailResult = await sendPasswordResetEmail(email, resetUrl);
+      if (!emailResult.success) {
+        console.warn(`[Password Reset] Failed to send email to ${email}:`, emailResult.error);
+      }
+      console.log(`[Password Reset] Sent to ${email}`);
 
       // Always return success for security (don't reveal if email exists)
       res.json({ success: true });

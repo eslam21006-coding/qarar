@@ -9,6 +9,8 @@ import ForgotPassword from "@/pages/auth/ForgotPassword";
 import ResetPassword from "@/pages/auth/ResetPassword";
 import NotFound from "@/pages/NotFound";
 import Upgrade from "@/pages/Upgrade";
+import Profile from "@/pages/Profile";
+import AdminDashboard from "@/pages/AdminDashboard";
 import { useEffect } from "react";
 import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -78,6 +80,8 @@ function ProtectedRouter() {
         <Route path="/" component={Home} />
         <Route path="/dashboard/:accountId" component={Dashboard} />
         <Route path="/settings/:accountId" component={Settings} />
+        <Route path="/profile" component={Profile} />
+        <Route path="/admin" component={AdminDashboard} />
         <Route path="/privacy" component={Privacy} />
         <Route path="/terms" component={Terms} />
         <Route path="/data-deletion-status" component={DataDeletionStatus} />
