@@ -4,7 +4,7 @@ import { Label } from "@/components/ui/label";
 import { PasswordStrengthMeter, isPasswordStrong } from "@/components/PasswordStrengthMeter";
 import { getSession, signIn, signUp } from "@/lib/auth-client";
 import { Loader2, Eye, EyeOff } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useLocation } from "wouter";
 
 const MSG_DUPLICATE = "هذا البريد الإلكتروني مسجّل بالفعل";
@@ -110,6 +110,31 @@ export default function SignUp() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [rateLimitedUntil, setRateLimitedUntil] = useState<number | null>(null);
+  const [rateLimitRemaining, setRateLimitRemaining] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Countdown timer for rate limit
+  useEffect(() => {
+    if (rateLimitedUntil === null) return;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((rateLimitedUntil - Date.now()) / 1000));
+      setRateLimitRemaining(remaining);
+      if (remaining <= 0) {
+        setRateLimitedUntil(null);
+        if (timerRef.current) clearInterval(timerRef.current);
+      }
+    };
+    tick();
+    timerRef.current = setInterval(tick, 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [rateLimitedUntil]);
+
+  const formatCountdown = (seconds: number) => {
+    const m = Math.floor(seconds / 60).toString().padStart(2, "0");
+    const s = (seconds % 60).toString().padStart(2, "0");
+    return `${m}:${s}`;
+  };
 
   /**
    * Validate the form, call `signUp.email`, and navigate on success.
@@ -142,6 +167,13 @@ export default function SignUp() {
       });
 
       if (result?.error) {
+        // Check for 429 rate limit response
+        const status = (result.error as any)?.status ?? (result.error as any)?.cause?.status;
+        if (status === 429) {
+          const retryAfter = (result.error as any)?.retryAfter ?? Date.now() + 60 * 60 * 1000;
+          setRateLimitedUntil(retryAfter);
+          return;
+        }
         if (isDuplicateEmailError(result.error)) {
           setError(MSG_DUPLICATE);
         } else {
@@ -356,7 +388,7 @@ export default function SignUp() {
                   onChange={e => setPassword(e.target.value)}
                   disabled={submitting}
                   dir="ltr"
-                  className="h-11 rounded-lg px-[14px] py-[11px] pr-10 text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
+                  className="h-11 rounded-lg px-[14px] py-[11px] pl-10 text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
                   style={{
                     backgroundColor: "#0c1220",
                     borderColor: "rgba(56,132,244,0.15)",
@@ -366,7 +398,7 @@ export default function SignUp() {
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   disabled={submitting}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b] hover:text-[#94a3b8] disabled:opacity-50"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#64748b] hover:text-[#94a3b8] disabled:opacity-50"
                   aria-label={showPassword ? "إخفاء كلمة المرور" : "عرض كلمة المرور"}
                 >
                   {showPassword ? (
@@ -379,6 +411,22 @@ export default function SignUp() {
               <PasswordStrengthMeter password={password} showRequirements={true} />
             </div>
 
+            {rateLimitedUntil !== null && (
+              <div
+                role="alert"
+                className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300"
+              >
+                {rateLimitRemaining > 0 ? (
+                  <>
+                    لقد قمت بالعديد من المحاولات.. برجاء المحاولة مرة أخرى بعد{" "}
+                    <span className="font-bold tabular-nums">{formatCountdown(rateLimitRemaining)}</span>
+                  </>
+                ) : (
+                  "يمكنك المحاولة الآن"
+                )}
+              </div>
+            )}
+
             {error && (
               <div
                 role="alert"
@@ -390,8 +438,8 @@ export default function SignUp() {
 
             <Button
               type="submit"
-              disabled={submitting}
-              className="h-11 w-full rounded-lg text-sm font-semibold text-white"
+              disabled={submitting || (rateLimitedUntil !== null && rateLimitRemaining > 0)}
+              className="h-11 w-full rounded-lg text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ background: "#3884f4" }}
             >
               {submitting ? (

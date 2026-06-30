@@ -238,8 +238,8 @@ export default function ForgotPassword() {
 
           <Button
             type="submit"
-            disabled={submitting}
-            className="h-11 w-full rounded-lg text-sm font-semibold text-white"
+            disabled={submitting || (rateLimitedUntil !== null && Math.max(0, Math.ceil((rateLimitedUntil - Date.now()) / 1000)) > 0)}
+            className="h-11 w-full rounded-lg text-sm font-semibold text-white disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: "#3884f4" }}
           >
             {submitting ? (

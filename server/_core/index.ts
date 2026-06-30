@@ -116,6 +116,31 @@ async function startServer() {
     }
   });
 
+  // Signup rate limiting — intercept before better-auth catch-all
+  // Checks rate limit (3 signups per email per hour) and proxies to better-auth
+  app.post("/api/auth/sign-up/email", express.json(), async (req, res, next) => {
+    try {
+      const { email } = req.body || {};
+      if (email && typeof email === "string") {
+        const isAllowed = await checkRateLimit(email, "signup");
+        if (!isAllowed) {
+          const status = await getRateLimitStatus(email, "signup");
+          const retryAfter = status.resetTime ? status.resetTime.getTime() : Date.now() + 60 * 60 * 1000;
+          console.warn(`[Signup] Rate limit exceeded for ${email}`);
+          return res.status(429).json({
+            error: "Too many signup attempts. Please try again later.",
+            retryAfter,
+          });
+        }
+      }
+      // Pass through to better-auth
+      return next();
+    } catch (err: any) {
+      console.error("[Signup] Rate limit check error:", err.message);
+      return next(); // Allow on error
+    }
+  });
+
   app.all("/api/auth/*", toNodeHandler(auth));
 
   // Phase C / T008 / FR-001–FR-003 — GHL webhook.

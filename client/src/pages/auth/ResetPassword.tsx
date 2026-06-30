@@ -204,7 +204,7 @@ export default function ResetPassword() {
                 onChange={e => setPassword(e.target.value)}
                 disabled={submitting}
                 dir="ltr"
-                className="h-11 rounded-lg px-[14px] py-[11px] pr-10 text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
+                className="h-11 rounded-lg px-[14px] py-[11px] pl-10 text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
                 style={{
                   backgroundColor: "#0c1220",
                   borderColor: "rgba(56,132,244,0.15)",
@@ -214,7 +214,7 @@ export default function ResetPassword() {
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 disabled={submitting}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b] hover:text-[#94a3b8] disabled:opacity-50"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#64748b] hover:text-[#94a3b8] disabled:opacity-50"
                 aria-label={showPassword ? "إخفاء كلمة المرور" : "عرض كلمة المرور"}
               >
                 {showPassword ? (
@@ -242,7 +242,7 @@ export default function ResetPassword() {
                 onChange={e => setConfirmPassword(e.target.value)}
                 disabled={submitting}
                 dir="ltr"
-                className="h-11 rounded-lg px-[14px] py-[11px] pr-10 text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
+                className="h-11 rounded-lg px-[14px] py-[11px] pl-10 text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
                 style={{
                   backgroundColor: "#0c1220",
                   borderColor: "rgba(56,132,244,0.15)",
@@ -252,7 +252,7 @@ export default function ResetPassword() {
                 type="button"
                 onClick={() => setShowConfirm(!showConfirm)}
                 disabled={submitting}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-[#64748b] hover:text-[#94a3b8] disabled:opacity-50"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#64748b] hover:text-[#94a3b8] disabled:opacity-50"
                 aria-label={showConfirm ? "إخفاء كلمة المرور" : "عرض كلمة المرور"}
               >
                 {showConfirm ? (
