@@ -113,6 +113,57 @@ const __passwordResetMock = {
   },
 };
 
+// Mock axios so the GHL Contacts API call made by the /provision route
+// is observable in tests. The mock records the full request config
+// (url, body, headers, timeout, validateStatus) so regressions that
+// drop any of the production settings — e.g. removing the 5s timeout
+// or the validateStatus guard — are caught by the existing assertions.
+const __axiosMock = {
+  putCalls: [] as Array<{
+    url: string;
+    data: unknown;
+    config: {
+      headers: Record<string, string>;
+      timeout?: number;
+      validateStatus?: (status: number) => boolean;
+    };
+  }>,
+  putImpl: null as null | ((url: string) => Promise<{ status: number }>),
+  reset() {
+    this.putCalls.length = 0;
+    this.putImpl = null;
+  },
+};
+vi.mock("axios", () => ({
+  default: {
+    put: async (
+      url: string,
+      data: unknown,
+      config: {
+        headers?: Record<string, string>;
+        timeout?: number;
+        validateStatus?: (status: number) => boolean;
+      } = {}
+    ) => {
+      __axiosMock.putCalls.push({
+        url,
+        data,
+        config: {
+          headers: config?.headers ?? {},
+          ...(config?.timeout !== undefined
+            ? { timeout: config.timeout }
+            : {}),
+          ...(config?.validateStatus !== undefined
+            ? { validateStatus: config.validateStatus }
+            : {}),
+        },
+      });
+      if (__axiosMock.putImpl) return __axiosMock.putImpl(url);
+      return { status: 200, data: {} };
+    },
+  },
+}));
+
 vi.mock("./passwordReset", () => ({
   generatePasswordResetToken: async (email: string, ttlMs: number) => {
     __passwordResetMock.tokenCalls.push({ email, ttlMs });
@@ -1493,6 +1544,7 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
   const originalSecret = process.env.GHL_WEBHOOK_SECRET;
   const originalProvisionSecret = process.env.GHL_PROVISION_SECRET;
   const originalAuthUrl = process.env.BETTER_AUTH_URL;
+  const originalGhlApiKey = process.env.GHL_API_KEY;
   const originalLog = console.log;
   let logSpy: ReturnType<typeof vi.fn>;
 
@@ -1512,10 +1564,14 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
     // exercised. The route fails closed when this is unset.
     process.env.GHL_PROVISION_SECRET = PROVISION_SECRET;
     process.env.BETTER_AUTH_URL = "https://app.adqarar.com";
+    // Clear the GHL API key by default; per-test cases that exercise
+    // the contact push set it explicitly.
+    delete process.env.GHL_API_KEY;
     logSpy = vi.fn();
     console.log = logSpy;
     authMock.reset();
     __passwordResetMock.reset();
+    __axiosMock.reset();
   });
 
   afterEach(() => {
@@ -1527,6 +1583,8 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
     else process.env.GHL_PROVISION_SECRET = originalProvisionSecret;
     if (originalAuthUrl === undefined) delete process.env.BETTER_AUTH_URL;
     else process.env.BETTER_AUTH_URL = originalAuthUrl;
+    if (originalGhlApiKey === undefined) delete process.env.GHL_API_KEY;
+    else process.env.GHL_API_KEY = originalGhlApiKey;
   });
 
   it("provisions a new user when the email is unknown and returns setPasswordUrl", async () => {
@@ -1702,6 +1760,166 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
       .send({ email: "weak-secret@example.com" });
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ error: "unauthorized" });
+  });
+
+  // ── GHL Contacts API push (custom-field update) ─────────────────────────
+
+  it("pushes the setPasswordUrl back to the GHL contact when a new user is provisioned", async () => {
+    process.env.GHL_API_KEY = "test-ghl-api-key-abcdef123456";
+    __axiosMock.reset();
+    authMock.createUserImpl = async () => ({ id: "wf-push-1" });
+    const built = buildFakeDb({ matchingUser: null });
+    vi.mocked(db.getDb).mockResolvedValue(built.fakeDb as any);
+    app = buildApp();
+
+    const res = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", PROVISION_SECRET)
+      .send({
+        email: "push-buyer@example.com",
+        name: "Push Buyer",
+        contactId: "ghl_contact_push_1",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, status: "active", newUser: true });
+
+    // Exactly one PUT to the GHL Contacts API, with the right URL,
+    // body, full request config (timeout, validateStatus), and headers.
+    expect(__axiosMock.putCalls).toHaveLength(1);
+    expect(__axiosMock.putCalls[0].url).toBe(
+      "https://services.leadconnectorhq.com/contacts/ghl_contact_push_1"
+    );
+    expect(__axiosMock.putCalls[0].data).toEqual({
+      customFields: [
+        {
+          id: "contact.setpasswordurl",
+          value: res.body.setPasswordUrl,
+        },
+      ],
+    });
+    expect(__axiosMock.putCalls[0].config.headers).toEqual({
+      Authorization: "Bearer test-ghl-api-key-abcdef123456",
+      Version: "2021-07-28",
+      "Content-Type": "application/json",
+    });
+    // Guard against regressions that drop the timeout or the
+    // validateStatus safety net (axios default would throw on 4xx/5xx
+    // without the guard, and a slow GHL could block the response).
+    expect(__axiosMock.putCalls[0].config.timeout).toBe(5_000);
+    expect(__axiosMock.putCalls[0].config.validateStatus).toBeDefined();
+    expect(__axiosMock.putCalls[0].config.validateStatus?.(200)).toBe(true);
+    expect(__axiosMock.putCalls[0].config.validateStatus?.(299)).toBe(true);
+    expect(__axiosMock.putCalls[0].config.validateStatus?.(300)).toBe(false);
+    expect(__axiosMock.putCalls[0].config.validateStatus?.(500)).toBe(false);
+  });
+
+  it("does NOT push to GHL when GHL_API_KEY is unset (silent skip)", async () => {
+    delete process.env.GHL_API_KEY;
+    __axiosMock.reset();
+    authMock.createUserImpl = async () => ({ id: "wf-no-key" });
+    const built = buildFakeDb({ matchingUser: null });
+    vi.mocked(db.getDb).mockResolvedValue(built.fakeDb as any);
+    app = buildApp();
+
+    const res = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", PROVISION_SECRET)
+      .send({
+        email: "no-key-buyer@example.com",
+        name: "No Key",
+        contactId: "ghl_contact_no_key",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, status: "active", newUser: true });
+    expect(__axiosMock.putCalls).toHaveLength(0);
+  });
+
+  it("does NOT push to GHL when contactId is missing from the payload", async () => {
+    process.env.GHL_API_KEY = "test-ghl-api-key-abcdef123456";
+    __axiosMock.reset();
+    authMock.createUserImpl = async () => ({ id: "wf-no-cid" });
+    const built = buildFakeDb({ matchingUser: null });
+    vi.mocked(db.getDb).mockResolvedValue(built.fakeDb as any);
+    app = buildApp();
+
+    const res = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", PROVISION_SECRET)
+      .send({
+        email: "no-cid-buyer@example.com",
+        name: "No Cid",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, status: "active", newUser: true });
+    expect(__axiosMock.putCalls).toHaveLength(0);
+  });
+
+  it("does NOT fail the endpoint when the GHL Contacts API call throws", async () => {
+    process.env.GHL_API_KEY = "test-ghl-api-key-abcdef123456";
+    __axiosMock.reset();
+    __axiosMock.putImpl = async () => {
+      throw new Error("ghl_5xx_upstream");
+    };
+    const originalWarn = console.error;
+    let lastError = "";
+    console.error = (...args: unknown[]) => {
+      lastError = args.map((a) => String(a)).join(" ");
+    };
+    try {
+      authMock.createUserImpl = async () => ({ id: "wf-push-fail" });
+      const built = buildFakeDb({ matchingUser: null });
+      vi.mocked(db.getDb).mockResolvedValue(built.fakeDb as any);
+      app = buildApp();
+
+      const res = await request(app)
+        .post("/api/webhooks/ghl/provision")
+        .set("x-ghl-provision-secret", PROVISION_SECRET)
+        .send({
+          email: "push-fail-buyer@example.com",
+          name: "Push Fail",
+          contactId: "ghl_contact_push_fail",
+        });
+
+      // The endpoint still returns success — the account was created
+      // and the setPasswordUrl is in the response body.
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        ok: true,
+        status: "active",
+        newUser: true,
+      });
+      expect(typeof res.body.setPasswordUrl).toBe("string");
+      // The failure was logged.
+      expect(lastError).toMatch(
+        /\[GHL Provision\] Failed to update GHL contact custom field: .*ghl_5xx_upstream/
+      );
+    } finally {
+      console.error = originalWarn;
+    }
+  });
+
+  it("does NOT push to GHL for an existing-user activation (only new users)", async () => {
+    process.env.GHL_API_KEY = "test-ghl-api-key-abcdef123456";
+    __axiosMock.reset();
+    const built = buildFakeDb({ matchingUser: { id: "existing" } });
+    vi.mocked(db.getDb).mockResolvedValue(built.fakeDb as any);
+    app = buildApp();
+
+    const res = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", PROVISION_SECRET)
+      .send({
+        email: "existing@example.com",
+        name: "Existing",
+        contactId: "ghl_contact_existing",
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, status: "active", newUser: false });
+    expect(__axiosMock.putCalls).toHaveLength(0);
   });
 });
 
