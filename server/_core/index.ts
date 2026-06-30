@@ -60,7 +60,8 @@ async function startServer() {
 
   // Forgot password endpoint - initiates password reset flow
   // MUST be registered BEFORE the catch-all so Express matches it first
-  app.post("/api/auth/forgot-password", async (req, res) => {
+  // MUST include express.json() since this is before the global body parser
+  app.post("/api/auth/forgot-password", express.json(), async (req, res) => {
     console.log("[Forgot Password] Endpoint hit");
     try {
       const { email } = req.body;
