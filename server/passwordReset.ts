@@ -70,15 +70,28 @@ export async function generatePasswordResetToken(
   const token = crypto.randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + ttlMs);
   const db = await getDb();
+  const identifier = tokenIdentifier(token);
 
-  await db.insert(verification).values({
-    id: crypto.randomUUID(),
-    identifier: tokenIdentifier(token),
-    value: email,
-    expiresAt,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
+  console.log("[Token Generation] Generating token for email:", email);
+  console.log("[Token Generation] Token:", token);
+  console.log("[Token Generation] Identifier:", identifier);
+  console.log("[Token Generation] ExpiresAt:", expiresAt);
+
+  try {
+    const result = await db.insert(verification).values({
+      id: crypto.randomUUID(),
+      identifier,
+      value: email,
+      expiresAt,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    console.log("[Token Generation] Insert result:", result);
+    console.log("[Token Generation] Token stored successfully");
+  } catch (err) {
+    console.error("[Token Generation] Failed to store token:", err);
+    throw err;
+  }
 
   return token;
 }

@@ -76,6 +76,8 @@ export function registerPasswordResetRoutes(app: Express): void {
           return res.status(500).json({ error: "Internal server error" });
         }
         const newIdentifier = `password_reset_${token}`;
+        console.log("[Reset Password] Token from URL:", token);
+        console.log("[Reset Password] Searching for identifier:", newIdentifier);
         const matchingRows = await db
           .select()
           .from(verification)
@@ -89,12 +91,23 @@ export function registerPasswordResetRoutes(app: Express): void {
             )
           )
           .limit(1);
+        console.log("[Reset Password] Matching rows found:", matchingRows.length);
+        if (matchingRows.length > 0) {
+          console.log("[Reset Password] First row identifier:", matchingRows[0].identifier);
+          console.log("[Reset Password] First row value:", matchingRows[0].value);
+          console.log("[Reset Password] First row expiresAt:", matchingRows[0].expiresAt);
+        }
         const verificationRow = matchingRows[0];
         if (!verificationRow) {
+          console.warn("[Reset Password] No verification row found for token");
           return res.status(400).json({ error: "Invalid or expired token" });
         }
+        console.log("[Reset Password] Current time:", new Date());
+        console.log("[Reset Password] Token expiry:", verificationRow.expiresAt);
+        console.log("[Reset Password] Is expired?", new Date() > verificationRow.expiresAt);
         if (new Date() > verificationRow.expiresAt) {
           // Best-effort cleanup of an expired row.
+          console.log("[Reset Password] Token is expired, deleting row");
           await db
             .delete(verification)
             .where(eq(verification.id, verificationRow.id));
@@ -108,59 +121,92 @@ export function registerPasswordResetRoutes(app: Express): void {
         //    tokens for the same email, so a consume-by-identifier would
         //    delete a sibling row and leave the matched token replayable.
         //    Consuming by `id` is the only fully-unique atomic claim.
+        console.log("[Reset Password] Getting auth context...");
         const ctx = await auth.$context;
-        const consumeResult = await db
-          .delete(verification)
-          .where(eq(verification.id, verificationRow.id));
-        const rowsDeleted =
-          // Drizzle returns `{ rowsAffected }` on supported drivers; fall
-          // back to the execute result shape if the dialect differs.
-          (consumeResult as unknown as { rowsAffected?: number })
-            .rowsAffected ?? 0;
-        if (rowsDeleted === 0) {
-          // Either a concurrent request consumed this exact row first
-          // (single-use guarantee preserved) or it was deleted under us.
-          return res.status(400).json({ error: "Invalid or expired token" });
+        console.log("[Reset Password] Auth context obtained");
+        console.log("[Reset Password] Deleting verification row with id:", verificationRow.id);
+        try {
+          const consumeResult = await db
+            .delete(verification)
+            .where(eq(verification.id, verificationRow.id));
+          console.log("[Reset Password] Delete result:", consumeResult);
+          // MySQL driver returns an array with ResultSetHeader as first element
+          // which has affectedRows property, not rowsAffected
+          let rowsDeleted = 0;
+          if (Array.isArray(consumeResult) && consumeResult[0]) {
+            const header = consumeResult[0] as unknown as { affectedRows?: number; rowsAffected?: number };
+            rowsDeleted = header.affectedRows ?? header.rowsAffected ?? 0;
+          } else if (consumeResult) {
+            const result = consumeResult as unknown as { affectedRows?: number; rowsAffected?: number };
+            rowsDeleted = result.affectedRows ?? result.rowsAffected ?? 0;
+          }
+          console.log("[Reset Password] Rows deleted:", rowsDeleted);
+          if (rowsDeleted === 0) {
+            // Either a concurrent request consumed this exact row first
+            // (single-use guarantee preserved) or it was deleted under us.
+            console.warn("[Reset Password] No rows deleted, token already consumed");
+            return res.status(400).json({ error: "Invalid or expired token" });
+          }
+        } catch (err) {
+          console.error("[Reset Password] Failed to delete verification row:", err);
+          throw err;
         }
 
         // 3. The email is in the value field for the current layout. For
         //    the pre-deploy layout, value IS the token and the email
         //    lives in the identifier (stripped of the `password_reset_`
         //    prefix). Disambiguate by which side matched.
+        console.log("[Reset Password] Extracting email from verification row...");
         let email: string;
         if (verificationRow.identifier === newIdentifier) {
           email = String(verificationRow.value ?? "").trim().toLowerCase();
+          console.log("[Reset Password] Email from value field:", email);
         } else {
           email = String(verificationRow.identifier ?? "")
             .replace(/^password_reset_/, "")
             .trim()
             .toLowerCase();
+          console.log("[Reset Password] Email from identifier field:", email);
         }
         if (!email) {
+          console.error("[Reset Password] No email found in verification row");
           return res.status(400).json({ error: "Invalid or expired token" });
         }
 
         // 4. Resolve the user by email.
+        console.log("[Reset Password] Looking up user by email:", email);
         const rows = await db
           .select({ id: user.id })
           .from(user)
           .where(eq(user.email, email))
           .limit(1);
+        console.log("[Reset Password] User lookup result:", rows);
         const userRow = rows[0];
         if (!userRow) {
           // Token already consumed (atomic); do not let a buyer whose
           // account was deleted bypass the one-time-use guarantee.
+          console.error("[Reset Password] User not found for email:", email);
           return res.status(400).json({ error: "Invalid or expired token" });
         }
+        console.log("[Reset Password] User found with id:", userRow.id);
 
         // 5. Hash and write.
+        console.log("[Reset Password] Hashing new password...");
         const hashed = await ctx.password.hash(password);
-        await ctx.internalAdapter.updatePassword(userRow.id, hashed);
+        console.log("[Reset Password] Password hashed successfully");
+        console.log("[Reset Password] Updating password for user:", userRow.id);
+        try {
+          await ctx.internalAdapter.updatePassword(userRow.id, hashed);
+          console.log("[Reset Password] Password updated successfully");
+        } catch (err) {
+          console.error("[Reset Password] Failed to update password:", err);
+          throw err;
+        }
 
         // Audit log uses a non-identifying handle (user id), not the email
         // (CWE-532 — PII in logs).
         console.log(
-          `[Password Reset] Reset password completed for user ${userRow.id}`
+          `[Reset Password] Reset password completed for user ${userRow.id}`
         );
         res.json({ success: true });
       } catch (err) {
