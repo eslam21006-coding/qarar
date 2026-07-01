@@ -397,9 +397,22 @@ export function extractEmailFlat(body: unknown): string | null {
 export function extractContactIdFlat(body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
   const b = body as Record<string, unknown>;
-  if (typeof b.contactId === "string") {
-    const trimmed = b.contactId.trim();
-    if (trimmed.length > 0) return trimmed;
+  // GHL sends the contact ID in different fields depending on the trigger type:
+  //   body.contactId     — camelCase (used in our own test calls)
+  //   body.contact_id    — snake_case (top-level GHL workflow variable)
+  //   body.customData?.contactId — nested inside customData object
+  const candidates: unknown[] = [
+    b.contactId,
+    b.contact_id,
+    b.customData && typeof b.customData === "object"
+      ? (b.customData as Record<string, unknown>).contactId
+      : undefined,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string") {
+      const trimmed = candidate.trim();
+      if (trimmed.length > 0) return trimmed;
+    }
   }
   return null;
 }

@@ -1570,6 +1570,7 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
   });
 
   it("provisions a new user when the email is unknown and returns setPasswordUrl", async () => {
+    process.env.GHL_API_KEY = "test-ghl-api-key-abcdef123456";
     authMock.createUserImpl = async () => ({ id: "wf-user-1" });
     const built = buildFakeDb({ matchingUser: null });
     fakeDb = built.fakeDb;
@@ -1605,7 +1606,7 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
 
     const auditLogs = logSpy.mock.calls.map((c) => c[0]);
     expect(auditLogs).toContain(
-      "[GHL Provision] email=fresh-buyer@example.com newUser=true"
+      "[GHL Provision] email=fresh-buyer@example.com newUser=true ghlUpdateResult=success"
     );
   });
 
@@ -1910,6 +1911,24 @@ describe("extractContactIdFlat (workflow helper)", () => {
     expect(extractContactIdFlat({})).toBeNull();
     expect(extractContactIdFlat({ contactId: 0 })).toBeNull();
     expect(extractContactIdFlat(null)).toBeNull();
+  });
+  it("reads body.contact_id (snake_case) as fallback", () => {
+    expect(extractContactIdFlat({ contact_id: "ghl_snake_1" })).toBe("ghl_snake_1");
+    expect(extractContactIdFlat({ contact_id: "  ghl_snake_1  " })).toBe("ghl_snake_1");
+    expect(extractContactIdFlat({ contact_id: "   " })).toBeNull();
+    expect(extractContactIdFlat({ contact_id: 42 })).toBeNull();
+  });
+  it("reads body.customData.contactId as fallback", () => {
+    expect(extractContactIdFlat({ customData: { contactId: "ghl_nested_1" } })).toBe("ghl_nested_1");
+    expect(extractContactIdFlat({ customData: { contactId: "  ghl_nested_1  " } })).toBe("ghl_nested_1");
+    expect(extractContactIdFlat({ customData: { contactId: "   " } })).toBeNull();
+    expect(extractContactIdFlat({ customData: {} })).toBeNull();
+    expect(extractContactIdFlat({ customData: null })).toBeNull();
+  });
+  it("prefers contactId > contact_id > customData.contactId", () => {
+    expect(extractContactIdFlat({ contactId: "first", contact_id: "second", customData: { contactId: "third" } })).toBe("first");
+    expect(extractContactIdFlat({ contact_id: "second", customData: { contactId: "third" } })).toBe("second");
+    expect(extractContactIdFlat({ customData: { contactId: "third" } })).toBe("third");
   });
 });
 
