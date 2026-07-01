@@ -3,8 +3,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { signIn } from "@/lib/auth-client";
-import { Loader2, Eye, EyeOff } from "lucide-react";
-import { useState } from "react";
+import { Loader2, Eye, EyeOff, Clock } from "lucide-react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 
 const MSG_NO_ACCOUNT = "لا يوجد حساب بهذا البريد الإلكتروني. للاشتراك، قم بالشراء من خلال صفحة المبيعات.";
@@ -48,13 +48,58 @@ const FEATURES = [
   "مبني على خبرة تجاوزت ٣٠ مليون دولار إنفاق إعلاني",
 ];
 
+/** Format remaining seconds as mm:ss */
+function formatCountdown(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/** Arabic countdown banner shown when sign-in is rate-limited */
+function RateLimitBanner({ retryAfterMs }: { retryAfterMs: number }) {
+  const [remaining, setRemaining] = useState(() =>
+    Math.max(0, Math.ceil((retryAfterMs - Date.now()) / 1000))
+  );
+
+  useEffect(() => {
+    if (remaining <= 0) return;
+    const id = setInterval(() => {
+      setRemaining(() => {
+        const next = Math.max(0, Math.ceil((retryAfterMs - Date.now()) / 1000));
+        if (next <= 0) clearInterval(id);
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [retryAfterMs]);
+
+  return (
+    <div
+      role="alert"
+      className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-sm text-amber-300"
+    >
+      <div className="mb-1 flex items-center gap-2">
+        <Clock className="h-4 w-4 shrink-0" />
+        <span className="font-medium">لقد قمت بالعديد من المحاولات</span>
+      </div>
+      {remaining > 0 ? (
+        <p className="text-xs text-amber-400/80">
+          برجاء المحاولة مرة أخرى بعد{" "}
+          <span className="font-mono font-bold text-amber-300">
+            {formatCountdown(remaining)}
+          </span>
+        </p>
+      ) : (
+        <p className="text-xs text-amber-400/80">يمكنك المحاولة الآن</p>
+      )}
+    </div>
+  );
+}
+
 /**
  * Heuristic check for an "invalid credentials" error returned by
  * `signIn.email`. Matches on HTTP status (401/400), Better Auth error
  * codes, and the common English message fragments the server may emit.
- *
- * @param err - The error thrown or returned from `signIn.email`.
- * @returns `true` if the error should surface the invalid-credentials copy.
  */
 function isInvalidCredentialsError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
@@ -89,16 +134,14 @@ function isInvalidCredentialsError(err: unknown): boolean {
 /**
  * Arabic sign-in screen (`/auth/signin`).
  *
- * Behaviour (per `contracts/auth-screens.md` S1):
+ * Behaviour:
  * - Split layout (RTL): branding panel on the right, form panel on the left.
  *   On mobile (<768px), the panels stack vertically with branding on top.
  * - Submit label `دخول`, loading label `جارٍ الدخول…`.
  * - Enter in the password field submits.
- * - Empty fields are blocked client-side with inline Arabic feedback; no
- *   network call is made.
- * - On success, navigates to `/`; the route guard routes onward
- *   (dashboard for active/admin, `/upgrade` otherwise).
- * - Footer link `ليس لديك حساب؟ أنشئ حساباً` → `/auth/signup`.
+ * - Empty fields are blocked client-side with inline Arabic feedback.
+ * - Rate limited after 5 failed attempts per 15 minutes; shows Arabic countdown.
+ * - On success, navigates to `/`.
  */
 export default function SignIn() {
   const [, navigate] = useLocation();
@@ -108,15 +151,13 @@ export default function SignIn() {
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // retryAfterMs is a UTC ms timestamp when the rate-limit block expires
+  const [rateLimitedUntil, setRateLimitedUntil] = useState<number | null>(null);
 
-  /**
-   * Validate the form, call `signIn.email`, and navigate on success.
-   *
-   * Guards required fields locally (empty email/password) per spec Edge
-   * Cases / data-model E3 so no blind server call is made.
-   */
+  const isBlocked = rateLimitedUntil !== null && Date.now() < rateLimitedUntil;
+
   const submit = async () => {
-    if (submitting) return;
+    if (submitting || isBlocked) return;
     setError(null);
 
     const trimmedEmail = email.trim();
@@ -147,26 +188,41 @@ export default function SignIn() {
         return;
       }
 
-      const result = await signIn.email({
-        email: trimmedEmail,
-        password,
+      // Use raw fetch so we can read the 429 body before Better Auth client
+      // swallows it. Better Auth's signIn.email doesn't expose retryAfter.
+      const rawRes = await fetch("/api/auth/sign-in/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: trimmedEmail, password }),
       });
 
-      // Handle remember me: extend session expiry if checked
-      if (rememberMe && !result?.error) {
-        localStorage.setItem("qarar_remember_me", "true");
-      } else {
-        localStorage.removeItem("qarar_remember_me");
+      if (rawRes.status === 429) {
+        const data = await rawRes.json().catch(() => ({}));
+        const retryAfterMs =
+          typeof data.retryAfter === "number"
+            ? data.retryAfter
+            : Date.now() + 15 * 60 * 1000;
+        setRateLimitedUntil(retryAfterMs);
+        return;
       }
 
-      if (result?.error) {
-        const err = result.error;
-        if (isInvalidCredentialsError(err)) {
+      if (!rawRes.ok) {
+        // Non-429 error — parse and classify
+        const data = await rawRes.json().catch(() => ({}));
+        if (isInvalidCredentialsError({ status: rawRes.status, ...data })) {
           setError(MSG_WRONG_PASSWORD);
         } else {
           setError(MSG_GENERIC);
         }
         return;
+      }
+
+      // Success — handle remember me preference
+      if (rememberMe) {
+        localStorage.setItem("qarar_remember_me", "true");
+      } else {
+        localStorage.removeItem("qarar_remember_me");
       }
 
       navigate("/", { replace: true });
@@ -181,9 +237,6 @@ export default function SignIn() {
     }
   };
 
-  /**
-   * Form submit handler; prevents default navigation and calls `submit`.
-   */
   const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     void submit();
@@ -312,7 +365,7 @@ export default function SignIn() {
                 placeholder="name@example.com"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                disabled={submitting}
+                disabled={submitting || isBlocked}
                 dir="ltr"
                 className="h-11 rounded-lg px-[14px] py-[11px] text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
                 style={{
@@ -334,7 +387,7 @@ export default function SignIn() {
                   placeholder="••••••••"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  disabled={submitting}
+                  disabled={submitting || isBlocked}
                   dir="ltr"
                   className="h-11 rounded-lg px-[14px] py-[11px] pl-10 text-sm text-white placeholder:text-[#475569] focus-visible:border-[#3884f4] focus-visible:ring-[#3884f4]/30"
                   style={{
@@ -345,7 +398,7 @@ export default function SignIn() {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  disabled={submitting}
+                  disabled={submitting || isBlocked}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-[#64748b] hover:text-[#94a3b8] disabled:opacity-50"
                   aria-label={showPassword ? "إخفاء كلمة المرور" : "عرض كلمة المرور"}
                 >
@@ -363,7 +416,7 @@ export default function SignIn() {
                 id="rememberMe"
                 checked={rememberMe}
                 onCheckedChange={(checked) => setRememberMe(checked as boolean)}
-                disabled={submitting}
+                disabled={submitting || isBlocked}
                 className="border-[#3884f4] bg-[#0c1220]"
               />
               <Label
@@ -374,7 +427,13 @@ export default function SignIn() {
               </Label>
             </div>
 
-            {error && (
+            {/* Rate-limit countdown banner */}
+            {isBlocked && rateLimitedUntil !== null && (
+              <RateLimitBanner retryAfterMs={rateLimitedUntil} />
+            )}
+
+            {/* Regular error message */}
+            {!isBlocked && error && (
               <div
                 role="alert"
                 className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300"
@@ -385,15 +444,17 @@ export default function SignIn() {
 
             <Button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || isBlocked}
               className="h-11 w-full rounded-lg text-sm font-semibold text-white"
-              style={{ background: "#3884f4" }}
+              style={{ background: isBlocked ? "#1e3a5f" : "#3884f4" }}
             >
               {submitting ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
                   جارٍ الدخول…
                 </>
+              ) : isBlocked ? (
+                "محظور مؤقتاً"
               ) : (
                 "دخول"
               )}
@@ -409,8 +470,6 @@ export default function SignIn() {
               هل نسيت كلمة المرور؟
             </Link>
           </p>
-
-
         </div>
       </main>
     </div>

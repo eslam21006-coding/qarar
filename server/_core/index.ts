@@ -147,7 +147,8 @@ async function startServer() {
     return res.status(403).json({ error: "signup_disabled", message: "Accounts are created through the sales page only." });
   });
 
-
+  // Sign-in rate limiting is handled inside the Better Auth plugin in server/auth.ts
+  // (plugins["signin-rate-limit"] hooks.before) — no Express interceptor needed here.
   app.all("/api/auth/*", toNodeHandler(auth));
 
   // Phase C / T008 / FR-001–FR-003 — GHL webhook.
