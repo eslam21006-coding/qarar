@@ -1766,23 +1766,20 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, status: "active", newUser: true });
 
-    // Exactly one PUT to the GHL Contacts API, with the right URL,
-    // body, and auth/version headers.
+    // Exactly one PUT to the GHL Contacts API (v1), with the right URL,
+    // body, and auth headers.
     expect(__axiosMock.putCalls).toHaveLength(1);
     expect(__axiosMock.putCalls[0].url).toBe(
-      "https://services.leadconnectorhq.com/contacts/ghl_contact_push_1"
+      "https://rest.gohighlevel.com/v1/contacts/ghl_contact_push_1"
     );
     expect(__axiosMock.putCalls[0].data).toEqual({
-      customFields: [
-        {
-          id: "contact.setpasswordurl",
-          value: res.body.setPasswordUrl,
-        },
-      ],
+      // v1 API uses object format: { customField: { "<fieldId>": "<value>" } }
+      customField: {
+        sHFbuZdkw5F3CZG76fwz: res.body.setPasswordUrl,
+      },
     });
     expect(__axiosMock.putCalls[0].headers).toEqual({
       Authorization: "Bearer test-ghl-api-key-abcdef123456",
-      Version: "2021-07-28",
       "Content-Type": "application/json",
     });
   });

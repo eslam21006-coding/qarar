@@ -491,14 +491,17 @@ function timingSafeEqualString(a: string, b: string): boolean {
 }
 
 /**
- * GHL Contacts API endpoint and version. Pushing the set-password URL
- * back into the contact's custom field via the workflow's contactId
- * means a downstream GHL automation can email the buyer the link
- * without needing the webhook response to round-trip.
+ * GHL Contacts API endpoint. The GHL_API_KEY is a Location API key (JWT)
+ * which only works with the v1 REST API at rest.gohighlevel.com.
+ * The v2 API (services.leadconnectorhq.com) requires OAuth/Private Integration
+ * tokens and returns 401 "Invalid JWT" for Location API keys.
+ *
+ * Custom field ID for setPasswordUrl: sHFbuZdkw5F3CZG76fwz
+ * (fieldKey: contact.setpasswordurl, name: setPasswordUrl)
+ * The v1 API uses { customField: { "<fieldId>": "<value>" } } format.
  */
-const GHL_CONTACTS_API_BASE = "https://services.leadconnectorhq.com";
-const GHL_CONTACTS_API_VERSION = "2021-07-28";
-const GHL_SETPASSWORD_FIELD_ID = "contact.setpasswordurl";
+const GHL_CONTACTS_API_BASE = "https://rest.gohighlevel.com";
+const GHL_SETPASSWORD_FIELD_ID = "sHFbuZdkw5F3CZG76fwz";
 const GHL_CONTACT_UPDATE_TIMEOUT_MS = 5_000;
 
 /**
@@ -529,24 +532,24 @@ async function pushSetPasswordUrlToGhl(
 
   try {
     await axios.put(
-      `${GHL_CONTACTS_API_BASE}/contacts/${encodeURIComponent(contactId)}`,
+      `${GHL_CONTACTS_API_BASE}/v1/contacts/${encodeURIComponent(contactId)}`,
       {
-        customFields: [
-          {
-            id: GHL_SETPASSWORD_FIELD_ID,
-            value: setPasswordUrl,
-          },
-        ],
+        // v1 API uses object format: { customField: { "<fieldId>": "<value>" } }
+        customField: {
+          [GHL_SETPASSWORD_FIELD_ID]: setPasswordUrl,
+        },
       },
       {
         headers: {
           Authorization: `Bearer ${apiKey}`,
-          Version: GHL_CONTACTS_API_VERSION,
           "Content-Type": "application/json",
         },
         timeout: GHL_CONTACT_UPDATE_TIMEOUT_MS,
         validateStatus: (s) => s >= 200 && s < 300,
       }
+    );
+    console.log(
+      `[GHL Provision] Successfully updated setPasswordUrl for contactId=${contactId}`
     );
   } catch (err: unknown) {
     // Non-fatal: account was already provisioned. Log the underlying
