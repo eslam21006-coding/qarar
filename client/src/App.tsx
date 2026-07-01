@@ -3,7 +3,6 @@ import { RouteGuard } from "@/components/RouteGuard";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import SignIn from "@/pages/auth/SignIn";
-import SignUp from "@/pages/auth/SignUp";
 import VerifyEmail from "@/pages/auth/VerifyEmail";
 import ForgotPassword from "@/pages/auth/ForgotPassword";
 import ResetPassword from "@/pages/auth/ResetPassword";
@@ -30,9 +29,7 @@ function PublicRouter() {
         </PublicAuthRoute>
       </Route>
       <Route path="/auth/signup">
-        <PublicAuthRoute>
-          <SignUp />
-        </PublicAuthRoute>
+        <SignUpRedirect />
       </Route>
       <Route path="/auth/verify-email">
         <VerifyEmail />
@@ -70,6 +67,13 @@ function PublicAuthRoute({ children }: { children: React.ReactNode }) {
   if (loading) return null;
   if (user) return null;
   return <>{children}</>;
+}
+
+/** Redirect /auth/signup to /auth/signin — signup is disabled, accounts via GHL only */
+function SignUpRedirect() {
+  const [, navigate] = useLocation();
+  useEffect(() => { navigate("/auth/signin", { replace: true }); }, [navigate]);
+  return null;
 }
 
 function ProtectedRouter() {

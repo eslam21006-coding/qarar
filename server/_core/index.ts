@@ -116,30 +116,37 @@ async function startServer() {
     }
   });
 
-  // Signup rate limiting — intercept before better-auth catch-all
-  // Checks rate limit (3 signups per email per hour) and proxies to better-auth
-  app.post("/api/auth/sign-up/email", express.json(), async (req, res, next) => {
+  // Email existence check — used by sign-in UI to show distinct Arabic error
+  // messages for "no account found" vs "wrong password". Returns { exists: bool }.
+  // Acceptable for a paid SaaS: users know whether they purchased.
+  app.post("/api/auth/check-email", express.json(), async (req, res) => {
     try {
       const { email } = req.body || {};
-      if (email && typeof email === "string") {
-        const isAllowed = await checkRateLimit(email, "signup");
-        if (!isAllowed) {
-          const status = await getRateLimitStatus(email, "signup");
-          const retryAfter = status.resetTime ? status.resetTime.getTime() : Date.now() + 60 * 60 * 1000;
-          console.warn(`[Signup] Rate limit exceeded for ${email}`);
-          return res.status(429).json({
-            error: "Too many signup attempts. Please try again later.",
-            retryAfter,
-          });
-        }
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ error: "email required" });
       }
-      // Pass through to better-auth
-      return next();
+      const { drizzle } = await import("drizzle-orm/mysql2");
+      const { eq } = await import("drizzle-orm");
+      const { user: authUserTable } = await import("../../drizzle/auth-schema");
+      const db = drizzle(process.env.DATABASE_URL!);
+      const rows = await db
+        .select({ id: authUserTable.id })
+        .from(authUserTable)
+        .where(eq(authUserTable.email, email.trim().toLowerCase()))
+        .limit(1);
+      return res.json({ exists: rows.length > 0 });
     } catch (err: any) {
-      console.error("[Signup] Rate limit check error:", err.message);
-      return next(); // Allow on error
+      console.error("[CheckEmail] Error:", err?.message ?? err);
+      return res.json({ exists: false });
     }
   });
+
+  // Signup is disabled — accounts are created exclusively via GHL purchase.
+  // Block any direct POST to the sign-up endpoint with a 403.
+  app.post("/api/auth/sign-up/email", express.json(), (req, res) => {
+    return res.status(403).json({ error: "signup_disabled", message: "Accounts are created through the sales page only." });
+  });
+
 
   app.all("/api/auth/*", toNodeHandler(auth));
 

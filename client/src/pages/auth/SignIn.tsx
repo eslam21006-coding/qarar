@@ -7,7 +7,8 @@ import { Loader2, Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 
-const MSG_INVALID = "البريد الإلكتروني أو كلمة المرور غير صحيحة";
+const MSG_NO_ACCOUNT = "لا يوجد حساب بهذا البريد الإلكتروني. للاشتراك، قم بالشراء من خلال صفحة المبيعات.";
+const MSG_WRONG_PASSWORD = "كلمة المرور غير صحيحة";
 const MSG_GENERIC = "حدث خطأ، حاول مرة أخرى";
 
 const VERDICT_ROWS = [
@@ -126,6 +127,26 @@ export default function SignIn() {
 
     setSubmitting(true);
     try {
+      // Check if the email exists first to show a distinct Arabic error message
+      let emailExists = true;
+      try {
+        const checkRes = await fetch("/api/auth/check-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: trimmedEmail }),
+        });
+        const checkData = await checkRes.json();
+        emailExists = !!checkData.exists;
+      } catch {
+        // If check fails, proceed normally — Better Auth will handle it
+      }
+
+      if (!emailExists) {
+        setError(MSG_NO_ACCOUNT);
+        setSubmitting(false);
+        return;
+      }
+
       const result = await signIn.email({
         email: trimmedEmail,
         password,
@@ -133,7 +154,6 @@ export default function SignIn() {
 
       // Handle remember me: extend session expiry if checked
       if (rememberMe && !result?.error) {
-        // Store preference in localStorage for future sessions
         localStorage.setItem("qarar_remember_me", "true");
       } else {
         localStorage.removeItem("qarar_remember_me");
@@ -142,7 +162,7 @@ export default function SignIn() {
       if (result?.error) {
         const err = result.error;
         if (isInvalidCredentialsError(err)) {
-          setError(MSG_INVALID);
+          setError(MSG_WRONG_PASSWORD);
         } else {
           setError(MSG_GENERIC);
         }
@@ -152,7 +172,7 @@ export default function SignIn() {
       navigate("/", { replace: true });
     } catch (err: unknown) {
       if (isInvalidCredentialsError(err)) {
-        setError(MSG_INVALID);
+        setError(MSG_WRONG_PASSWORD);
       } else {
         setError(MSG_GENERIC);
       }
@@ -390,16 +410,7 @@ export default function SignIn() {
             </Link>
           </p>
 
-          <p className="mt-8 text-center text-[13px] text-[#475569]">
-            ليس لديك حساب؟{" "}
-            <Link
-              href="/auth/signup"
-              className="font-medium hover:underline"
-              style={{ color: "#5a9cf5" }}
-            >
-              أنشئ حساباً
-            </Link>
-          </p>
+
         </div>
       </main>
     </div>
