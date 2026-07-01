@@ -677,6 +677,7 @@ ghlWebhookRouter.post(
             ghlApiKeySet,
             ghlUpdateAttempted,
             ghlUpdateResult,
+            rawBody: JSON.stringify(req.body),
           },
         });
         return;
