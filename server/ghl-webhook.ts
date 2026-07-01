@@ -599,6 +599,9 @@ ghlWebhookRouter.post(
   async (req: Request, res: Response) => {
     let loggedEmailForAudit = "<none>";
     try {
+      // TEMPORARY DEBUG — remove after diagnosing contactId extraction
+      console.log("[GHL Provision DEBUG] Full request body:", JSON.stringify(req.body, null, 2));
+      console.log("[GHL Provision DEBUG] Content-Type:", req.headers["content-type"]);
       if (!authorizeProvisionRequest(req)) {
         console.warn("[GHL Provision] Unauthorized request rejected");
         res.status(401).json({ error: "unauthorized" });
