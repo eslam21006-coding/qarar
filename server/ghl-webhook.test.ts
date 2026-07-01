@@ -1606,7 +1606,7 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
 
     const auditLogs = logSpy.mock.calls.map((c) => c[0]);
     expect(auditLogs).toContain(
-      "[GHL Provision] email=fresh-buyer@example.com newUser=true ghlUpdateResult=success"
+      "[GHL Provision] email=fresh-buyer@example.com newUser=true"
     );
   });
 
@@ -1782,6 +1782,62 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
     expect(__axiosMock.putCalls[0].headers).toEqual({
       Authorization: "Bearer test-ghl-api-key-abcdef123456",
       "Content-Type": "application/json",
+    });
+  });
+
+  it("pushes the setPasswordUrl to GHL when contactId is in body.contact_id (snake_case — real GHL shape)", async () => {
+    process.env.GHL_API_KEY = "test-ghl-api-key-abcdef123456";
+    __axiosMock.reset();
+    authMock.createUserImpl = async () => ({ id: "wf-push-snake" });
+    const built = buildFakeDb({ matchingUser: null });
+    vi.mocked(db.getDb).mockResolvedValue(built.fakeDb as any);
+    app = buildApp();
+
+    const res = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", PROVISION_SECRET)
+      .send({
+        email: "snake-buyer@example.com",
+        name: "Snake Buyer",
+        contact_id: "ghl_contact_snake_1",   // ← snake_case as GHL sends it
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, status: "active", newUser: true });
+    expect(__axiosMock.putCalls).toHaveLength(1);
+    expect(__axiosMock.putCalls[0].url).toBe(
+      "https://rest.gohighlevel.com/v1/contacts/ghl_contact_snake_1"
+    );
+    expect(__axiosMock.putCalls[0].data).toEqual({
+      customField: { sHFbuZdkw5F3CZG76fwz: res.body.setPasswordUrl },
+    });
+  });
+
+  it("pushes the setPasswordUrl to GHL when contactId is in body.customData.contactId", async () => {
+    process.env.GHL_API_KEY = "test-ghl-api-key-abcdef123456";
+    __axiosMock.reset();
+    authMock.createUserImpl = async () => ({ id: "wf-push-nested" });
+    const built = buildFakeDb({ matchingUser: null });
+    vi.mocked(db.getDb).mockResolvedValue(built.fakeDb as any);
+    app = buildApp();
+
+    const res = await request(app)
+      .post("/api/webhooks/ghl/provision")
+      .set("x-ghl-provision-secret", PROVISION_SECRET)
+      .send({
+        email: "nested-buyer@example.com",
+        name: "Nested Buyer",
+        customData: { contactId: "ghl_contact_nested_1" },  // ← nested shape
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, status: "active", newUser: true });
+    expect(__axiosMock.putCalls).toHaveLength(1);
+    expect(__axiosMock.putCalls[0].url).toBe(
+      "https://rest.gohighlevel.com/v1/contacts/ghl_contact_nested_1"
+    );
+    expect(__axiosMock.putCalls[0].data).toEqual({
+      customField: { sHFbuZdkw5F3CZG76fwz: res.body.setPasswordUrl },
     });
   });
 

@@ -612,9 +612,6 @@ ghlWebhookRouter.post(
   async (req: Request, res: Response) => {
     let loggedEmailForAudit = "<none>";
     try {
-      // TEMPORARY DEBUG — remove after diagnosing contactId extraction
-      console.log("[GHL Provision DEBUG] Full request body:", JSON.stringify(req.body, null, 2));
-      console.log("[GHL Provision DEBUG] Content-Type:", req.headers["content-type"]);
       if (!authorizeProvisionRequest(req)) {
         console.warn("[GHL Provision] Unauthorized request rejected");
         res.status(401).json({ error: "unauthorized" });
@@ -659,39 +656,17 @@ ghlWebhookRouter.post(
           72 * 60 * 60 * 1000
         );
         const setPasswordUrl = buildPasswordResetUrl(token);
-
-        // --- TEMPORARY DEBUG: capture GHL update result in response body ---
-        const ghlApiKeySet = !!(process.env.GHL_API_KEY && process.env.GHL_API_KEY.length > 0);
-        const ghlUpdateAttempted = !!(contactId && ghlApiKeySet);
-        let ghlUpdateResult: string = "not_attempted";
-        if (ghlUpdateAttempted) {
-          try {
-            await pushSetPasswordUrlToGhl(contactId ?? "", setPasswordUrl);
-            ghlUpdateResult = "success";
-          } catch (ghlErr: unknown) {
-            const ghlMsg = ghlErr instanceof Error ? ghlErr.message : String(ghlErr);
-            ghlUpdateResult = `error: ${ghlMsg}`;
-            console.error(`[GHL Provision] GHL update failed: ${ghlMsg}`);
-          }
-        } else {
-          // Still call so the non-fatal skip path logs correctly
-          await pushSetPasswordUrlToGhl(contactId ?? "", setPasswordUrl);
-        }
-        // --- END TEMPORARY DEBUG ---
-
-        console.log(`[GHL Provision] email=${email} newUser=true ghlUpdateResult=${ghlUpdateResult}`);
+        // Push the URL back to the GHL contact record so a downstream
+        // workflow can email the buyer. Non-fatal — the route still
+        // returns 200 with `setPasswordUrl` even if the upstream call
+        // fails or is skipped.
+        await pushSetPasswordUrlToGhl(contactId ?? "", setPasswordUrl);
+        console.log(`[GHL Provision] email=${email} newUser=true`);
         res.status(200).json({
           ok: true,
           status: "active",
           newUser: true,
           setPasswordUrl,
-          debug: {
-            contactId: contactId ?? null,
-            ghlApiKeySet,
-            ghlUpdateAttempted,
-            ghlUpdateResult,
-            rawBody: JSON.stringify(req.body),
-          },
         });
         return;
       } catch (tokenErr: unknown) {
@@ -704,12 +679,7 @@ ghlWebhookRouter.post(
           `[GHL Provision] reset-token generation failed user=${provision.userId} message=${tokenMsg}`
         );
         console.log(`[GHL Provision] email=${email} newUser=true`);
-        res.status(200).json({
-          ok: true,
-          status: "active",
-          newUser: true,
-          debug: { contactId: contactId ?? null, ghlApiKeySet: !!(process.env.GHL_API_KEY), ghlUpdateAttempted: false, ghlUpdateResult: `token_error: ${tokenMsg}` },
-        });
+        res.status(200).json({ ok: true, status: "active", newUser: true });
         return;
       }
     } catch (e: unknown) {
