@@ -1,5 +1,5 @@
-import { useAuth } from "@/_core/hooks/useAuth";
 import { RouteGuard } from "@/components/RouteGuard";
+import { PublicAuthRoute } from "@/components/PublicAuthRoute";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import SignIn from "@/pages/auth/SignIn";
@@ -49,30 +49,12 @@ function PublicRouter() {
   );
 }
 
-/**
- * Wrapper for routes that should only be reachable by signed-out visitors.
- * Authenticated users are redirected to `/` (active) or `/upgrade` (!active),
- * per contracts/route-guard.md C2.
- */
-function PublicAuthRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading, isActive } = useAuth();
-  const [, navigate] = useLocation();
-
-  useEffect(() => {
-    if (loading || !user) return;
-    const target = isActive ? "/" : "/upgrade";
-    navigate(target, { replace: true });
-  }, [loading, user, isActive, navigate]);
-
-  if (loading) return null;
-  if (user) return null;
-  return <>{children}</>;
-}
-
 /** Redirect /auth/signup to /auth/signin — signup is disabled, accounts via GHL only */
 function SignUpRedirect() {
   const [, navigate] = useLocation();
-  useEffect(() => { navigate("/auth/signin", { replace: true }); }, [navigate]);
+  useEffect(() => {
+    navigate("/auth/signin", { replace: true });
+  }, [navigate]);
   return null;
 }
 
