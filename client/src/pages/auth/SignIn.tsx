@@ -237,9 +237,13 @@ export default function SignIn() {
       // user on the very next render.
       try {
         await refetch();
-      } catch {
-        // Refetch errors are non-fatal here: the cookie is set, navigation
-        // will still happen, and the subsequent revalidation will pick it up.
+      } catch (err) {
+        // Non-fatal: the cookie is set, navigation still happens, and the
+        // subsequent revalidation will pick it up. We log because this is
+        // the sync point that prevents the stale-`user` redirect loop —
+        // if it regresses in production the warning surfaces the failure
+        // immediately rather than letting the user see a silent stall.
+        console.warn("[SignIn] session refetch after sign-in failed:", err);
       }
 
       navigate("/", { replace: true });

@@ -21,7 +21,6 @@ vi.mock("wouter", async () => {
 });
 
 import { RouteGuard } from "@/components/RouteGuard";
-import { Spinner } from "@/components/ui/spinner";
 
 /**
  * Regression tests for the bug where `useSession().isPending` flipping true
@@ -165,10 +164,5 @@ describe("RouteGuard re-render gating", () => {
     );
 
     expect(mocks.navigate).toHaveBeenCalledWith("/upgrade", { replace: true });
-  });
-
-  it("keeps the spinner markup stable across re-renders", () => {
-    // The Spinner export must continue to exist for consumers / tests.
-    expect(Spinner).toBeDefined();
   });
 });

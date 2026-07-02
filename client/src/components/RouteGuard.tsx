@@ -1,6 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Spinner } from "@/components/ui/spinner";
-import { useEffect, useRef } from "react";
+import { useHasResolvedOnce } from "@/hooks/useHasResolvedOnce";
+import { useEffect } from "react";
 import { useLocation } from "wouter";
 
 const SIGNIN_PATH = "/auth/signin";
@@ -25,24 +26,15 @@ const HOME_PATH = "/";
  * Redirect effects are idempotent (no loop) — navigate only when the path
  * is not already the target. See `contracts/route-guard.md` C2.
  *
- * Re-render gating: Better Auth's `useSession().isPending` flips true on
- * every background revalidation (window focus, online, broadcast) when
- * the session data is `null`. Treating raw `loading` as "still booting"
- * after the first resolution unmounts the protected route tree on every
- * tab switch. We latch `hasResolvedOnce` once the initial session query
- * has settled; only the FIRST resolution is allowed to blank the screen.
- * After that, subsequent `loading` flips from background refetches are
- * ignored for rendering decisions (redirect logic still uses the freshest
- * `user`/`isActive`).
+ * Re-render gating: see `useHasResolvedOnce`. Briefly, Better Auth's
+ * `useSession().isPending` flips true on every background revalidation
+ * when session data is `null`. The latch from `useHasResolvedOnce` is
+ * used in place of raw `loading` to decide whether to blank the screen.
  */
 export function RouteGuard({ children }: { children: React.ReactNode }) {
   const { user, loading, isActive } = useAuth();
   const [location, navigate] = useLocation();
-  const hasResolvedOnce = useRef(false);
-
-  useEffect(() => {
-    if (!loading) hasResolvedOnce.current = true;
-  }, [loading]);
+  const hasResolvedOnce = useHasResolvedOnce(loading);
 
   useEffect(() => {
     if (!hasResolvedOnce.current) return;

@@ -37,10 +37,12 @@ if (typeof window !== "undefined" && typeof window.matchMedia === "undefined") {
   });
 }
 
-// Wipe the DOM and reset mocks between tests so cross-test state can't
-// pollute behaviour assertions (e.g. accumulated navigate() call history,
-// stale useAuth mock returns).
+// Wipe the DOM and fully reset mocks between tests so cross-test state
+// (call history, return values, implementations) can't leak into the
+// next assertion. `resetAllMocks` clears call history AND restores the
+// default mock implementations, so a `mockReturnValue` set in one test
+// can't bleed into the next.
 afterEach(() => {
   cleanup();
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });

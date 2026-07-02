@@ -59,7 +59,13 @@ describe("SignIn post-login navigation", () => {
   }
 
   it("calls refetch() and navigates to / within a bounded time after a successful sign-in", async () => {
-    const refetch = vi.fn().mockResolvedValue(undefined);
+    // Use a deferred promise to prove navigation is gated on refetch
+    // resolution — not just that both eventually fire.
+    let resolveRefetch!: () => void;
+    const refetchDone = new Promise<void>(resolve => {
+      resolveRefetch = resolve;
+    });
+    const refetch = vi.fn().mockReturnValue(refetchDone);
     mocks.useAuth.mockReturnValue({
       user: null,
       loading: false,
@@ -92,15 +98,59 @@ describe("SignIn post-login navigation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /دخول/ }));
 
-    // After a successful response, refetch must be awaited before
-    // navigation. Within a bounded number of microtask flushes the
-    // navigate("/") call must have fired.
     await waitFor(() => {
       expect(refetch).toHaveBeenCalledTimes(1);
     });
+    // While the refetch promise is still pending, navigation must NOT
+    // have fired — proves the submit handler awaits it.
+    expect(mocks.navigate).not.toHaveBeenCalled();
+
+    resolveRefetch();
+
     await waitFor(() => {
       expect(mocks.navigate).toHaveBeenCalledWith("/", { replace: true });
     });
+  });
+
+  it("still navigates to / even if refetch() rejects (non-fatal path)", async () => {
+    const refetch = vi.fn().mockRejectedValue(new Error("network blip"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mocks.useAuth.mockReturnValue({
+      user: null,
+      loading: false,
+      isActive: false,
+      refetch,
+      logout: vi.fn(),
+    });
+
+    fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.endsWith("/api/auth/check-email")) {
+        return Promise.resolve(mockJsonResponse({ exists: true }));
+      }
+      if (url.endsWith("/api/auth/sign-in/email")) {
+        return Promise.resolve(mockJsonResponse({ ok: true }));
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    render(<SignIn />);
+
+    fireEvent.change(screen.getByLabelText("البريد الإلكتروني"), {
+      target: { value: "user@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("كلمة المرور"), {
+      target: { value: "correct horse battery staple" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /دخول/ }));
+
+    await waitFor(() => {
+      expect(mocks.navigate).toHaveBeenCalledWith("/", { replace: true });
+    });
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it("does not navigate on a 429 (rate limited) response", async () => {

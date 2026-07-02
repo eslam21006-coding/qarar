@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
-import { useEffect, useRef } from "react";
+import { useHasResolvedOnce } from "@/hooks/useHasResolvedOnce";
+import { useEffect } from "react";
 import { useLocation } from "wouter";
 
 /**
@@ -11,19 +12,14 @@ import { useLocation } from "wouter";
  * background revalidation (window focus, online, broadcast) when the session
  * data is `null`. Treating raw `loading` as "still booting" after the first
  * resolution unmounts children like `<SignIn />`, wiping form state on every
- * tab switch. We latch `hasResolvedOnce` once the initial session query has
- * settled; only the FIRST resolution is allowed to blank the screen. After
- * that, subsequent `loading` flips from background refetches are ignored for
- * rendering decisions (redirect logic still uses the freshest `user`/`isActive`).
+ * tab switch. `useHasResolvedOnce` latches the resolution and is used in place
+ * of raw `loading` to decide whether to blank the screen. Redirect logic still
+ * uses the freshest `user`/`isActive`.
  */
 export function PublicAuthRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, isActive } = useAuth();
   const [, navigate] = useLocation();
-  const hasResolvedOnce = useRef(false);
-
-  useEffect(() => {
-    if (!loading) hasResolvedOnce.current = true;
-  }, [loading]);
+  const hasResolvedOnce = useHasResolvedOnce(loading);
 
   useEffect(() => {
     if (!hasResolvedOnce.current) return;
