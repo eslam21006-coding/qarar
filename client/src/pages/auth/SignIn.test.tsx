@@ -135,22 +135,25 @@ describe("SignIn post-login navigation", () => {
     });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    render(<SignIn />);
+    try {
+      render(<SignIn />);
 
-    fireEvent.change(screen.getByLabelText("البريد الإلكتروني"), {
-      target: { value: "user@example.com" },
-    });
-    fireEvent.change(screen.getByLabelText("كلمة المرور"), {
-      target: { value: "correct horse battery staple" },
-    });
+      fireEvent.change(screen.getByLabelText("البريد الإلكتروني"), {
+        target: { value: "user@example.com" },
+      });
+      fireEvent.change(screen.getByLabelText("كلمة المرور"), {
+        target: { value: "correct horse battery staple" },
+      });
 
-    fireEvent.click(screen.getByRole("button", { name: /دخول/ }));
+      fireEvent.click(screen.getByRole("button", { name: /دخول/ }));
 
-    await waitFor(() => {
-      expect(mocks.navigate).toHaveBeenCalledWith("/", { replace: true });
-    });
-    expect(warnSpy).toHaveBeenCalled();
-    warnSpy.mockRestore();
+      await waitFor(() => {
+        expect(mocks.navigate).toHaveBeenCalledWith("/", { replace: true });
+      });
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("does not navigate on a 429 (rate limited) response", async () => {
