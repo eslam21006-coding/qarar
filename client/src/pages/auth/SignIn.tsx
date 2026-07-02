@@ -3,11 +3,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { signIn } from "@/lib/auth-client";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { Loader2, Eye, EyeOff, Clock } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 
-const MSG_NO_ACCOUNT = "لا يوجد حساب بهذا البريد الإلكتروني. للاشتراك، قم بالشراء من خلال صفحة المبيعات.";
+const MSG_NO_ACCOUNT =
+  "لا يوجد حساب بهذا البريد الإلكتروني. للاشتراك، قم بالشراء من خلال صفحة المبيعات.";
 const MSG_WRONG_PASSWORD = "كلمة المرور غير صحيحة";
 const MSG_GENERIC = "حدث خطأ، حاول مرة أخرى";
 
@@ -145,6 +147,7 @@ function isInvalidCredentialsError(err: unknown): boolean {
  */
 export default function SignIn() {
   const [, navigate] = useLocation();
+  const { refetch } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -223,6 +226,20 @@ export default function SignIn() {
         localStorage.setItem("qarar_remember_me", "true");
       } else {
         localStorage.removeItem("qarar_remember_me");
+      }
+
+      // We used raw `fetch` above so we can read the 429 body before Better
+      // Auth's client swallows it. The trade-off is that the Better Auth
+      // client-side session atom wasn't notified, so `useSession()` would
+      // still report `data: null` and the route guard would bounce us back
+      // to `/auth/signin` after navigation. Explicitly refetch the session
+      // and await it before navigating so the guard sees the authenticated
+      // user on the very next render.
+      try {
+        await refetch();
+      } catch {
+        // Refetch errors are non-fatal here: the cookie is set, navigation
+        // will still happen, and the subsequent revalidation will pick it up.
       }
 
       navigate("/", { replace: true });
@@ -400,7 +417,9 @@ export default function SignIn() {
                   onClick={() => setShowPassword(!showPassword)}
                   disabled={submitting || isBlocked}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-[#64748b] hover:text-[#94a3b8] disabled:opacity-50"
-                  aria-label={showPassword ? "إخفاء كلمة المرور" : "عرض كلمة المرور"}
+                  aria-label={
+                    showPassword ? "إخفاء كلمة المرور" : "عرض كلمة المرور"
+                  }
                 >
                   {showPassword ? (
                     <EyeOff className="h-4 w-4" />
@@ -415,7 +434,7 @@ export default function SignIn() {
               <Checkbox
                 id="rememberMe"
                 checked={rememberMe}
-                onCheckedChange={(checked) => setRememberMe(checked as boolean)}
+                onCheckedChange={checked => setRememberMe(checked as boolean)}
                 disabled={submitting || isBlocked}
                 className="border-[#3884f4] bg-[#0c1220]"
               />
