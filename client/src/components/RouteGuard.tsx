@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Spinner } from "@/components/ui/spinner";
+import { useHasResolvedOnce } from "@/hooks/useHasResolvedOnce";
 import { useEffect } from "react";
 import { useLocation } from "wouter";
 
@@ -24,13 +25,19 @@ const HOME_PATH = "/";
  *
  * Redirect effects are idempotent (no loop) — navigate only when the path
  * is not already the target. See `contracts/route-guard.md` C2.
+ *
+ * Re-render gating: see `useHasResolvedOnce`. Briefly, Better Auth's
+ * `useSession().isPending` flips true on every background revalidation
+ * when session data is `null`. The latch from `useHasResolvedOnce` is
+ * used in place of raw `loading` to decide whether to blank the screen.
  */
 export function RouteGuard({ children }: { children: React.ReactNode }) {
   const { user, loading, isActive } = useAuth();
   const [location, navigate] = useLocation();
+  const hasResolvedOnce = useHasResolvedOnce(loading);
 
   useEffect(() => {
-    if (loading) return;
+    if (!hasResolvedOnce.current) return;
     if (typeof window === "undefined") return;
 
     const path = window.location.pathname;
@@ -54,7 +61,7 @@ export function RouteGuard({ children }: { children: React.ReactNode }) {
     }
   }, [loading, user, isActive, navigate, location]);
 
-  if (loading) {
+  if (!hasResolvedOnce.current && loading) {
     return (
       <div
         dir="rtl"
