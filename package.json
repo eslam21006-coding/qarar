@@ -98,11 +98,8 @@
     "autoprefixer": "^10.4.20",
     "drizzle-kit": "^0.31.4",
     "esbuild": "^0.25.0",
-<<<<<<< Updated upstream
     "jsdom": "^29.1.1",
-=======
     "mysql2": "^3.15.1",
->>>>>>> Stashed changes
     "pnpm": "^10.15.1",
     "postcss": "^8.4.47",
     "prettier": "^3.6.2",
