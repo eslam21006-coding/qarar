@@ -401,15 +401,39 @@ export async function buildSnapshot(
 
   const { campaigns, adsets, ads } = await fetchHierarchy(token, accountId);
 
+  // Parallelize the 3 levels × 3 windows = 9 fetchLevelInsights calls. Meta's
+  // own UI does not serialize these, and each call already round-trips
+  // pagination internally; serializing here added 9× the per-call latency
+  // to every refresh. The output maps (w3dMaps/todayMaps/dailyMaps) are
+  // built from the same fetches at the same time, so the resolved values
+  // are byte-for-byte identical to the previous sequential version. If any
+  // one of the 9 calls rejects (rate-limit / transient / auth), Promise.all
+  // surfaces the first rejection — preserving the existing error-mapping in
+  // routers.ts#dashboard.refresh (isRateLimit → RATE_LIMITED, isAuthError →
+  // RECONNECT_REQUIRED, else BAD_GATEWAY).
   const levels: Array<"campaign" | "adset" | "ad"> = ["campaign", "adset", "ad"];
   const w3dMaps = new Map<string, Map<string, any[]>>();
   const todayMaps = new Map<string, Map<string, any[]>>();
   const dailyMaps = new Map<string, Map<string, any[]>>();
-  for (const lvl of levels) {
-    w3dMaps.set(lvl, await fetchLevelInsights(token, accountId, lvl, threeDay));
-    todayMaps.set(lvl, await fetchLevelInsights(token, accountId, lvl, today));
-    dailyMaps.set(lvl, await fetchLevelInsights(token, accountId, lvl, last30daily));
-  }
+  const windows: ReadonlyArray<{
+    bucket: "w3dMaps" | "todayMaps" | "dailyMaps";
+    params: Record<string, string>;
+  }> = [
+    { bucket: "w3dMaps", params: threeDay },
+    { bucket: "todayMaps", params: today },
+    { bucket: "dailyMaps", params: last30daily },
+  ];
+  await Promise.all(
+    levels.flatMap(level =>
+      windows.map(w =>
+        fetchLevelInsights(token, accountId, level, w.params).then(map => {
+          if (w.bucket === "w3dMaps") w3dMaps.set(level, map);
+          else if (w.bucket === "todayMaps") todayMaps.set(level, map);
+          else dailyMaps.set(level, map);
+        })
+      )
+    )
+  );
 
   // Baselines
   const baselines = await fetchBaselines(token, accountId);
