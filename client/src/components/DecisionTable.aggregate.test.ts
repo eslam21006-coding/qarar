@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DailyMetrics, WindowMetrics } from "../../../../shared/qarar";
+import type { DailyMetrics, WindowMetrics } from "../../../shared/qarar";
 import { aggregate, type SeriesObj } from "./DecisionTable";
 
 /**
