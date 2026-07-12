@@ -33,6 +33,7 @@ import { cpaColorClass, ctrColorClass, money, num, pct } from "@/lib/format";
 import { cpaCell } from "@/lib/cellFormat";
 import { applyFilters, FILTER_FIELDS, type FilterAgg, type FilterField, type FilterJoin, type FilterOp, type FilterRule } from "@/lib/filters";
 import { aggregateTotals } from "@/lib/aggregate";
+import { presetRangeBounds } from "@/lib/dateWindow";
 import { trpc } from "@/lib/trpc";
 import type { AccountSummary, DailyMetrics, EngineRow, Verdict, WindowMetrics } from "@shared/qarar";
 import {
@@ -121,14 +122,24 @@ function aggFromWindow(w: WindowMetrics): FilterAgg {
   };
 }
 
-function aggregate(s: SeriesObj | undefined, range: RangeKey, from: string, to: string): FilterAgg | null {
+export function aggregate(
+  s: SeriesObj | undefined,
+  range: RangeKey,
+  from: string,
+  to: string,
+  asOfDate: string
+): FilterAgg | null {
   if (!s) return null;
   if (range === "today") return aggFromWindow(s.today);
-  // if the daily series is missing entirely, fall back to the engine's 3-day window
+  // if the daily series is missing entirely, fall back to the engine's 3-day
+  // window (which now itself excludes today — server date_preset:"last_3d")
   if (range === "3d" && s.daily30.length === 0) return aggFromWindow(s.w3d);
   const days = range === "3d" ? 3 : range === "7d" ? 7 : range === "14d" ? 14 : 30;
-  const since = range === "custom" ? from : dateStr(days - 1);
-  const until = range === "custom" ? to : dateStr(0);
+  // Preset chips: window ends YESTERDAY (account-tz asOfDate − 1), never today
+  // (spec 010 FR-004). custom keeps the user-picked from/to.
+  const preset = range === "custom" ? null : presetRangeBounds(asOfDate, days);
+  const since = range === "custom" ? from : preset!.since;
+  const until = range === "custom" ? to : preset!.until;
   if (!since || !until) return null;
   let spend = 0, imps = 0, clicks = 0, linkClicks = 0, conv = 0, lp = 0, v3 = 0, tp = 0, value = 0;
   for (const d of s.daily30) {
@@ -266,6 +277,7 @@ export function DecisionTable({
   onSearchTermChange,
   summary,
   currencySymbol = "$",
+  asOfDate,
 }: {
   rows: EngineRow[];
   series: SeriesObj[];
@@ -278,6 +290,12 @@ export function DecisionTable({
   summary: AccountSummary | null;
   /** Hotfix T2: account currency symbol used by every money() call below. */
   currencySymbol?: string;
+  /**
+   * Account-timezone "today" (YYYY-MM-DD) from the snapshot payload; anchors the
+   * preset date-range chips (spec 010, FR-012). Falls back to the browser date
+   * for snapshots cached before this field existed (research R4).
+   */
+  asOfDate?: string;
 }) {
   const utils = trpc.useUtils();
 
@@ -410,10 +428,13 @@ export function DecisionTable({
 
   // aggregate metrics per row for the selected range (all rows, for filter support)
   const aggs = useMemo(() => {
+    // Anchor preset chips to the account-tz "today"; fall back to the browser
+    // date only for snapshots cached before asOfDate existed (spec 010, R4).
+    const asOf = asOfDate ?? dateStr(0);
     const m = new Map<string, FilterAgg | null>();
-    for (const r of rows) m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to));
+    for (const r of rows) m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to, asOf));
     return m;
-  }, [rows, seriesMap, range, from, to]);
+  }, [rows, seriesMap, range, from, to, asOfDate]);
 
   // visible rows — when searching/filtering, search across ALL levels
   const hasFilters = filterRules.length > 0;

@@ -365,6 +365,9 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
     accountId: "demo_account",
     currency: "USD",
     fetchedAt: new Date().toISOString(),
+    // Demo's "today" — matches the synthetic daily30 dates (dateStr(0) is the
+    // off=0 today row). Preset chips anchor to this and exclude it (spec 010).
+    asOfDate: dateStr(0),
     objects,
     baselines: {
       ctrLinkMedian90: 1.7,
