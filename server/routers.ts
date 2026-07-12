@@ -327,6 +327,7 @@ export const appRouter = router({
           isDemo: account.isDemo,
           accountExternalId: payload.accountId,
           currency: payload.currency,
+          asOfDate: payload.asOfDate,
           series,
           checks: checks.map(c => ({ actionKey: c.actionKey, done: c.done })),
           settingsReviewDue: needsReview,

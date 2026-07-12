@@ -194,6 +194,15 @@ export interface AccountSnapshotPayload {
   accountId: string;
   currency: string;
   fetchedAt: string; // ISO
+  /**
+   * Account-timezone "today" (YYYY-MM-DD) — the still-incomplete current day.
+   * Anchors the preset date-range chips (3d/7d/14d/30d) so they exclude today
+   * and reconcile with Meta's "Last N days" presets (spec 010, FR-012). Both
+   * the live and demo builders set it; consumers tolerate its absence on
+   * snapshots cached before this field existed and fall back to the browser
+   * date (research R4).
+   */
+  asOfDate: string;
   objects: NormalizedObject[];
   baselines: Baselines;
   /** true when any compared window straddles 2026-03-01 (attribution change) */

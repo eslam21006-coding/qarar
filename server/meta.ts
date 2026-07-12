@@ -392,9 +392,11 @@ export async function buildSnapshot(
   accountId: string,
   currency: string
 ): Promise<AccountSnapshotPayload> {
-  const threeDay = {
-    time_range: JSON.stringify({ since: daysAgo(2), until: daysAgo(0) }),
-  };
+  // Meta's native "last N days" preset covers the last 3 fully-elapsed days
+  // (ending yesterday, evaluated in the ad account's timezone) and excludes
+  // today — matching the sibling `today`/`last_30d` presets below. This is the
+  // window every Kill/Watch/Continue rule judges against (spec 010 FR-001/002).
+  const threeDay = { date_preset: "last_3d" };
   const today = { date_preset: "today" };
   // last 30 days daily — powers both daily7 (engine) and the date-range selector (display)
   const last30daily = { date_preset: "last_30d", time_increment: "1" };
@@ -540,10 +542,31 @@ export async function buildSnapshot(
 
   computeSpendShares(objects);
 
+  // Account-timezone "today" (YYYY-MM-DD) anchors the client's preset date-range
+  // chips so they exclude today and reconcile with Meta (spec 010, FR-012). The
+  // account timezone is authoritative on the success path; a single failed field
+  // must not fail the whole refresh, so we fall back to the server's system-tz
+  // current date (intentional error path per spec note U1 — not an FR-012
+  // violation, which governs the normal path).
+  let asOfDate: string;
+  try {
+    const acct = await graphGet(`/${accountId}`, {
+      fields: "timezone_name",
+      access_token: token,
+    });
+    const tzName = acct?.timezone_name;
+    asOfDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tzName || undefined,
+    }).format(new Date());
+  } catch {
+    asOfDate = new Intl.DateTimeFormat("en-CA").format(new Date());
+  }
+
   return {
     accountId,
     currency,
     fetchedAt: new Date().toISOString(),
+    asOfDate,
     objects,
     baselines,
     attributionStraddle: daysAgo(90) < ATTRIBUTION_CHANGE_DATE,
@@ -595,7 +618,9 @@ async function fetchBaselines(token: string, accountId: string): Promise<Baselin
     });
     cpmAvg14 = parseFloat(json.data?.[0]?.cpm) || null;
     const j2 = await graphGet(`/${accountId}/insights`, {
-      time_range: JSON.stringify({ since: daysAgo(2), until: daysAgo(0) }),
+      // "current" CPM over the last 3 complete days (account tz, excludes today)
+      // — matches the engine's corrected w3d window (spec 010 FR-003).
+      date_preset: "last_3d",
       fields: "cpm",
       access_token: token,
     });

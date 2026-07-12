@@ -365,6 +365,10 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
     accountId: "demo_account",
     currency: "USD",
     fetchedAt: new Date().toISOString(),
+    // Demo's "today" — reuse `d0` (the timestamp used to build the synthetic
+    // daily30 series) so a UTC-midnight race between two `dateStr(0)` calls
+    // can't drift asOfDate from the off=0 today row (spec 010).
+    asOfDate: d0,
     objects,
     baselines: {
       ctrLinkMedian90: 1.7,
