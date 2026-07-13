@@ -24,7 +24,14 @@ export const user = mysqlTable(
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
     subscriptionStatus: text("subscription_status").default("inactive").notNull(),
-    ghlContactId: text("ghl_contact_id"),
+    // US11 / Spec 011 / T004 — narrow from `text(...)` to
+    // `varchar(64)`. MySQL/TiDB refuse to build a B-tree index on a
+    // TEXT column without an explicit key-length prefix (errno 1170,
+    // ER_BLOB_KEY_WITHOUT_LENGTH); the new `user_ghlContactId_idx`
+    // requires a sized type. 64 chars is generous headroom over
+    // GHL's actual 20-30 char contact IDs. Aligned with the rest of
+    // the `user` table's column conventions (no TEXT elsewhere).
+    ghlContactId: varchar("ghl_contact_id", { length: 64 }),
     role: text("role").default("user").notNull(),
   },
   (table) => [

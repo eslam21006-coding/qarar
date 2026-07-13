@@ -64,6 +64,13 @@
       "when": 1782837034281,
       "tag": "0008_warm_amazoness",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1783952996422,
+      "tag": "0009_striped_stark_industries",
+      "breakpoints": true
     }
   ]
 }
