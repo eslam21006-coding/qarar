@@ -59,9 +59,30 @@ Iteration 1 findings and how they were resolved:
   requirement therefore adds a second leg: find settings records whose owning user matches no existing user,
   resolving the person through a durable identifier. Without this, a clean result from the briefed query
   would be misread as "all three causes eliminated".
-- **FR-022 extends data isolation to the repair path.** Re-attributing stranded records to a recovered
+- **FR-028 extends data isolation to the repair path.** Re-attributing stranded records to a recovered
   identity is a cross-identity data move, which makes it a data-isolation concern under Constitution
   principle IV, not just a data-recovery convenience. The corresponding edge case (an email address
   reassigned between two people) is called out in the spec.
+
+## Re-validation after `/speckit-clarify` (Session 2026-07-13)
+
+Five clarifications were integrated. Re-checked every item against the updated spec: **16/16 → 16/16 passing**,
+no regressions, no items changed state. The clarifications strengthened rather than destabilised the spec:
+
+- **Evidence gating was contradictory and is now resolved.** SC-003 previously required the root cause be
+  identified "before any root-cause fix is written", which conflicts with the decision that preventive fixes
+  ship regardless. SC-003 now gates only the *repair* of production records. Without this the spec would have
+  failed "requirements are testable and unambiguous" on re-read.
+- **Requirement count grew 22 → 32**, with new blocks for Observability (FR-024–FR-026), Operation and access
+  (FR-029–FR-030), and Account linkage (FR-031–FR-032). Numbering was resequenced to stay ascending; the
+  Out of Scope cross-reference was retargeted to FR-027.
+- **Three edge cases were added** by the clarifications rather than found by review: the merge target's new
+  email already belonging to a different person, a person with no recorded contact id, and an orphaned record
+  predating the recovery key. Each has a defined "report, don't guess" outcome.
+- **Two success criteria were added** (SC-008 observability, SC-009 merge reconstructability) and SC-006 was
+  widened to cover dangling *user* references, not just dangling account references.
+- **Content Quality re-checked.** The clarifications named a CRM contact id and a stable ad-platform account
+  id. These are domain identifiers, not implementation details — the spec still names no language, framework,
+  table, or column — so "no implementation details" continues to pass.
 
 Status: all items pass. Ready for `/speckit-plan`.

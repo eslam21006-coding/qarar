@@ -20,6 +20,16 @@ Two independent defects are in scope, and they compound each other:
 
 Defect 2 is fixed on its own merits and ships regardless of how long defect 1 takes to confirm.
 
+## Clarifications
+
+### Session 2026-07-13
+
+- Q: The root-cause fix is gated on diagnostic evidence, but the diagnostic needs production data access. What ships if that evidence is slow or unavailable? → A: Ship the *preventive* structural guarantees (one settings record per user-and-account pair; no dangling ad-account or user references) regardless of the diagnostic's outcome — they are correct and safe whichever cause is confirmed. Gate only the *repair* of already-damaged production records on confirmed evidence, because that repair moves a person's data between identities and must never run on a guess.
+- Q: Which durable identifier should re-provisioning use to recognise a returning person, and what happens on conflict? → A: Match on the external CRM contact id first, falling back to email. When the contact id matches an existing person whose email differs, update that person's email in place — same identity, new address — rather than minting a new one. Mint a new identity only when neither identifier matches. Every in-place email change on this path MUST be recorded in the audit trail (old email, new email, contact id, timestamp); the merge still completes automatically and does not block provisioning.
+- Q: Should the system record when a settings lookup comes back empty, so this class of bug is detectable without a user report? → A: Both — a structured server-side log entry (for volume and alerting) and a durable audit record (for forensics after logs rotate), emitted whenever a lookup returns nothing for an ad account that exists. The durable record must be bounded so a genuine first-time user reloading the page does not accumulate records without limit.
+- Q: Who may run the reconciliation check and the repair, and how are they exposed? → A: Both are offline maintenance operations for an operator who already has production database access — neither is reachable over the network, not even as an admin-only endpoint. The repair additionally defaults to preview-only: it writes nothing unless invoked with an explicit confirmation flag.
+- Q: How is a settings record's link to its ad account made durable? → A: Keep the internal identifier as the join key, and additionally record the ad platform's own stable account identifier alongside it as a recovery key. The change is additive, no existing read path breaks, and an orphaned record becomes self-attributable rather than unrecoverable. Records predating this change carry no stable identifier and fall into the "report, don't guess" case.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - The Settings screen never passes off placeholder numbers as my saved data (Priority: P1)
@@ -64,7 +74,7 @@ Someone diagnosing an affected user runs a single reconciliation check that comp
 
 A user's saved funnel economics remain findable for the ad account they belong to, across every event that can reshuffle the internal bookkeeping — an ad account being removed and re-synced, a re-authentication with the ad platform, or the user's own record being re-provisioned. The economics are a property of *that ad account for that user*, and they are retrieved as such.
 
-**Why this priority**: This is the root-cause fix. It is P2 rather than P1 only because it is gated on the evidence from User Story 2 — its precise shape depends on which candidate cause the check confirms. Its user-facing value is the highest of any story here, and it is what stops the reports recurring.
+**Why this priority**: This is the root-cause fix, and it splits in two. The **preventive** half — guaranteeing that a settings record can never reference an ad account or an owning user that does not exist, and that a returning person is recognised rather than re-minted — is correct and safe whichever candidate cause the diagnostic confirms, so it is **not** gated on evidence and ships alongside User Story 1. The **repair** half — re-attaching records that are already orphaned or stranded in production — moves a person's data between identities and is therefore gated on the diagnostic confirming what actually happened. P2 reflects that gating, not lower value: this is what stops the reports recurring.
 
 **Independent Test**: Reproduce the confirmed failure mode in a controlled environment (e.g. remove and re-sync an ad account that has saved settings), then confirm the settings are still returned for that account afterwards.
 
@@ -72,9 +82,10 @@ A user's saved funnel economics remain findable for the ad account they belong t
 
 1. **Given** a user with saved settings for an ad account, **When** that ad account is removed and re-synced from the ad platform, **Then** opening Settings for that account still shows the user's saved economics.
 2. **Given** settings records that are already orphaned in production, **When** the repair runs, **Then** each orphaned record is re-attached to the correct ad account for that user, and any record that cannot be attributed with certainty is left untouched and reported rather than guessed at.
-3. **Given** a returning customer whose subscription is re-provisioned under a changed email address, **When** provisioning runs, **Then** it recognises them as the existing person by a durable identifier (their external CRM contact id) rather than minting a new identity, and their previously saved economics are still found when they next open Settings.
-4. **Given** a person whose settings are already stranded under a superseded identifier, **When** the repair runs, **Then** their records are re-attributed to their live identity only after the two identities are proven to be the same person.
-5. **Given** any repair or re-linking operation, **When** it runs, **Then** it can be previewed without writing, and it never deletes a settings record.
+3. **Given** a returning customer whose subscription is re-provisioned under a changed email address, **When** provisioning runs, **Then** it recognises them as the existing person by their external CRM contact id rather than minting a new identity, updates their email in place, and their previously saved economics are still found when they next open Settings.
+4. **Given** the contact-id merge path updates an existing person's email, **When** the merge completes, **Then** an audit record captures the previous email, the new email, the contact id, and the time — and provisioning still completes without blocking on human review.
+5. **Given** a person whose settings are already stranded under a superseded identifier, **When** the repair runs, **Then** their records are re-attributed to their live identity only after the two identities are proven to be the same person.
+6. **Given** any repair or re-linking operation, **When** it runs, **Then** it can be previewed without writing, and it never deletes a settings record.
 
 ---
 
@@ -100,9 +111,11 @@ Two saves for the same user and account arriving at the same moment result in ex
 - **A user genuinely has no settings for a brand-new account**: this must be distinguishable from a failed load. A never-configured account is a legitimate first-time setup, not an error, and must not be presented as one.
 - **A user confirms "start fresh" but a real record does exist** (the load was merely a transient failure): the server must not let the fresh-start save destroy the existing record. See User Story 1, scenario 6.
 - **The demo account**: settings saved against the demo account are distinct from those saved against a real ad account. Opening Settings for the demo account must not appear to be a data-loss event.
-- **An orphaned record that cannot be confidently attributed to any current account** (e.g. the user has several accounts and nothing distinguishes which one the record belonged to): the repair must leave it alone and report it, rather than attaching it to the wrong account.
+- **An orphaned record with no stable account identifier**: records written before the recovery key exists carry only a stale internal reference, so if the user has several accounts nothing distinguishes which one the record belonged to. The repair must leave these alone and report them, rather than attaching them to the wrong account. Records written after the change are self-attributable and do not have this problem.
 - **Repair re-run**: running the repair a second time must be safe and must not change anything already repaired.
 - **Two people, one email history**: if an email address was reassigned from one person to another, re-attributing stranded records by email alone would hand one person's economics to another. Identity recovery must be safe against this — it is a data-isolation boundary, not merely a convenience.
+- **The merge target's new email already belongs to someone else**: re-provisioning resolves a returning person by contact id and wants to move them to a new email, but that email is already held by a *different* existing person. The in-place email change cannot proceed (email is unique). This must be refused and reported for human review rather than failing silently, merging two people, or crashing provisioning.
+- **A person with no recorded contact id**: anyone provisioned before the contact-id match path existed can only be resolved by email. They must still be recognised via the email fallback, and must not be re-minted as a new identity.
 
 ## Requirements *(mandatory)*
 
@@ -130,27 +143,47 @@ Two saves for the same user and account arriving at the same moment result in ex
 #### Durable linkage and repair (User Story 3)
 
 - **FR-014**: A user's saved settings MUST remain retrievable for their ad account across the removal and re-sync of that ad account.
-- **FR-015**: A person's saved settings MUST remain retrievable across a re-provisioning event that mints them a new internal user identifier. Re-provisioning MUST recognise a returning person by a durable identifier rather than minting a fresh identity that strands their existing data.
-- **FR-016**: The system MUST prevent a settings record from continuing to reference an ad account that no longer exists, or an owning user that no longer exists.
-- **FR-017**: Any repair of existing orphaned, stranded, or duplicated records MUST be previewable without writing, MUST be safe to run more than once, and MUST NOT delete a settings record whose correct owner cannot be determined with certainty — such records are reported for human review instead.
+- **FR-015**: A person's saved settings MUST remain retrievable across a re-provisioning event. Re-provisioning MUST recognise a returning person rather than minting a fresh identity that strands their existing data, resolving them in this order: (a) by their external CRM contact id, then (b) by email address. A new identity is minted only when neither resolves to an existing person.
+- **FR-016**: When re-provisioning resolves a returning person by contact id and that person's stored email differs from the incoming one, the system MUST update the existing person's email in place — preserving their identity and therefore their settings — rather than creating a second identity. The provisioning request MUST still complete automatically and MUST NOT block on this.
+- **FR-017**: Every in-place email change made on the contact-id merge path (FR-016) MUST be recorded in the audit trail, capturing at minimum the previous email, the new email, the external CRM contact id, and the time of the change. This is an identity change that completes without human review, so it MUST leave a durable record that a human can later reconstruct.
+- **FR-018**: The system MUST prevent a settings record from continuing to reference an ad account that no longer exists, or an owning user that no longer exists.
+- **FR-019**: Any repair of existing orphaned, stranded, or duplicated records MUST default to preview-only: invoked with no arguments it reports what it *would* change and writes nothing. Writing MUST require an explicit, deliberate confirmation flag. The repair MUST be safe to run more than once, and MUST NOT delete a settings record whose correct owner cannot be determined with certainty — such records are reported for human review instead.
+- **FR-020**: The preventive requirements (FR-014 through FR-018, and FR-021 through FR-026) MUST NOT be gated on the diagnostic's outcome: they are correct whichever candidate cause is confirmed, and they ship alongside User Story 1. Only the **repair** of already-damaged production records (FR-019) is gated on the diagnostic confirming the damage it is meant to undo.
 
 #### One record per account (User Story 4)
 
-- **FR-018**: The system MUST guarantee at most one settings record per user-and-account pair.
-- **FR-019**: Concurrent saves for the same user and account MUST result in exactly one stored record.
-- **FR-020**: A settings lookup MUST NOT be able to return an arbitrary record from among several candidates.
+- **FR-021**: The system MUST guarantee at most one settings record per user-and-account pair.
+- **FR-022**: Concurrent saves for the same user and account MUST result in exactly one stored record.
+- **FR-023**: A settings lookup MUST NOT be able to return an arbitrary record from among several candidates.
+
+#### Observability
+
+- **FR-024**: Whenever a settings lookup returns no record for an ad account that *does* exist, the system MUST emit a structured server-side log entry identifying the user and the ad account. This is the exact condition that defines the bug, and it is currently silent — making it searchable and countable is what allows the next occurrence to be detected without a user report.
+- **FR-025**: The same condition MUST also leave a durable audit record, so that forensics remain possible after logs rotate.
+- **FR-026**: The durable record (FR-025) MUST be bounded: a person who has genuinely never configured an account will trip this condition on every page load, so repeated occurrences for the same user-and-account pair MUST NOT accumulate without limit. One record per occurrence of the *condition*, not one per request.
 
 #### Constraints
 
-- **FR-021**: The system MUST NOT introduce any expiry, time-to-live, or automatic deletion mechanism for stored settings. Storage is unlimited by design; the defect is in the lookup path, not in deletion.
-- **FR-022**: Every settings query MUST remain scoped by user, preserving hard data isolation between users. Any repair that re-attributes a stranded record to a recovered identity MUST prove the two identities are the same person before moving data, and MUST NOT become a path by which one person's data reaches another.
+- **FR-027**: The system MUST NOT introduce any expiry, time-to-live, or automatic deletion mechanism for stored settings. Storage is unlimited by design; the defect is in the lookup path, not in deletion.
+- **FR-028**: Every settings query MUST remain scoped by user, preserving hard data isolation between users. Any repair that re-attributes a stranded record to a recovered identity MUST prove the two identities are the same person before moving data, and MUST NOT become a path by which one person's data reaches another.
+
+#### Operation and access
+
+- **FR-029**: The reconciliation check and the repair MUST both be offline maintenance operations, runnable only by an operator who already holds production database access. Neither MUST be reachable over the network, and neither MUST be exposed as an application endpoint — not even an administrator-only one. The repair crosses an identity boundary, so keeping it off the network removes a class of privilege-escalation risk rather than mitigating it.
+- **FR-030**: The repair's write path MUST be opt-in per invocation. A run that omits the confirmation flag MUST be incapable of writing, and MUST clearly report that it was a preview.
+
+#### Account linkage (User Story 3)
+
+- **FR-031**: A settings record MUST carry the ad platform's own stable account identifier in addition to the internal join key. The internal identifier remains the join key — no existing read path changes — while the stable identifier serves as the recovery key that makes a record self-attributable even if its internal reference goes stale. This is an additive change; it neither rewrites existing links nor removes them.
+- **FR-032**: The repair MUST use the stable account identifier to re-attribute an orphaned record to the correct ad account. A record that predates FR-031 and therefore carries no stable identifier is exactly the "cannot be determined with certainty" case in FR-019: it is reported for human review, never guessed at.
 
 ### Key Entities
 
-- **Funnel settings record**: A user's funnel economics for one ad account — average order value, HTO price, HTO conversion rate, front-end ROAS, daily budget, archetype, and related qualitative fields. Belongs to exactly one user and exactly one ad account. Has no expiry. Must be uniquely addressable by (user, ad account).
+- **Funnel settings record**: A user's funnel economics for one ad account — average order value, HTO price, HTO conversion rate, front-end ROAS, daily budget, archetype, and related qualitative fields. Belongs to exactly one user and exactly one ad account. Has no expiry. Must be uniquely addressable by (user, ad account). Carries two references to its ad account: the internal join key it is read by, and the ad platform's stable account identifier, which is what allows it to be recovered if the internal key goes stale.
 - **Ad account**: An advertising account belonging to a user, with a stable external identifier assigned by the ad platform and an internal bookkeeping identifier. May be removed and re-synced. The demo account is a special case of this.
 - **User**: The account holder. Identified internally by an identifier whose stability across re-provisioning is one of the three things under investigation.
-- **Reconciliation check**: A read-only diagnostic that joins settings records against ad accounts for a user and reports orphans, duplicates, and clean results.
+- **Reconciliation check**: A read-only, offline diagnostic that joins settings records against both ad accounts and users, reporting orphaned records (dangling account reference), stranded records (dangling user reference), duplicates, and clean results.
+- **Audit trail**: The durable record of events that must survive log rotation — specifically, automatic identity merges and settings lookups that came back empty for an account that exists.
 
 ## Success Criteria *(mandatory)*
 
@@ -158,12 +191,14 @@ Two saves for the same user and account arriving at the same moment result in ex
 
 - **SC-001**: Zero settings records are overwritten with built-in starting values as a result of a failed or empty load. Verified by a test that forces the failure and asserts the stored record is unchanged.
 - **SC-002**: 100% of failed settings loads produce a visible failure state; none fall through to an editable, savable form pre-filled with starting values.
-- **SC-003**: The root cause is identified from a single diagnostic run, with the evidence written down, before any root-cause fix is written.
+- **SC-003**: The root cause is identified from a single diagnostic run, with the evidence written down, before any *repair* of existing production records is run. (Preventive fixes do not wait on this — see FR-020.)
 - **SC-004**: After the fix, a user's saved economics survive an account removal-and-re-sync cycle — verified by reproducing the cycle and reading the settings back.
 - **SC-005**: Concurrent saves for one user and account produce exactly one stored record, verified under test.
-- **SC-006**: Every settings record in production references an ad account that exists, and no user-and-account pair has more than one record. Verified by re-running the reconciliation check after the repair.
+- **SC-006**: Every settings record in production references an ad account that exists and an owning user that exists, and no user-and-account pair has more than one record. Verified by re-running the reconciliation check after the repair; any record it still reports is one the repair deliberately declined to guess at, and is listed for human review.
 - **SC-007**: No stored settings record is deleted by any part of this work.
-- **SC-008**: Users stop reporting that their funnel settings reverted to values they did not enter.
+- **SC-008**: The next occurrence of a settings lookup coming back empty for an existing account is detectable from the system's own records, without waiting for a user to report it. Verified by triggering the condition and finding it in both the log stream and the durable audit trail.
+- **SC-009**: Every automatic identity merge is reconstructable after the fact from the audit trail alone — who was merged, from which email to which, and when.
+- **SC-010**: Users stop reporting that their funnel settings reverted to values they did not enter.
 
 ## Assumptions
 
@@ -172,12 +207,12 @@ Two saves for the same user and account arriving at the same moment result in ex
 - **A first-time setup experience may still offer suggested numbers as non-committal hints** (for example, as greyed placeholder text in an empty field), provided they are visibly not values, are never submitted unless the user types them, and never appear on the failure path.
 - **Repairing already-damaged production records is in scope**, because the user's data still exists and recovering it is the point. Repair is preview-first, idempotent, non-destructive, and declines to guess when attribution is ambiguous.
 - **Where duplicate records must be consolidated, the most recently updated record wins.** It is the closest available proxy for the user's latest intent.
-- **Candidate cause 2 (user identifier drift) has a known, specific mechanism, and it narrows the diagnostic.** A preliminary read of the identity path found that user identity is a generated identifier, that email is genuinely unique, and that provisioning resolves a returning person *by email only* — so drift is impossible while the person's existing record survives under an unchanged email. It becomes possible when the person's email changes (or they re-purchase under a second address), when their user record is removed and re-provisioned, or across the historical retype of the user identifier, none of which cascade to the settings records. This is why FR-010 exists: a diagnostic scoped to the person's *current* identifier would report "no settings" for exactly the person whose settings drifted. The **fix** for this cause is still gated on the diagnostic confirming it; only the diagnostic's shape is settled in advance.
+- **Candidate cause 2 (user identifier drift) has a known, specific mechanism, and it narrows the diagnostic.** A preliminary read of the identity path found that user identity is a generated identifier, that email is genuinely unique, and that provisioning resolves a returning person *by email only* — so drift is impossible while the person's existing record survives under an unchanged email. It becomes possible when the person's email changes (or they re-purchase under a second address), when their user record is removed and re-provisioned, or across the historical retype of the user identifier, none of which cascade to the settings records. This is why FR-010 exists: a diagnostic scoped to the person's *current* identifier would report "no settings" for exactly the person whose settings drifted. The **preventive** fix for this cause (recognising a returning person by contact id — FR-015, FR-016) is not gated on the diagnostic; only the **repair** of people already stranded is.
 - **Existing data isolation, the deterministic engine, the five-verdict vocabulary, and the read-only-by-default posture are unaffected by this work** and must remain so.
 
 ## Out of Scope
 
-- Any expiry, retention limit, or automatic cleanup of settings records (explicitly forbidden — see FR-021).
+- Any expiry, retention limit, or automatic cleanup of settings records (explicitly forbidden — see FR-027).
 - Changes to the decision engine, its evaluation order, its rule codes, or its verdict vocabulary.
 - Redesigning the Settings screen beyond the states required to prevent data loss.
 - Changes to how settings values feed the engine's math.
