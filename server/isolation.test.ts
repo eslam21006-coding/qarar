@@ -192,36 +192,37 @@ describe.skipIf(!hasDatabase)("repair cross-identity guard (T027 / US3 / FR-028)
   // directly: the repair calls findStranded then asserts
   // shared ghlContactId before any update.
   it("two identities that do NOT share ghlContactId are never merged", async () => {
-    // Seed two users with the same email but different contact ids
-    // — defense in depth: even though Better Auth enforces email
-    // uniqueness at the schema level, the repair MUST NOT merge
-    // users based on email alone (FR-028).
-    const ghostId = `iso-ghost-${SUFFIX}`;
-    const liveId = `iso-live-${SUFFIX}`;
-    const sharedEmail = `${SUFFIX}-shared@isolation.test`;
+    // Seed two users with DIFFERENT emails (email is unique at the
+    // schema level — `user.email` is `notNull().unique()`), and
+    // DIFFERENT contact ids. The repair's predicate must NOT collapse
+    // them into the same identity — only a shared ghlContactId is
+    // proof (FR-028). Even though Better Auth enforces email
+    // uniqueness, this defends the original spec concern that
+    // email alone is not proof.
+    const ghostId = `iso-ghost-${SUFFIX}-${Math.random().toString(36).slice(2, 6)}`;
+    const liveId = `iso-live-${SUFFIX}-${Math.random().toString(36).slice(2, 6)}`;
+    const ghostEmail = `${ghostId}@isolation.test`;
+    const liveEmail = `${liveId}@isolation.test`;
 
     const d = await db.getDb();
     if (!d) return;
 
-    // Two identities share the SAME email but DIFFERENT contact ids.
-    await d.insert(authUser).values([
-      {
-        id: ghostId,
-        name: "Ghost",
-        email: sharedEmail,
-        subscriptionStatus: "active",
-        role: "user",
-        ghlContactId: "ghl_ghost",
-      },
-      {
-        id: liveId,
-        name: "Live",
-        email: sharedEmail,
-        subscriptionStatus: "active",
-        role: "user",
-        ghlContactId: "ghl_live",
-      },
-    ]).catch(() => undefined);
+    await d.insert(authUser).values({
+      id: ghostId,
+      name: "Ghost",
+      email: ghostEmail,
+      subscriptionStatus: "active",
+      role: "user",
+      ghlContactId: "ghl_ghost",
+    });
+    await d.insert(authUser).values({
+      id: liveId,
+      name: "Live",
+      email: liveEmail,
+      subscriptionStatus: "active",
+      role: "user",
+      ghlContactId: "ghl_live",
+    });
 
     // The repair's decision rule: ghostId and liveId are NOT the
     // same person because their ghlContactId differs. We assert the
@@ -237,6 +238,8 @@ describe.skipIf(!hasDatabase)("repair cross-identity guard (T027 / US3 / FR-028)
       .from(authUser)
       .where(eq(authUser.id, liveId))
       .limit(1);
+    expect(ghost[0]?.ghl).toBe("ghl_ghost");
+    expect(live[0]?.ghl).toBe("ghl_live");
     expect(ghost[0]?.ghl).not.toBe(live[0]?.ghl);
     // Cleanup.
     await d.delete(authUser).where(eq(authUser.id, ghostId));
@@ -246,14 +249,17 @@ describe.skipIf(!hasDatabase)("repair cross-identity guard (T027 / US3 / FR-028)
   it("the repair refuses to move rows when no shared ghlContactId exists", async () => {
     // Predicate-level check: the repair's only proof of identity is
     // a shared ghlContactId. We assert that by exercising the
-    // shared module's resolveCandidateIdentities — if two
-    // identities do not share a contact id, the predicate returns
-    // disjoint sets and the repair must refuse.
+    // shared module's resolveCandidateIdentities against the seeded
+    // USER_A_ID (EMAIL_A). EMAIL_A was inserted by beforeAll with
+    // ghlContactId=null, so resolving by email matches exactly one
+    // row. Resolving by an unrelated contact id returns the empty set.
     const { resolveCandidateIdentities } = await import("./settingsIntegrity");
-    const a = await resolveCandidateIdentities({ email: `iso-a-${SUFFIX}@isolation.test` });
-    const b = await resolveCandidateIdentities({ contactId: "ghl_definitely_not_a" });
-    expect(a.length).toBeGreaterThan(0);
-    expect(b.length).toBe(0);
+    const a = await resolveCandidateIdentities({ email: EMAIL_A });
+    const b = await resolveCandidateIdentities({
+      contactId: `ghl_definitely_not_a_${SUFFIX}`,
+    });
+    expect(a).toContain(USER_A_ID);
+    expect(b).toEqual([]);
   });
 });
 

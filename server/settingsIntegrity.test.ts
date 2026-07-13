@@ -35,8 +35,18 @@ describe("settingsIntegrity module shape (T021 / US2)", () => {
   });
 
   it("returns [] / safe defaults when DATABASE_URL is unset (graceful degradation)", async () => {
-    // All predicates close over `getDb()` which returns null when no
-    // DATABASE_URL is set. They must return empty arrays, not throw.
+    // This test asserts the no-DB branch of every predicate. When a
+    // real DATABASE_URL is present (CI), the predicates execute
+    // against the live schema instead — the test is then a tautology
+    // or, worse, asserts specific count expectations against
+    // whatever data happens to live in the test DB. Gate the no-DB
+    // assertions behind the inverse check; the API-shape tests below
+    // run regardless of DB availability.
+    if (process.env.DATABASE_URL) {
+      // With a real DB, asserting "predicates return []" is wrong.
+      // The contract under test here is only meaningful without a DB.
+      return;
+    }
     const ids = await integrity.resolveCandidateIdentities({
       email: "anyone@example.com",
     });
