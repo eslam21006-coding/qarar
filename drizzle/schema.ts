@@ -126,7 +126,7 @@ export const funnelSettings = mysqlTable("funnelSettings", {
   htoConversionRate: double("htoConversionRate").default(0).notNull(),
   /** 1.0 / 0.65 / 0.5 / custom */
   frontEndRoas: double("frontEndRoas").default(1).notNull(),
-  dailyBudget: double("doubleBudget").default(0),
+  dailyBudget: double("dailyBudget").default(0),
   /** market CPL benchmark used when account has no history (free_lead) */
   marketCplBenchmark: double("marketCplBenchmark"),
   /**
