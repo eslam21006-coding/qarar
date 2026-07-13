@@ -1,20 +1,67 @@
--- US11 / Spec 011 — T037 unique index migration (GATED ON T034).
+-- US11 / Spec 011 — T037 unique index migration.
 --
--- ⚠️  DO NOT APPLY THIS MIGRATION BEFORE THE REPAIR (T033) HAS BEEN
--- RUN AND THE POST-REPAIR DIAGNOSTIC (T034) HAS RETURNED CLEAN.
--- The unique index CANNOT be created while duplicate rows exist on
--- `funnelSettings` for the same `(userId, adAccountId)` pair — it
--- will fail on production with a "Duplicate entry" error.
+-- !!! THIS FILE IS NOT PICKED UP BY drizzle-kit !!!
+-- !!! DO NOT PUT IT IN drizzle/meta/_journal.json !!!
+-- !!! DO NOT RUN IT VIA `pnpm run db:push` !!!
 --
--- Migration sequencing (plan.md → Migration Sequencing):
---   1. Apply 0009_settings_data_integrity.sql   (additive columns)
---   2. Run scripts/backfill-settings-integrity.ts  (idempotent backfill)
---   3. Run scripts/diagnose-settings.ts --all    (T023 — record findings)
---   4. Run scripts/repair-settings.ts --all --commit  (T033)
---   5. Run scripts/diagnose-settings.ts --all    (T034 — verify clean)
---   6. APPLY THIS FILE                          (T037 — unique index)
+-- The composite unique key `uq_funnelSettings_user_account` on
+-- (userId, adAccountId) is the structural guarantee that backs
+-- FR-021 ("at most one settings record per user-and-account pair")
+-- and FR-023 ("a settings lookup MUST NOT return an arbitrary row
+-- from among several candidates"). It lives ONLY here because the
+-- migration that creates it CANNOT be applied while duplicate
+-- `(userId, adAccountId)` rows exist on the `funnelSettings`
+-- table — it will fail with errno 1062 "Duplicate entry" on the
+-- first row that has a non-unique pair.
 --
--- Reviewed against scripts/apply-migrations.mjs:27-38 TiDB rewrite rules:
--- no DEFAULT (now()), no DEFAULT on TEXT — neither applies here.
+-- The gate that prevents premature application is two-fold:
+--
+--   (a) SCHEMA: this index is INTENTIONALLY OMITTED from
+--       drizzle/schema.ts. drizzle-kit regenerates migrations
+--       from the schema; if the unique index were declared there,
+--       it would re-appear in 0009 the next time anyone runs
+--       `drizzle-kit generate`, defeating the gate.
+--   (b) JOURNAL: this file is NOT in drizzle/meta/_journal.json.
+--       drizzle-kit migrate iterates ONLY over `journal.entries`
+--       and reads `${tag}.sql` for each entry — see
+--       node_modules/drizzle-orm/migrator.js:readMigrationFiles.
+--       Files that exist on disk but are not in the journal are
+--       invisible to `drizzle-kit migrate`. `pnpm run db:push`
+--       (`drizzle-kit generate && drizzle-kit migrate`) will not
+--       touch this file.
+--
+-- HOW TO APPLY THIS FILE:
+--
+--   Only AFTER the diagnostic + repair + verify-clean cycle has
+--   run on production. Specifically:
+--
+--     T023  Run scripts/diagnose-settings.ts --all
+--     T033  Run scripts/repair-settings.ts --all --commit
+--     T034  Re-run scripts/diagnose-settings.ts --all
+--           (must report clean: every record has a metaAccountId
+--            or is in a no-accounts-no-meta context that the
+--            repair script declined to guess at)
+--
+--   Then apply this file manually using the existing TiDB-aware
+--   applier:
+--
+--     npx tsx scripts/apply-migrations.mjs drizzle/0010_settings_unique_index.sql
+--
+--   Or any equivalent mysql2-compatible connection. The applier
+--   does NOT consult drizzle's journal — it just executes the SQL.
+--
+-- RUNTIME VERIFICATION:
+--
+--   Before this file is applied, scripts/verify-t037-prerequisites.mjs
+--   (wired into `pnpm run db:push` via package.json) inspects the
+--   live DB:
+--     - if uq_funnelSettings_user_account ALREADY EXISTS: ALLOW
+--     - if it does NOT exist and funnelSettings has 0 rows: ALLOW
+--     - if it does NOT exist and funnelSettings has rows: BLOCK
+--       with a clear error pointing at the diagnose/repair scripts.
+--
+--   This turns the "operator remembers the gate" into a hard gate
+--   that the deploy process enforces. See gate-fix-report.txt for
+--   the full reasoning.
 
 CREATE UNIQUE INDEX `uq_funnelSettings_user_account` ON `funnelSettings` (`userId`, `adAccountId`);

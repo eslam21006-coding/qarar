@@ -2,5 +2,4 @@ ALTER TABLE `audit_log` MODIFY COLUMN `event_type` enum('signup','login','logout
 ALTER TABLE `user` MODIFY COLUMN `ghl_contact_id` varchar(64);--> statement-breakpoint
 ALTER TABLE `adAccounts` ADD `funnelConfiguredAt` timestamp;--> statement-breakpoint
 ALTER TABLE `funnelSettings` ADD `metaAccountId` varchar(64);--> statement-breakpoint
-ALTER TABLE `funnelSettings` ADD CONSTRAINT `uq_funnelSettings_user_account` UNIQUE(`userId`,`adAccountId`);--> statement-breakpoint
 CREATE INDEX `user_ghlContactId_idx` ON `user` (`ghl_contact_id`);

@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "1e6e3408-c80d-4338-a84e-84487eaf5d33",
+  "id": "ba013239-ff45-4a7d-86d7-1e292223c9b1",
   "prevId": "dd3d75ba-c3eb-46ab-ba31-16b536c46fc1",
   "tables": {
     "actionChecks": {
@@ -84,6 +84,13 @@
     "adAccounts": {
       "name": "adAccounts",
       "columns": {
+        "1": {
+          "name": "funnelConfiguredAt",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "id": {
           "name": "id",
           "type": "int",
@@ -150,13 +157,6 @@
           "autoincrement": false,
           "default": false
         },
-        "funnelConfiguredAt": {
-          "name": "funnelConfiguredAt",
-          "type": "timestamp",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "createdAt": {
           "name": "createdAt",
           "type": "timestamp",
@@ -191,6 +191,13 @@
     "funnelSettings": {
       "name": "funnelSettings",
       "columns": {
+        "2": {
+          "name": "metaAccountId",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "id": {
           "name": "id",
           "type": "int",
@@ -297,13 +304,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "metaAccountId": {
-          "name": "metaAccountId",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "htoUnderperforming": {
           "name": "htoUnderperforming",
           "type": "boolean",
@@ -360,16 +360,7 @@
           "default": "(now())"
         }
       },
-      "indexes": {
-        "uq_funnelSettings_user_account": {
-          "name": "uq_funnelSettings_user_account",
-          "columns": [
-            "userId",
-            "adAccountId"
-          ],
-          "isUnique": true
-        }
-      },
+      "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {
         "funnelSettings_id": {
@@ -919,7 +910,7 @@
         },
         "event_type": {
           "name": "event_type",
-          "type": "enum('signup','login','logout','email_verified','password_reset_requested','password_reset_completed','password_changed','login_failed','account_created','identity_email_merged','funnel_settings_unavailable')",
+          "type": "enum('signup','login','logout','email_verified','password_reset_requested','password_reset_completed','password_changed','login_failed','account_created')",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false

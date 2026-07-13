@@ -10,7 +10,6 @@ import {
   double,
   bigint,
   index,
-  uniqueIndex,
 } from "drizzle-orm/mysql-core";
 
 /**
@@ -88,84 +87,80 @@ export const adAccounts = mysqlTable("adAccounts", {
 export type AdAccount = typeof adAccounts.$inferSelect;
 
 /**
- * Per-account funnel economics settings (Ø§Ù„Ù…Ø±Ø­Ù„Ø© 0 inputs).
+ * Per-account funnel economics settings (المرحلة 0 inputs).
  * Closed enums feed the math; free text feeds qualitative judgment only.
  *
- * US11 / Spec 011 â€" the composite unique key
+ * US11 / Spec 011 — the composite unique key
  * `uq_funnelSettings_user_account` on `(userId, adAccountId)` is the
  * structural guarantee that backs FR-021 ("at most one settings
  * record per user-and-account pair") and FR-023 ("a settings lookup
  * MUST NOT return an arbitrary row from among several candidates").
  *
- * **Migration sequencing â€" load-bearing**: this index cannot be
- * created while duplicate rows exist on the target table (it will
- * fail on production). The diagnostic + repair + verify sequence
- * (T023 â†' T033 â†' T034) must come back clean before T037's migration
- * is applied. See `plan.md` â†' Migration Sequencing.
+ * **NOT declared in this schema file.** The unique constraint is
+ * INTENTIONALLY OMITTED from the auto-generated migration path so
+ * that the production deploy does not apply it before the
+ * diagnostic (T023) + repair (T033) + verify-clean (T034) cycle
+ * has run. The constraint lives only in
+ * `drizzle/0010_settings_unique_index.sql`, which is NOT in
+ * `drizzle/meta/_journal.json` and is therefore NOT picked up by
+ * `pnpm run db:push` (drizzle-kit migrate iterates only over
+ * `journal.entries`). An operator must apply 0010 manually AFTER
+ * the gate cycle. See `gate-fix-report.txt` for the full
+ * reasoning and the verifier script that enforces this at deploy
+ * time.
  */
-export const funnelSettings = mysqlTable(
-  "funnelSettings",
-  {
-    id: int("id").autoincrement().primaryKey(),
-    userId: varchar("userId", { length: 36 }).notNull(),
-    adAccountId: int("adAccountId").notNull(),
-    /** (أ) paid LTO < $67 / (ب) free lead magnet / (ج) direct call booking */
-    archetype: mysqlEnum("archetype", ["paid_lto", "free_lead", "direct_call"])
-      .default("paid_lto")
-      .notNull(),
-    liveComponent: boolean("liveComponent").default(false).notNull(),
-    offerDescription: text("offerDescription"),
-    ticketPrice: double("ticketPrice").default(0),
-    aov: double("aov").default(0).notNull(),
-    htoPrice: double("htoPrice").default(0).notNull(),
-    /** % lead/buyer HTO conversion, e.g. 3 means 3% */
-    htoConversionRate: double("htoConversionRate").default(0).notNull(),
-    /** 1.0 / 0.65 / 0.5 / custom */
-    frontEndRoas: double("frontEndRoas").default(1).notNull(),
-    dailyBudget: double("dailyBudget").default(0),
-    /** market CPL benchmark used when account has no history (free_lead) */
-    marketCplBenchmark: double("marketCplBenchmark"),
-    /**
-     * ISSUE-009 / Batch 2 - the currency the user's entered prices
-     * (aov / htoPrice / ticketPrice / marketCplBenchmark) are denominated in.
-     * Nullable, no DB default. A NULL/absent value is treated as the
-     * account's currency at read time - conversion is a safe no-op for
-     * every pre-migration row and first-time save.
-     * See specs/007-currency-cpa-alignment/data-model.md §1.
-     */
-    inputCurrency: varchar("inputCurrency", { length: 8 }),
-    /**
-     * US11 / Spec 011 - the ad platform's own stable account identifier
-     * (mirrors `adAccounts.accountId`, e.g. `act_1234567890`). Recovery key
-     * (FR-031): if the internal `adAccountId` join key goes stale (the row
-     * was orphaned by a re-sync), the read path resolves by this stable id
-     * and self-heals. Nullable because pre-migration rows have no value.
-     * `adAccountId` remains the join key for every existing read path; this
-     * column is consulted only on the miss path.
-     */
-    metaAccountId: varchar("metaAccountId", { length: 64 }),
-    /**
-     * W5 signal - user-reported: leads/sales look healthy but no HTO conversions.
-     * Meta's API cannot see post-conversion funnel data, so this is an explicit
-     * funnel-level input per the rulebook (judgment at funnel level).
-     */
-    htoUnderperforming: boolean("htoUnderperforming").default(false).notNull(),
-    arena: mysqlEnum("arena", ["interests", "broad"]).default("broad").notNull(),
-    bestInterest: text("bestInterest"),
-    geoTiers: json("geoTiers").$type<string[]>(),
-    lastReviewedAt: timestamp("lastReviewedAt").defaultNow().notNull(),
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
-    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-  },
-  (t) => ({
-    // US11 / Spec 011 - T037. Composite unique on (userId, adAccountId).
-    // Object-style callback matching `verdictHistory` above
-    // (`drizzle/schema.ts:190-197`); `auth-schema.ts` uses array-style -
-    // match THIS file's convention. Closes the duplicate-row surface
-    // that the legacy read-then-write upsert left open.
-    userAccountIdx: uniqueIndex("uq_funnelSettings_user_account").on(t.userId, t.adAccountId),
-  })
-);
+export const funnelSettings = mysqlTable("funnelSettings", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: varchar("userId", { length: 36 }).notNull(),
+  adAccountId: int("adAccountId").notNull(),
+  /** (أ) paid LTO < $67 / (ب) free lead magnet / (ج) direct call booking */
+  archetype: mysqlEnum("archetype", ["paid_lto", "free_lead", "direct_call"])
+    .default("paid_lto")
+    .notNull(),
+  liveComponent: boolean("liveComponent").default(false).notNull(),
+  offerDescription: text("offerDescription"),
+  ticketPrice: double("ticketPrice").default(0),
+  aov: double("aov").default(0).notNull(),
+  htoPrice: double("htoPrice").default(0).notNull(),
+  /** % lead/buyer HTO conversion, e.g. 3 means 3% */
+  htoConversionRate: double("htoConversionRate").default(0).notNull(),
+  /** 1.0 / 0.65 / 0.5 / custom */
+  frontEndRoas: double("frontEndRoas").default(1).notNull(),
+  dailyBudget: double("doubleBudget").default(0),
+  /** market CPL benchmark used when account has no history (free_lead) */
+  marketCplBenchmark: double("marketCplBenchmark"),
+  /**
+   * ISSUE-009 / Batch 2 - the currency the user's entered prices
+   * (aov / htoPrice / ticketPrice / marketCplBenchmark) are denominated in.
+   * Nullable, no DB default. A NULL/absent value is treated as the
+   * account's currency at read time - conversion is a safe no-op for
+   * every pre-migration row and first-time save.
+   * See specs/007-currency-cpa-alignment/data-model.md §1.
+   */
+  inputCurrency: varchar("inputCurrency", { length: 8 }),
+  /**
+   * US11 / Spec 011 - the ad platform's own stable account identifier
+   * (mirrors `adAccounts.accountId`, e.g. `act_1234567890`). Recovery key
+   * (FR-031): if the internal `adAccountId` join key goes stale (the row
+   * was orphaned by a re-sync), the read path resolves by this stable id
+   * and self-heals. Nullable because pre-migration rows have no value.
+   * `adAccountId` remains the join key for every existing read path; this
+   * column is consulted only on the miss path.
+   */
+  metaAccountId: varchar("metaAccountId", { length: 64 }),
+  /**
+   * W5 signal - user-reported: leads/sales look healthy but no HTO conversions.
+   * Meta's API cannot see post-conversion funnel data, so this is an explicit
+   * funnel-level input per the rulebook (judgment at funnel level).
+   */
+  htoUnderperforming: boolean("htoUnderperforming").default(false).notNull(),
+  arena: mysqlEnum("arena", ["interests", "broad"]).default("broad").notNull(),
+  bestInterest: text("bestInterest"),
+  geoTiers: json("geoTiers").$type<string[]>(),
+  lastReviewedAt: timestamp("lastReviewedAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
 
 export type FunnelSettings = typeof funnelSettings.$inferSelect;
 
