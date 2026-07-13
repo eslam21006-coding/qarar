@@ -28,7 +28,7 @@ Web app: `client/src/`, `server/`, `shared/`, `drizzle/`, `scripts/`. Paths belo
 
 Two constraints in this feature are **load-bearing** and will cost you a production incident if ignored:
 
-1. **The unique index (T034) MUST come after the repair (T031).** It cannot be created while duplicate rows exist. See `plan.md` → Migration Sequencing.
+1. **The unique index (T037) MUST come after the repair is run (T033) and verified clean (T034).** It cannot be created while duplicate rows exist. See `plan.md` → Migration Sequencing.
 2. **The database is TiDB, not MySQL.** Generated migration SQL must be hand-checked — TiDB rejects `DEFAULT (now())` and defaults on `TEXT` columns. That is why `scripts/apply-migrations.mjs:27-38` exists.
 
 ---
@@ -45,7 +45,7 @@ Two constraints in this feature are **load-bearing** and will cost you a product
 
 **Purpose**: The additive schema that every story below depends on. This is **step 1–2 of the migration sequence** and is explicitly **not** gated on the diagnostic (FR-020).
 
-**⚠️ CRITICAL**: No user story can begin until this phase completes. Do **not** add the unique index here — it belongs in T034, after the repair.
+**⚠️ CRITICAL**: No user story can begin until this phase completes. Do **not** add the unique index here — it belongs in T037, after the repair is run and verified.
 
 - [ ] T002 [P] Add nullable `metaAccountId: varchar("metaAccountId", { length: 64 })` to the `funnelSettings` table in `drizzle/schema.ts` (recovery key, FR-031). Do NOT add any unique index in this task
 - [ ] T003 [P] Add nullable `funnelConfiguredAt: timestamp("funnelConfiguredAt")` with **no default** to the `adAccounts` table in `drizzle/schema.ts` (FR-001; TiDB rejects `DEFAULT (now())` — research R7)
@@ -70,9 +70,9 @@ Two constraints in this feature are **load-bearing** and will cost you a product
 
 > Write these first and watch them fail. T009 is the one that matters.
 
-- [ ] T008 [P] [US1] Write `client/src/pages/Settings.test.tsx` — **must** open with the `// @vitest-environment jsdom` pragma (global vitest env is `node`, see `vitest.config.ts:18`). Mock `trpc.funnel.get` **inside each `it`**, never at describe scope (`client/src/test/setup.ts` runs `vi.resetAllMocks()` in `afterEach`). Assert: on `unavailable`, the strings `47` and `997` appear nowhere in the DOM and no enabled Save control exists; on `never_configured`, a first-time form renders that is visibly distinct from the failure card; on `found`, the real values hydrate
+- [ ] T008 [P] [US1] Write `client/src/pages/Settings.test.tsx` — **must** open with the `// @vitest-environment jsdom` pragma (global vitest env is `node`, see `vitest.config.ts:18`). Mock `trpc.funnel.get` **inside each `it`**, never at describe scope (`client/src/test/setup.ts` runs `vi.resetAllMocks()` in `afterEach`). Assert: on `unavailable`, the strings `47` and `997` appear nowhere in the DOM and no enabled Save control exists; on `never_configured`, a first-time form renders that is visibly distinct from the failure card; on `found`, the real values hydrate. **Also assert (spec Edge Case, "unsaved edits"): with the user's typed input in the form, a refetch that fails must NOT clear what they typed** — a naive three-state rewrite will discard form state on the failing refetch, and that is its own data-loss bug. **And assert (spec Edge Case, "demo account"): a demo account with no settings resolves to `never_configured`, never `unavailable`**
 - [ ] T009 [P] [US1] Write the data-loss regression test in `server/funnelIntegrity.test.ts`: given a saved row, force `funnel.get` to fail, drive the Settings save path, and **assert the stored row is unchanged** (SC-001). Mock `./db` with a factory listing every named export, per `server/inactiveAccess.test.ts:55-76`, and drive tRPC via `appRouter.createCaller(ctx)` with the router imported lazily inside the test
-- [ ] T010 [P] [US1] Write tests in `server/funnelIntegrity.test.ts` for the three-state resolution: no row + `funnelConfiguredAt` null → `never_configured`; no row + `funnelConfiguredAt` set → `unavailable`; row present → `found`
+- [ ] T010 [P] [US1] Write tests in `server/funnelIntegrity.test.ts` for the three-state resolution: no row + `funnelConfiguredAt` null → `never_configured`; no row + `funnelConfiguredAt` set → `unavailable`; row present → `found`. Include the **demo account** (`server/db.ts:269` `ensureDemoAccount`, `accountId: "demo_account"`), which flows through the same resolution: with no settings and a null marker it must resolve to `never_configured`, never `unavailable` (spec Edge Case)
 - [ ] T011 [P] [US1] Write the fresh-start guard test in `server/funnelIntegrity.test.ts`: a save with `freshStart: true` issued while a row **does** exist must be refused, must not write, and must return the existing record (FR-006)
 
 ### Implementation for User Story 1
@@ -83,8 +83,8 @@ Two constraints in this feature are **load-bearing** and will cost you a product
 - [ ] T015 [US1] Add `freshStart: z.boolean().optional().default(false)` to `funnelInputSchema` and implement the **write-time** guard in `funnel.save` (`server/routers.ts:227-242`): if `freshStart` is true and a row already exists, refuse the write and return the existing record (FR-006). Checking at write time rather than load time is what closes the race between a transient failure and a good-faith fresh start
 - [ ] T016 [US1] Set `adAccounts.funnelConfiguredAt` on the first successful `upsertFunnel` in `server/db.ts:313-336` (set once, never cleared, never updated)
 - [ ] T017 [US1] Rework `client/src/pages/Settings.tsx`: **`DEFAULTS` (lines 43-59) must no longer be the initial form state** — `useState<FormState>(DEFAULTS)` at line 82 is what seeds `aov: "47"` / `htoPrice: "997"` before any data arrives, and the hydrate effect at lines 85-122 leaves them there whenever `settings` is null. Render from the `status` discriminant instead: `found` → hydrate; `never_configured` → empty form (numbers only ever as greyed placeholder *hints*, never as values, never submitted unless typed); `unavailable` → failure card with **no economics fields rendered at all**
-- [ ] T018 [US1] Add the failure-state UI to `client/src/pages/Settings.tsx`: simple-Arabic explanation, a Retry action that refetches, and an explicit "start fresh" confirmation that unlocks the form and sets `freshStart: true` on the subsequent save. Save must be unavailable in the bare `unavailable` state (FR-004). Numerals render LTR via `.num` inside the RTL layout (Constitution III)
-- [ ] T019 [US1] Add observability to the `unavailable` path (FR-024, FR-025, FR-026): a `console.warn` with a `[Settings]` prefix (matching the repo's `[Audit]` / `[GHL Webhook]` convention — there is no logger utility), plus a `logAuditEvent({ eventType: "funnel_settings_unavailable", ... })` carrying the payload in `data-model.md` §3. **Bound it**: skip the insert if an unresolved event already exists for the same `(userId, adAccountId)`, and write **no** audit row for `never_configured` — that is not an anomaly
+- [ ] T018 [US1] Add the failure-state UI to `client/src/pages/Settings.tsx`: simple-Arabic explanation, a Retry action that refetches, and an explicit "start fresh" confirmation that unlocks the form and sets `freshStart: true` on the subsequent save. Save must be unavailable in the bare `unavailable` state (FR-004). Numerals render LTR via `.num` inside the RTL layout (Constitution III). **A failed refetch MUST NOT clear the user's in-progress unsaved input** (spec Edge Case) — preserve form state across a failing reload and block only the Save, rather than resetting the fields the user has already typed into
+- [ ] T019 [US1] Add observability to the `unavailable` path (FR-024, FR-025, FR-026): a `console.warn` with a `[Settings]` prefix (matching the repo's `[Audit]` / `[GHL Webhook]` convention — there is no logger utility), plus a `logAuditEvent({ eventType: "funnel_settings_unavailable", ... })` carrying the payload in `data-model.md` §3. **Bound it with a 24-hour window**: before inserting, query `audit_log` for an existing `funnel_settings_unavailable` row with the same `user_id`, `created_at > NOW() - INTERVAL 24 HOUR`, and the same `adAccountId` in `details` — if one exists, skip the insert (see `data-model.md` §3 for the exact query). Do **not** add a `resolved` flag or any new column: `audit_log` has no such concept and this must not become a schema change. Write **no** audit row at all for `never_configured` — that is not an anomaly
 
 **Checkpoint**: The data-loss bug is dead. This is a shippable MVP on its own — deploy it without waiting for the root-cause investigation.
 
@@ -128,8 +128,9 @@ Two constraints in this feature are **load-bearing** and will cost you a product
 - [ ] T031 [US3] Add `resolveUserByContactId(contactId)` to `server/db.ts` and rewire `server/ghl-webhook.ts` to resolve a returning person **contact id first, email second** (FR-015): today both routes resolve by email only (`:352-370`) and `ghlContactId` is written at `:136` but never read as a key. When the contact id matches an existing person whose email differs, **update the email in place** (FR-016) — do not mint a new identity. Reuse `isUniqueEmailRaceError` (`:53-64`) to detect the collision case and refuse rather than merge two people. Write the `identity_email_merged` audit event on both the success and the refusal path (FR-017)
 - [ ] T032 [US3] Create `scripts/repair-settings.ts` per `contracts/maintenance-cli.md`: **preview is the default and a run without `--commit` must be structurally incapable of writing** (FR-019, FR-030). Operations: re-link orphans via `metaAccountId`; recover stranded identities only when the two identities are **proven** the same person (shared `ghlContactId` — email alone is not proof); consolidate duplicates by keeping the most recently updated row, **writing each losing row's full contents to the audit trail before removing it**. Idempotent. A row with no `metaAccountId` and an ambiguous owner is **reported for human review, never guessed at** (FR-032)
 - [ ] T033 [US3] **Gated on T023.** Run `scripts/repair-settings.ts` in preview against production, review the plan by hand, then re-run with `--commit`. Re-run once more to confirm idempotency. Record what was repaired and what was reported for human review
+- [ ] T034 [US3] **Gated on T033.** Re-run `npx tsx scripts/diagnose-settings.ts --all` **after** the repair and confirm a clean result — every settings record references an ad account and an owning user that exist, and no user-and-account pair has more than one record (SC-006). Any finding that remains must be one the repair *deliberately declined* to guess at (no `metaAccountId`, ambiguous owner); list those explicitly for human review rather than treating the run as failed. This is the verification step for SC-006, and it is also the gate on T037 — if duplicates remain, the unique index will fail
 
-**Checkpoint**: Root cause fixed going forward, and existing damage recovered.
+**Checkpoint**: Root cause fixed going forward, existing damage recovered, and the recovery verified.
 
 ---
 
@@ -139,12 +140,12 @@ Two constraints in this feature are **load-bearing** and will cost you a product
 
 **Independent Test**: Issue concurrent saves for the same user and account; exactly one row exists afterwards, holding the last-written values.
 
-**⚠️ T035 is blocked by T033.** The unique index cannot be created while duplicates exist — it will fail on production. If it fails, the repair was incomplete; do not force it.
+**⚠️ T037 is blocked by T033/T034.** The unique index cannot be created while duplicates exist — it will fail on production. If it fails, the repair was incomplete; do not force it.
 
-- [ ] T034 [P] [US4] Write the concurrency test in `server/funnelIntegrity.test.ts`: two simultaneous `funnel.save` calls for the same user and account produce exactly one row (SC-005). Use the deterministic pattern from commit `9fe010d` (fake timers, no wall-clock races)
-- [ ] T035 [US4] Convert `upsertFunnel` (`server/db.ts:313-336`) from its read-then-write (`getFunnel` → branch → `update`/`insert`, which can interleave) to a single atomic `INSERT … ON DUPLICATE KEY UPDATE` executed under the composite unique key (FR-022)
-- [ ] T036 [US4] **Gated on T033.** Add `uniqueIndex("uq_funnelSettings_user_account").on(userId, adAccountId)` to `funnelSettings` in `drizzle/schema.ts` using the **object-style** third-arg callback matching `verdictHistory` (`drizzle/schema.ts:190-197`) — the repo has no composite-unique precedent, only column-level `.unique()`. Generate and apply the migration, hand-checking the SQL for TiDB
-- [ ] T037 [US4] Confirm `getFunnel` can no longer return an arbitrary row from among several candidates (FR-023) — with the unique index in place, `.limit(1)` has exactly one row to choose from
+- [ ] T035 [P] [US4] Write the concurrency test in `server/funnelIntegrity.test.ts`: two simultaneous `funnel.save` calls for the same user and account produce exactly one row (SC-005). Use the deterministic pattern from commit `9fe010d` (fake timers, no wall-clock races)
+- [ ] T036 [US4] Convert `upsertFunnel` (`server/db.ts:313-336`) from its read-then-write (`getFunnel` → branch → `update`/`insert`, which can interleave) to a single atomic `INSERT … ON DUPLICATE KEY UPDATE` executed under the composite unique key (FR-022)
+- [ ] T037 [US4] **Gated on T034.** Add `uniqueIndex("uq_funnelSettings_user_account").on(userId, adAccountId)` to `funnelSettings` in `drizzle/schema.ts` using the **object-style** third-arg callback matching `verdictHistory` (`drizzle/schema.ts:190-197`) — the repo has no composite-unique precedent, only column-level `.unique()`. Generate and apply the migration, hand-checking the SQL for TiDB
+- [ ] T038 [US4] Confirm `getFunnel` can no longer return an arbitrary row from among several candidates (FR-023) — with the unique index in place, `.limit(1)` has exactly one row to choose from
 
 **Checkpoint**: All four stories independently functional.
 
@@ -152,9 +153,10 @@ Two constraints in this feature are **load-bearing** and will cost you a product
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [ ] T038 [P] Review every new user-facing string in `client/src/pages/Settings.tsx` for simple Modern Standard Arabic at a 6th-grade reading level, with numerals rendering LTR via `.num` inside the RTL layout (Constitution III)
-- [ ] T039 Work through every scenario in [quickstart.md](./quickstart.md) against a running app, including the release gate at the bottom
-- [ ] T040 Run `npm run check` (must be clean) and `npm test` (must be green)
+- [ ] T039 [P] Write the network-exposure guard test in `server/settingsIntegrity.test.ts` (FR-029): assert that **no tRPC router exports reach the repair or reconciliation helpers** — neither `settingsIntegrity` nor the repair functions may be reachable from `server/routers.ts`, not even behind an admin role check. FR-029 is a negative requirement with no natural failure mode, so without this test nothing would catch a future PR that helpfully exposes the repair as an endpoint
+- [ ] T040 [P] Review every new user-facing string in `client/src/pages/Settings.tsx` for simple Modern Standard Arabic at a 6th-grade reading level, with numerals rendering LTR via `.num` inside the RTL layout (Constitution III)
+- [ ] T041 Work through every scenario in [quickstart.md](./quickstart.md) against a running app, including the release gate at the bottom
+- [ ] T042 Run `npm run check` (must be clean) and `npm test` (must be green)
 
 ---
 
@@ -166,15 +168,16 @@ Two constraints in this feature are **load-bearing** and will cost you a product
 - **Foundational (T002–T007)** → depends on Setup; **blocks every user story**
 - **US1 (T008–T019)** → depends on Foundational only. **Ships alone.**
 - **US2 (T020–T024)** → depends on Foundational only. Parallel with US1.
-- **US3 (T025–T033)** → depends on Foundational. T033 additionally **gated on T023** (evidence).
-- **US4 (T034–T037)** → depends on Foundational. T036 additionally **gated on T033** (repair must precede the index).
-- **Polish (T038–T040)** → after the stories you intend to ship.
+- **US3 (T025–T034)** → depends on Foundational. T033 additionally **gated on T023** (evidence); T034 gated on T033.
+- **US4 (T035–T038)** → depends on Foundational. T037 additionally **gated on T034** (the repair must be done *and verified* before the index).
+- **Polish (T039–T042)** → after the stories you intend to ship.
 
-### The two hard gates
+### The hard gate chain
 
 ```text
-T023 (run diagnostic)  ──gates──►  T033 (run repair)  ──gates──►  T036 (unique index)
-      evidence                          writes prod              fails if dupes remain
+T023 ──gates──► T033 ──gates──► T034 ──gates──► T037
+run diagnostic  run repair      verify clean    unique index
+(evidence)      (writes prod)   (SC-006)        (fails if dupes remain)
 ```
 
 Everything else — the whole Settings-screen fix, the stable-id fallback, the contact-id resolution, the atomic upsert — is **ungated** and ships without waiting (FR-020, clarification Q1).
@@ -188,7 +191,8 @@ Tests before implementation. Schema before queries. Queries before routers. Rout
 - **Foundational**: T002, T003, T004 are three different table definitions — parallel. T005 touches two files in lockstep; T006/T007 are sequential after them.
 - **US1**: T008–T011 (all four tests) are parallel. Then T012 → T013 → T014/T015/T016 → T017/T018/T019.
 - **US2**: T020 and T021 parallel; T022 depends on T020.
-- **US3**: T025, T026, T027 (tests) parallel. T028/T029/T030 all touch `server/db.ts` — **not** parallel with each other.
+- **US3**: T025, T026, T027 (tests) parallel. T028/T029/T030 all touch `server/db.ts` — **not** parallel with each other. T033 → T034 are strictly sequential (run, then verify).
+- **Polish**: T039 and T040 are parallel (different files).
 - **US1 and US2 are fully parallel with each other** — different files, no shared state. Two developers can take one each.
 
 ## Parallel Example: User Story 1
@@ -212,8 +216,8 @@ Task: "funnelIntegrity.test.ts — freshStart guard refuses to overwrite"
 ### Then, incrementally
 
 4. **US2** → run the diagnostic → you now know which of the three causes is real.
-5. **US3** → preventive fixes ship immediately; the production repair runs once T023 gives evidence.
-6. **US4** → atomic upsert, then the unique index **after** the repair.
+5. **US3** → preventive fixes ship immediately; the production repair runs once T023 gives evidence, then T034 verifies it came out clean.
+6. **US4** → atomic upsert, then the unique index **after** the repair is verified.
 7. Polish.
 
 ## Notes

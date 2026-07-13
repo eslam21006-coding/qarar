@@ -126,9 +126,27 @@ populated as a plain column. Both survive the cascade.
 
 **Bounding (FR-026)**: `never_configured` writes **no audit row at all** — it is not an anomaly. The
 `unavailable` state is rare by construction (it requires `funnelConfiguredAt` set or a sibling
-identity), and before inserting we check for an existing unresolved `funnel_settings_unavailable`
-row for the same `(userId, adAccountId)`. One record per occurrence of the condition, not one per
-request.
+identity). On top of that, the write is suppressed by a **24-hour time window**:
+
+```sql
+-- suppress if any row already exists for this user+account in the last 24h
+SELECT 1 FROM audit_log
+WHERE event_type = 'funnel_settings_unavailable'
+  AND user_id = ?
+  AND created_at > NOW() - INTERVAL 24 HOUR
+  AND details LIKE CONCAT('%"adAccountId":', ?, '%')
+LIMIT 1
+```
+
+The pair is carried in `details` (JSON-stringified text, `server/auditLog.ts:42`) and the window is
+read off `created_at`. **No `resolved` flag and no new state column are introduced** — `audit_log`
+has no such concept (`drizzle/auth-schema.ts:113-145`), and inventing one for this would be a
+schema change in service of a log line. Indexes `audit_log_userId_idx` and `audit_log_createdAt_idx`
+already exist to serve this query.
+
+If the `details LIKE` match is judged too fragile at implementation time, the acceptable alternative
+is to narrow only on `(user_id, event_type, created_at)` and accept one row per user per day rather
+than per user-and-account per day. Both satisfy FR-026; neither requires a schema change.
 
 ---
 

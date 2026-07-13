@@ -108,8 +108,10 @@ client/src/pages/
 └── Settings.test.tsx         # NEW — jsdom pragma required
 
 scripts/
-├── diagnose-settings.ts      # NEW — read-only (FR-012)
-└── repair-settings.ts        # NEW — preview default, --commit to write (FR-030)
+├── backfill-settings-integrity.ts  # NEW — idempotent backfill of metaAccountId +
+│                                   #   funnelConfiguredAt (migration step 2)
+├── diagnose-settings.ts            # NEW — read-only (FR-012)
+└── repair-settings.ts              # NEW — preview default, --commit to write (FR-030)
 
 docs/
 └── part-b-investigation.md   # reconciled with findings (FR-013)
@@ -132,11 +134,13 @@ correctness constraint, not a preference:
    duplicate count, which tells us whether step 4 is a no-op.
 4. **Repair (preview → `--commit`)** — consolidate duplicates, re-link orphans. Must complete before
    step 5.
-5. **Unique index last** — only now can `uq_funnelSettings_user_account` be created. If it fails,
+5. **Verify** — re-run the diagnostic and confirm clean. This is SC-006's verification, and it is what
+   tells you step 6 will succeed rather than failing halfway.
+6. **Unique index last** — only now can `uq_funnelSettings_user_account` be created. If it fails,
    step 4 was incomplete. Do not force it.
 
 Steps 1–2 and the entire Settings-screen fix are **not** gated on the diagnostic (FR-020).
-Steps 4–5 are.
+Steps 4–6 are.
 
 ## Phase 2 sketch (for `/speckit-tasks` — not executed here)
 
@@ -153,8 +157,14 @@ Four independently shippable slices, matching the spec's user stories:
 
 ## Complexity Tracking
 
-| Deviation | Why needed | Simpler alternative rejected because |
+The first two entries were flagged as spec conflicts by `/speckit-analyze` (findings F1 and F3) and
+have since been **reconciled into the spec itself** — SC-007, US3 scenario 6, FR-018, and the
+Assumptions section now say what this plan does, so neither is a deviation any longer. They stay
+listed because they remain the two decisions most likely to be second-guessed mid-implementation, and
+the reasoning should not have to be rediscovered.
+
+| Decision | Why needed | Simpler alternative rejected because |
 |---|---|---|
-| **SC-007 ("no record is deleted") is not met literally** — duplicate consolidation removes the losing row | A composite unique index cannot be created while duplicates exist, and FR-021's guarantee is empty if they survive. The two requirements cannot both hold literally. | Keeping both rows forbids the index, leaving `getFunnel`'s `.limit(1)` free to return either row (FR-023 unmet). **Mitigation**: the losing row's *full contents* are written to the audit trail before removal, so no user data becomes unrecoverable — which is SC-007's actual intent. |
-| **No foreign key added**, despite FR-018 reading like one | Real FKs exist only in `auth-schema.ts`; every domain table uses logical, app-enforced FKs by convention (`drizzle/schema.ts:169-171`). The target is TiDB, not MySQL. Introducing the repo's first domain FK, on a distributed engine, to fix a data-loss bug is riskier than the bug. | An FK prevents *new* dangling references but cannot recover the rows already dangling — and those are the ones users are complaining about. The stable-id fallback (research R1.1) both recovers them and prevents recurrence. |
+| **Duplicate consolidation removes the losing row** (sanctioned by the amended SC-007) | A composite unique index cannot be created while duplicates exist, and FR-021's guarantee is empty if they survive. | Keeping both rows forbids the index, leaving `getFunnel`'s `.limit(1)` free to return either row (FR-023 unmet). **The losing row's full contents are written to the audit trail before removal**, so no user data becomes unrecoverable — which is what SC-007 now requires. That capture is not optional; it is the entire basis on which the removal is permitted. |
+| **No foreign key added** (sanctioned by the reworded FR-018 and Assumptions) | Real FKs exist only in `auth-schema.ts`; every domain table uses logical, app-enforced FKs by convention (`drizzle/schema.ts:169-171`). The target is TiDB, not MySQL. Introducing the repo's first domain FK, on a distributed engine, to fix a data-loss bug is riskier than the bug. | An FK prevents *new* dangling references but cannot recover the rows already dangling — and those are the ones users are complaining about. The stable-id fallback (research R1.1) both recovers them and prevents recurrence. |
 | **Three mechanisms** (stable-id fallback + configured marker + sibling probe) rather than one | They cover different causes and cover each other's blind spots: the marker lives on `adAccounts`, which a re-sync could recreate — exactly when the fallback saves us; the marker is null under identity drift — exactly when the sibling probe catches it. | Any single mechanism leaves one of the three candidate causes still rendering as `never_configured` — i.e. still silently showing a blank form. That is the bug. |

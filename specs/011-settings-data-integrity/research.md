@@ -177,10 +177,16 @@ SQL — which is consistent with the diagnostic being an offline script (R5).
 
 **Bounding the durable record (FR-026).** A first-time user reloading Settings would otherwise write
 an audit row per request. The `unavailable` state is only reachable when `funnelConfiguredAt` is set
-or a sibling identity exists — i.e. it is *already* rare by construction. We additionally suppress
-duplicates by checking for an existing unresolved `funnel_settings_unavailable` event for the same
-`(userId, adAccountId)` before inserting. `never_configured` writes **no audit row at all** — it is
-not an anomaly.
+or a sibling identity exists — i.e. it is *already* rare by construction. On top of that we suppress
+by a **24-hour time window**: skip the insert if a `funnel_settings_unavailable` row already exists
+for the same `(userId, adAccountId)` within the last 24 hours, determined from `created_at` and the
+pair carried in `details` (exact query in `data-model.md` §3). `never_configured` writes **no audit
+row at all** — it is not an anomaly.
+
+An earlier draft of this section proposed suppressing on an "unresolved" prior event. That is **not
+implementable**: `audit_log` has no resolution state (`drizzle/auth-schema.ts:113-145`), and adding
+one would be a schema change in service of a log line. The time window achieves the same bound with
+no new columns and is served by the existing `audit_log_userId_idx` / `audit_log_createdAt_idx`.
 
 **Note on cascade**: `audit_log.user_id` is `ON DELETE cascade` to `user(id)`
 (`drizzle/0008_warm_amazoness.sql:26`). An audit row about a *stranded* user would vanish if that
