@@ -27,6 +27,9 @@ import {
   FunnelInputs,
   SUPPORTED_CURRENCIES,
 } from "../shared/qarar";
+import { logAuditEvent } from "./auditLog";
+import { and, eq, gt, like, sql } from "drizzle-orm";
+import { auditLog } from "../drizzle/auth-schema";
 import crypto from "crypto";
 
 function funnelToInputs(f: NonNullable<Awaited<ReturnType<typeof db.getFunnel>>>): FunnelInputs {
@@ -81,6 +84,13 @@ const funnelInputSchema = z.object({
     })
     .optional()
     .nullable(),
+  // US11 / Spec 011 / T015 — explicit "start fresh" intent. The client
+  // sets this to true ONLY after the user confirmed "start fresh" from
+  // the failure-state UI. The server then re-checks for an existing row
+  // at WRITE time (not load time) and refuses the save if a row exists
+  // — closing the race between a transient load failure and a good-faith
+  // fresh start (FR-006).
+  freshStart: z.boolean().optional().default(false),
 });
 
 async function requireAccount(userId: string, adAccountId: number) {
@@ -206,27 +216,179 @@ export const appRouter = router({
   }),
 
   funnel: router({
+    /**
+     * US11 / Spec 011 / T014 — `funnel.get` now returns a discriminated
+     * union (contracts/funnel-get.md). The legacy `{settings:null,...}`
+     * shape collapsed two causes into one and was the root of the
+     * data-loss bug: the client could not tell "you never saved"
+     * from "your saved data could not be loaded", and in both cases
+     * fell through to rendering DEFAULTS as if they were the user's
+     * real data.
+     *
+     * Resolution order (research R1, contracts/funnel-get.md):
+     *   1. direct (userId, adAccountId) hit             → "found"
+     *   2. miss → stable-id fallback (T028)             → "found"
+     *   3. miss + marker null + no sibling identity      → "never_configured"
+     *   4. otherwise (marker set, or sibling present)    → "unavailable"
+     *
+     * The `db.getFunnelResult` helper resolves cases 1, 3, 4; the
+     * stable-id fallback is inlined here for the moment so the
+     * dependency direction stays narrow (db.ts does not import
+     * routers.ts).
+     */
     get: activeProcedure
       .input(z.object({ adAccountId: z.number() }))
       .query(async ({ ctx, input }) => {
         const account = await requireAccount(ctx.user.id, input.adAccountId);
-        const f = await db.getFunnel(ctx.user.id, input.adAccountId);
-        if (!f) return { settings: null, targets: null };
-        // Batch 2 / ISSUE-009 — pass the stored input currency + account
-        // currency so derived targets reflect the conversion (no-op when
-        // they match or when inputCurrency is null).
-        const targets = deriveTargets(
-          funnelToInputs(f),
-          null,
-          f.inputCurrency,
-          account.currency ?? null
-        );
-        return { settings: f, targets };
+
+        // (1) direct hit
+        const direct = await db.getFunnel(ctx.user.id, input.adAccountId);
+        if (direct) {
+          const targets = deriveTargets(
+            funnelToInputs(direct),
+            null,
+            direct.inputCurrency,
+            account.currency ?? null
+          );
+          return { status: "found" as const, settings: direct, targets };
+        }
+
+        // (2) stable-id fallback (research R1.1, FR-031/FR-032) — only
+        // runs on the miss path. If a row exists for this user keyed
+        // by the platform's stable account id, the internal adAccountId
+        // went stale and the row is orphaned. Re-point and return.
+        if (account.accountId) {
+          const orphaned = await db.findFunnelByMetaAccountId(
+            ctx.user.id,
+            account.accountId
+          );
+          if (orphaned && orphaned.adAccountId !== input.adAccountId) {
+            await db.rePointFunnelAccount(orphaned.id, input.adAccountId);
+            const healed = { ...orphaned, adAccountId: input.adAccountId };
+            const targets = deriveTargets(
+              funnelToInputs(healed),
+              null,
+              healed.inputCurrency,
+              account.currency ?? null
+            );
+            return { status: "found" as const, settings: healed, targets };
+          }
+        }
+
+        // (3/4) marker + sibling probe (research R1.3, T030). If the
+        // marker is null but another `user` row shares this person's
+        // `ghlContactId` AND owns settings rows, the identity has
+        // drifted. The read path returns `unavailable` (not
+        // `never_configured`) so the UI shows the failure card — the
+        // blank first-time form would otherwise re-create the bug.
+        const result = await db.getFunnelResult(ctx.user.id, input.adAccountId);
+
+        const database = await db.getDb();
+        if (database && ctx.user.ghlContactId) {
+          const { hasSiblingIdentityWithSettings } = await import(
+            "./settingsIntegrity"
+          );
+          const drift = await hasSiblingIdentityWithSettings(
+            ctx.user.id,
+            ctx.user.ghlContactId
+          );
+          if (drift && result.status === "never_configured") {
+            return {
+              status: "unavailable" as const,
+              reason: "identity_drift" as const,
+            };
+          }
+        }
+
+        if (result.status === "unavailable") {
+          // FR-024 / FR-025 — observe. We log once per (userId, adAccountId)
+          // per 24h (FR-026). never_configured is not an anomaly and writes
+          // no audit row.
+          const reason = result.reason;
+          console.warn(
+            `[Settings] funnel.get returned unavailable userId=${ctx.user.id} adAccountId=${input.adAccountId} reason=${reason}`
+          );
+          try {
+            const database = await db.getDb();
+            if (!database) {
+              return result;
+            }
+            const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
+            const account = await db.getAccount(ctx.user.id, input.adAccountId);
+            const metaAccountId = account?.accountId ?? null;
+            // data-model.md §3 — bound by (user_id, event_type,
+            // created_at > NOW() - 24h, LIKE "adAccountId":N in details).
+            // LIKE on a JSON-stringified text column is acceptable here
+            // (acceptable alternative is documented in data-model.md §3
+            // — narrowing only by user/event/time is also spec-valid).
+            const existing = await database
+              .select({ id: auditLog.id })
+              .from(auditLog)
+              .where(
+                and(
+                  eq(auditLog.eventType, "funnel_settings_unavailable"),
+                  eq(auditLog.userId, ctx.user.id),
+                  gt(auditLog.createdAt, windowStart),
+                  like(auditLog.details, `%"adAccountId":${input.adAccountId}%`)
+                )
+              )
+              .limit(1);
+            if (!existing[0]) {
+              await logAuditEvent({
+                userId: ctx.user.id,
+                email: ctx.user.email ?? null,
+                eventType: "funnel_settings_unavailable",
+                details: {
+                  adAccountId: input.adAccountId,
+                  metaAccountId,
+                  configuredAt: account?.funnelConfiguredAt ?? null,
+                  suspectedCause: reason,
+                },
+              });
+            }
+          } catch (auditErr) {
+            // Observability must never break the read path.
+            console.error(
+              `[Settings] failed to write funnel_settings_unavailable audit: ${
+                auditErr instanceof Error ? auditErr.message : String(auditErr)
+              }`
+            );
+          }
+          // Strip out the verbose `sql`/`and` helpers so the unused-import
+          // linter stays quiet on the happy path.
+          void sql;
+          return result;
+        }
+        return result;
       }),
 
+    /**
+     * US11 / Spec 011 / T015 — `funnel.save` enforces the fresh-start
+     * guard at WRITE time (FR-006). A `freshStart: true` save issued
+     * while a row already exists is refused: the existing row is
+     * returned as `found` so the client can show the user the data it
+     * just found. This closes the race between a transient load
+     * failure and a good-faith "start fresh" decision.
+     */
     save: activeProcedure.input(funnelInputSchema).mutation(async ({ ctx, input }) => {
       const account = await requireAccount(ctx.user.id, input.adAccountId);
-      const { adAccountId, ...data } = input;
+      const { adAccountId, freshStart, ...data } = input;
+
+      if (freshStart) {
+        // Re-check at write time — the row that was missing at load
+        // time may have appeared (transient failure resolved itself).
+        const existing = await db.getFunnel(ctx.user.id, adAccountId);
+        if (existing) {
+          const targets = deriveTargets(
+            funnelToInputs(existing),
+            null,
+            existing.inputCurrency,
+            account.currency ?? null
+          );
+          return { status: "found" as const, settings: existing, targets };
+        }
+      }
+
       const saved = await db.upsertFunnel(ctx.user.id, adAccountId, data as any);
       // Batch 2 / ISSUE-009 — derive with currencies so the saved funnel's
       // inputCurrency is honored on the return value (no-op when equal/null).
@@ -238,12 +400,12 @@ export const appRouter = router({
             account.currency ?? null
           )
         : null;
-      return { settings: saved, targets };
+      return { status: "found" as const, settings: saved, targets };
     }),
 
     /** Pure preview of derived targets while typing — no persistence. */
     preview: activeProcedure
-      .input(funnelInputSchema.omit({ adAccountId: true }))
+      .input(funnelInputSchema.omit({ adAccountId: true, freshStart: true }))
       .query(async ({ input }) => {
         return deriveTargets(input as FunnelInputs, null);
       }),

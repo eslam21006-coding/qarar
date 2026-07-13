@@ -12,7 +12,11 @@ export type AuditEventType =
   | "password_reset_completed"
   | "password_changed"
   | "login_failed"
-  | "account_created";
+  | "account_created"
+  // US11 / Spec 011 — locked in lockstep with the
+  // `audit_log.event_type` enum in drizzle/auth-schema.ts:119-141.
+  | "identity_email_merged"
+  | "funnel_settings_unavailable";
 
 export type AuditStatus = "success" | "failed";
 
