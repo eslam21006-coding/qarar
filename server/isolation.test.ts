@@ -248,13 +248,21 @@ describe.skipIf(!hasDatabase)("repair cross-identity guard (T027 / US3 / FR-028)
     // them. This catches a real bug in the predicate (e.g. if it
     // ever regressed to `null === null` identity proof) even if
     // the surrounding repair-loop structure changes.
+    // IMPORTANT: pass the actual ghlContactId field, not the aliased
+    // `ghl` (which is undefined in the predicate's eyes). The predicate
+    // signature uses `ghlContactId`.
     // Import from repair-predicates (the pure helper file), not
     // from repair-settings (the CLI) — the CLI runs main() at
     // import time and would call process.exit(2) on missing args.
     const { shouldMergeStranded } = await import(
       "../scripts/repair-predicates"
     );
-    expect(shouldMergeStranded(ghost[0], live[0])).toBe(false);
+    expect(
+      shouldMergeStranded(
+        { ghlContactId: ghost[0]?.ghl ?? null },
+        { ghlContactId: live[0]?.ghl ?? null }
+      )
+    ).toBe(false);
     // Sanity: the predicate accepts the obvious true case.
     expect(shouldMergeStranded(ghost[0], ghost[0])).toBe(true);
     // And rejects null inputs.
@@ -285,15 +293,21 @@ describe.skipIf(!hasDatabase)("repair cross-identity guard (T027 / US3 / FR-028)
       .from(authUser)
       .where(eq(authUser.id, USER_A_ID))
       .limit(1);
+    // Map the aliased `ghl` field back to the predicate's
+    // `ghlContactId` parameter — otherwise the predicate sees
+    // `undefined === undefined` and incorrectly returns true.
+    const userAGhl = ghost[0]?.ghl ?? null;
     // Two null contact ids: not identity proof, refuse.
-    expect(shouldMergeStranded(ghost[0], ghost[0])).toBe(false);
+    expect(
+      shouldMergeStranded({ ghlContactId: userAGhl }, { ghlContactId: userAGhl })
+    ).toBe(false);
     // One null and one populated: also refuse (the populated one
     // could be anyone).
     expect(
-      shouldMergeStranded(ghost[0], { ghlContactId: "ghl_someone" })
+      shouldMergeStranded({ ghlContactId: userAGhl }, { ghlContactId: "ghl_someone" })
     ).toBe(false);
     expect(
-      shouldMergeStranded({ ghlContactId: "ghl_someone" }, ghost[0])
+      shouldMergeStranded({ ghlContactId: "ghl_someone" }, { ghlContactId: userAGhl })
     ).toBe(false);
   });
 });
