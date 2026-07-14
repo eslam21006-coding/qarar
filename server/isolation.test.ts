@@ -273,8 +273,10 @@ describe.skipIf(!hasDatabase)("repair cross-identity guard (T027 / US3 / FR-028)
     // (seeded by beforeAll) has ghlContactId=null, so any merge
     // request against USER_A must be refused — no contact id means
     // no identity proof.
+    // Import from the pure helper file, NOT the CLI (the CLI runs
+    // main() at import time and would call process.exit(2)).
     const { shouldMergeStranded } = await import(
-      "../scripts/repair-settings"
+      "../scripts/repair-predicates"
     );
     const d = await db.getDb();
     if (!d) return;
