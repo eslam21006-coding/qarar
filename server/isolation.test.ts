@@ -248,8 +248,11 @@ describe.skipIf(!hasDatabase)("repair cross-identity guard (T027 / US3 / FR-028)
     // them. This catches a real bug in the predicate (e.g. if it
     // ever regressed to `null === null` identity proof) even if
     // the surrounding repair-loop structure changes.
+    // Import from repair-predicates (the pure helper file), not
+    // from repair-settings (the CLI) — the CLI runs main() at
+    // import time and would call process.exit(2) on missing args.
     const { shouldMergeStranded } = await import(
-      "../scripts/repair-settings"
+      "../scripts/repair-predicates"
     );
     expect(shouldMergeStranded(ghost[0], live[0])).toBe(false);
     // Sanity: the predicate accepts the obvious true case.

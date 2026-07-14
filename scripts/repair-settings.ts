@@ -51,35 +51,17 @@ function printUsage(): void {
   );
 }
 
-interface PlanStep {
+export interface PlanStep {
   kind: "re-link orphan" | "recover stranded" | "consolidate duplicates";
   detail: string;
   /** True iff this step would actually write. */
   writes: boolean;
 }
 
-/**
- * Pure predicate extracted from `planRepairsForPerson` so it can be
- * unit-tested in isolation. Returns true iff the stranded-recovery
- * step would authorize a write (move) for a `findStranded` finding
- * given the live sibling identities from the resolution set.
- *
- * Mirrors the body of the recovery loop exactly:
- *   1. Ghost user row must exist
- *   2. Ghost must have a non-empty ghlContactId
- *   3. There must be exactly one live sibling identity
- *   4. That sibling's ghlContactId must equal the ghost's
- */
-export function shouldMergeStranded(
-  ghost: { ghlContactId: string | null } | undefined,
-  liveUser: { ghlContactId: string | null } | undefined
-): boolean {
-  if (!ghost) return false;
-  if (!ghost.ghlContactId || ghost.ghlContactId.length === 0) return false;
-  if (!liveUser) return false;
-  if (liveUser.ghlContactId !== ghost.ghlContactId) return false;
-  return true;
-}
+// Re-export the pure predicate from its dedicated module so callers
+// (tests, scripts) can import either this CLI or the predicate file
+// itself.
+export { shouldMergeStranded } from "./repair-predicates";
 
 async function planRepairsForPerson(
   email: string | undefined,
