@@ -15,15 +15,27 @@
  *      has rows: BLOCK with a clear error pointing at the
  *      diagnostic + repair scripts (T023 -> T033 -> T034).
  *      The deploy MUST NOT proceed.
+ *   4. If the database CANNOT BE REACHED: BLOCK. An unverifiable
+ *      state is not a safe state. This check exists to stop a
+ *      migration landing on a database that still holds duplicate
+ *      rows; if it cannot see the database, it cannot know that.
+ *      Previously this case exited 0 ("skipping live check"), which
+ *      meant a transient outage waved the migration straight
+ *      through — the gate failed OPEN. It now fails CLOSED.
  *
  * Wired into `pnpm run db:push` via package.json (the script is
  * the first thing the npm script runs, before drizzle-kit).
  *
  * Exits:
  *   0  — gate satisfied; proceed with db:push
- *   2  — gate violated; BLOCK the deploy (consistent with
- *        scripts/diagnose-settings.ts and scripts/repair-settings.ts
+ *   2  — gate violated OR unverifiable; BLOCK the deploy (consistent
+ *        with scripts/diagnose-settings.ts and scripts/repair-settings.ts
  *        which both use exit code 2 for operational failures)
+ *
+ * Escape hatch:
+ *   ALLOW_UNVERIFIED_DB_PUSH=1 skips the check entirely. It is the
+ *   only way past it, and it is deliberately explicit: a human types
+ *   it, it shows up in a shell history, and no outage can set it.
  *
  * Usage:
  *   npx tsx scripts/verify-t037-prerequisites.ts
@@ -39,12 +51,41 @@ import { getDb } from "../server/db";
 const UNIQUE_INDEX_NAME = "uq_funnelSettings_user_account";
 
 async function main(): Promise<void> {
-  const db = await getDb();
-  if (!db) {
+  // Deliberate, explicit opt-out for a dev sandbox with no database.
+  // This is the ONLY way to skip the check. It must be an act a human
+  // takes on purpose and can be seen in a shell history — never a
+  // default, and never something a transient outage can trigger.
+  if (process.env.ALLOW_UNVERIFIED_DB_PUSH === "1") {
     process.stdout.write(
-      "[verify-t037] DATABASE_URL not set or DB unreachable — skipping live check (dev sandbox case).\n",
+      "[verify-t037] SKIPPED: ALLOW_UNVERIFIED_DB_PUSH=1 was set explicitly.\n" +
+        "          The T037 prerequisites were NOT verified. Never set this\n" +
+        "          against a database that holds real data.\n",
     );
     process.exit(0);
+  }
+
+  const db = await getDb();
+  if (!db) {
+    process.stderr.write(
+      "\n" +
+        "[verify-t037] BLOCK: cannot reach the database, so the T037\n" +
+        "             prerequisites CANNOT be verified.\n" +
+        "\n" +
+        "             This check exists to stop a migration being applied to a\n" +
+        "             database that still holds duplicate funnelSettings rows.\n" +
+        "             If it cannot see the database, it cannot know that — and\n" +
+        "             an unverifiable state must NOT be treated as a safe one.\n" +
+        "             The migration does not proceed.\n" +
+        "\n" +
+        "             Fix one of:\n" +
+        "               - DATABASE_URL is not set → set it.\n" +
+        "               - The database is unreachable → restore connectivity and retry.\n" +
+        "\n" +
+        "             If you are in a dev sandbox with no database and you\n" +
+        "             genuinely intend to skip this check, opt in explicitly:\n" +
+        "               ALLOW_UNVERIFIED_DB_PUSH=1 pnpm run db:push\n",
+    );
+    process.exit(2);
   }
 
   const indexRows = await db.execute(sql`

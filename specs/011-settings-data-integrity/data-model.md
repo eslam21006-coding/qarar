@@ -15,7 +15,7 @@ Existing definition: `drizzle/schema.ts:85-128`.
 | Change | Definition | Requirement |
 |---|---|---|
 | **New column** | `metaAccountId: varchar("metaAccountId", { length: 64 })` — nullable | FR-031 |
-| **New index** | `uniqueIndex("uq_funnelSettings_user_account").on(userId, adAccountId)` | FR-021, FR-023 |
+| **New index** | `uq_funnelSettings_user_account` UNIQUE on `(userId, adAccountId)` — applied **only** via `drizzle/0010_settings_unique_index.sql`, **never** declared in `drizzle/schema.ts` (see the ordering constraint below) | FR-021, FR-023 |
 
 **`metaAccountId` is the recovery key.** It mirrors `adAccounts.accountId` (`drizzle/schema.ts:69`,
 e.g. `act_1234567890`) — the identifier Meta assigns, which survives any local re-sync.
@@ -31,9 +31,22 @@ consulted only when the join key misses (research R1.1).
 **Ordering constraint**: the unique index is created **last**, after duplicates are consolidated.
 See `plan.md` → Migration Sequencing. Creating it earlier fails on production.
 
-**Syntax note**: no composite unique exists in this repo (only column-level `.unique()`,
-`drizzle/schema.ts:27,46`). Follow the object-style third-arg callback used by `verdictHistory`
-(`drizzle/schema.ts:190-197`), which is the file being edited.
+**⚠️ The index MUST NOT be declared in `drizzle/schema.ts`.** That ordering constraint is enforced
+structurally, and the enforcement depends on an *absence*: the constraint exists only in
+`drizzle/0010_settings_unique_index.sql`, which is deliberately **not listed in
+`drizzle/meta/_journal.json`**. `drizzle-kit migrate` iterates only over `journal.entries`, so it can
+never apply 0010 on a deploy. Declaring the index in `schema.ts` would cause the next
+`drizzle-kit generate` to emit it *into* the journal, and the following deploy would apply it
+automatically — ungated, before the diagnose → repair → verify-clean cycle, against a table that may
+still hold duplicates. An operator applies 0010 by hand (T037), after the gate cycle:
+
+```bash
+npx tsx scripts/apply-migrations.mjs drizzle/0010_settings_unique_index.sql
+```
+
+`scripts/verify-t037-prerequisites.ts` enforces this at deploy time and fails **closed** — it blocks
+if the index is missing while `funnelSettings` holds rows, and also blocks if it cannot reach the
+database at all, since an unverifiable state is not a safe one.
 
 ---
 

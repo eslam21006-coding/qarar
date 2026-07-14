@@ -11,9 +11,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "db:push": "tsx scripts/verify-t037-prerequisites.ts && drizzle-kit generate && drizzle-kit migrate",
-    "db:push:verify": "tsx scripts/verify-t037-prerequisites.ts",
-    "db:push:generate": "drizzle-kit generate",
-    "db:push:migrate": "drizzle-kit migrate"
+    "db:push:verify": "tsx scripts/verify-t037-prerequisites.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",
