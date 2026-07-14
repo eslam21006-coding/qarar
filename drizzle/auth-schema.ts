@@ -10,21 +10,37 @@ import {
   mysqlEnum,
 } from "drizzle-orm/mysql-core";
 
-export const user = mysqlTable("user", {
-  id: varchar("id", { length: 36 }).primaryKey(),
-  name: varchar("name", { length: 255 }).notNull(),
-  email: varchar("email", { length: 255 }).notNull().unique(),
-  emailVerified: boolean("email_verified").default(false).notNull(),
-  image: text("image"),
-  createdAt: timestamp("created_at", { fsp: 3 }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { fsp: 3 })
-    .defaultNow()
-    .$onUpdate(() => /* @__PURE__ */ new Date())
-    .notNull(),
-  subscriptionStatus: text("subscription_status").default("inactive").notNull(),
-  ghlContactId: text("ghl_contact_id"),
-  role: text("role").default("user").notNull(),
-});
+export const user = mysqlTable(
+  "user",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    name: varchar("name", { length: 255 }).notNull(),
+    email: varchar("email", { length: 255 }).notNull().unique(),
+    emailVerified: boolean("email_verified").default(false).notNull(),
+    image: text("image"),
+    createdAt: timestamp("created_at", { fsp: 3 }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { fsp: 3 })
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+    subscriptionStatus: text("subscription_status").default("inactive").notNull(),
+    // US11 / Spec 011 / T004 — narrow from `text(...)` to
+    // `varchar(64)`. MySQL/TiDB refuse to build a B-tree index on a
+    // TEXT column without an explicit key-length prefix (errno 1170,
+    // ER_BLOB_KEY_WITHOUT_LENGTH); the new `user_ghlContactId_idx`
+    // requires a sized type. 64 chars is generous headroom over
+    // GHL's actual 20-30 char contact IDs. Aligned with the rest of
+    // the `user` table's column conventions (no TEXT elsewhere).
+    ghlContactId: varchar("ghl_contact_id", { length: 64 }),
+    role: text("role").default("user").notNull(),
+  },
+  (table) => [
+    // US11 / Spec 011 — non-unique on purpose: a stranded old identity and
+    // a live new identity legitimately share a contact id, and that
+    // co-occurrence is exactly what the sibling-identity probe detects.
+    index("user_ghlContactId_idx").on(table.ghlContactId),
+  ]
+);
 
 export const session = mysqlTable(
   "session",
@@ -126,6 +142,16 @@ export const auditLog = mysqlTable(
       "password_changed",
       "login_failed",
       "account_created",
+      // US11 / Spec 011 — two new values; must stay in lockstep with the
+      // AuditEventType TS union in server/auditLog.ts:6-15. The
+      // `identity_email_merged` event is emitted on the contact-id-first
+      // re-provisioning path when the existing user's email is updated
+      // in place (FR-017). The `funnel_settings_unavailable` event is
+      // emitted when a settings lookup returns no row for an account
+      // that has `funnelConfiguredAt` set (FR-025), bounded by a 24h
+      // window so reloading doesn't accumulate rows (FR-026).
+      "identity_email_merged",
+      "funnel_settings_unavailable",
     ]).notNull(),
     status: mysqlEnum("status", ["success", "failed"]).default("success").notNull(),
     ipAddress: text("ip_address"),

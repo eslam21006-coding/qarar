@@ -1,69 +1,76 @@
 {
-  "version": "7",
-  "dialect": "mysql",
-  "entries": [
-    {
-      "idx": 0,
-      "version": "5",
-      "when": 1781281837535,
-      "tag": "0000_fixed_sasquatch",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "5",
-      "when": 1781282280110,
-      "tag": "0001_foamy_ogun",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "5",
-      "when": 1781283386153,
-      "tag": "0002_special_speedball",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "5",
-      "when": 1781547396467,
-      "tag": "0003_natural_speedball",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "5",
-      "when": 1781548732893,
-      "tag": "0004_broken_iron_man",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "5",
-      "when": 1781782080434,
-      "tag": "0005_add_better_auth_tables",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "5",
-      "when": 1781798470826,
-      "tag": "0006_calm_dagger",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "5",
-      "when": 1782814406325,
-      "tag": "0007_goofy_jubilee",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "5",
-      "when": 1782837034281,
-      "tag": "0008_warm_amazoness",
-      "breakpoints": true
-    }
-  ]
+    "version":  "7",
+    "dialect":  "mysql",
+    "entries":  [
+                    {
+                        "idx":  0,
+                        "version":  "5",
+                        "when":  1781281837535,
+                        "tag":  "0000_fixed_sasquatch",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  1,
+                        "version":  "5",
+                        "when":  1781282280110,
+                        "tag":  "0001_foamy_ogun",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  2,
+                        "version":  "5",
+                        "when":  1781283386153,
+                        "tag":  "0002_special_speedball",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  3,
+                        "version":  "5",
+                        "when":  1781547396467,
+                        "tag":  "0003_natural_speedball",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  4,
+                        "version":  "5",
+                        "when":  1781548732893,
+                        "tag":  "0004_broken_iron_man",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  5,
+                        "version":  "5",
+                        "when":  1781782080434,
+                        "tag":  "0005_add_better_auth_tables",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  6,
+                        "version":  "5",
+                        "when":  1781798470826,
+                        "tag":  "0006_calm_dagger",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  7,
+                        "version":  "5",
+                        "when":  1782814406325,
+                        "tag":  "0007_goofy_jubilee",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  8,
+                        "version":  "5",
+                        "when":  1782837034281,
+                        "tag":  "0008_warm_amazoness",
+                        "breakpoints":  true
+                    },
+                    {
+                        "idx":  9,
+                        "version":  "5",
+                        "when":  1783972463571,
+                        "tag":  "0009_striped_stark_industries",
+                        "breakpoints":  true
+                    }
+                ]
 }

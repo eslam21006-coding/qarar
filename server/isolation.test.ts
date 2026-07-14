@@ -168,6 +168,159 @@ describe.skipIf(!hasDatabase)("cross-user data isolation", () => {
   });
 });
 
+/**
+ * US11 / Spec 011 / T027 — repair's cross-identity guard.
+ *
+ * The repair moves settings rows from a stranded user id to the live one
+ * when they share a `ghlContactId` (FR-028 / Constitution IV). Two
+ * assertions:
+ *
+ *   (a) Two identities that do NOT share a `ghlContactId` are never
+ *       merged. Even if they share an email (the documented edge
+ *       case in the spec), the move is refused.
+ *
+ *   (b) Matching by email alone is NOT proof of identity. Two
+ *       `user` rows whose emails are identical but whose
+ *       `ghlContactId` differs MUST NOT be cross-attributed by the
+ *       repair. (Today Better Auth's email is unique at the schema
+ *       level so this is a defense-in-depth test — it documents the
+ *       intent.)
+ */
+describe.skipIf(!hasDatabase)("repair cross-identity guard (T027 / US3 / FR-028)", () => {
+  // The cross-identity move lives in scripts/repair-settings.ts. We
+  // exercise its decision rule here by importing the predicates
+  // directly: the repair calls findStranded then asserts
+  // shared ghlContactId before any update.
+  it("two identities that do NOT share ghlContactId are never merged", async () => {
+    // Seed two users with DIFFERENT emails (email is unique at the
+    // schema level — `user.email` is `notNull().unique()`), and
+    // DIFFERENT contact ids. The repair's predicate must NOT collapse
+    // them into the same identity — only a shared ghlContactId is
+    // proof (FR-028). Even though Better Auth enforces email
+    // uniqueness, this defends the original spec concern that
+    // email alone is not proof.
+    const ghostId = `iso-ghost-${SUFFIX}-${Math.random().toString(36).slice(2, 6)}`;
+    const liveId = `iso-live-${SUFFIX}-${Math.random().toString(36).slice(2, 6)}`;
+    const ghostEmail = `${ghostId}@isolation.test`;
+    const liveEmail = `${liveId}@isolation.test`;
+
+    const d = await db.getDb();
+    if (!d) return;
+
+    await d.insert(authUser).values({
+      id: ghostId,
+      name: "Ghost",
+      email: ghostEmail,
+      subscriptionStatus: "active",
+      role: "user",
+      ghlContactId: "ghl_ghost",
+    });
+    await d.insert(authUser).values({
+      id: liveId,
+      name: "Live",
+      email: liveEmail,
+      subscriptionStatus: "active",
+      role: "user",
+      ghlContactId: "ghl_live",
+    });
+
+    // The repair's decision rule: ghostId and liveId are NOT the
+    // same person because their ghlContactId differs. We assert the
+    // predicate shape here — the actual script enforces the same
+    // rule at `scripts/repair-settings.ts:recover stranded`.
+    const ghost = await d
+      .select({ ghl: authUser.ghlContactId })
+      .from(authUser)
+      .where(eq(authUser.id, ghostId))
+      .limit(1);
+    const live = await d
+      .select({ ghl: authUser.ghlContactId })
+      .from(authUser)
+      .where(eq(authUser.id, liveId))
+      .limit(1);
+    expect(ghost[0]?.ghl).toBe("ghl_ghost");
+    expect(live[0]?.ghl).toBe("ghl_live");
+    expect(ghost[0]?.ghl).not.toBe(live[0]?.ghl);
+
+    // Now invoke the production stranded-recovery predicate
+    // directly. The fixture above sets up two identities with
+    // DIFFERENT ghlContactIds — the predicate must refuse to merge
+    // them. This catches a real bug in the predicate (e.g. if it
+    // ever regressed to `null === null` identity proof) even if
+    // the surrounding repair-loop structure changes.
+    // IMPORTANT: pass the actual ghlContactId field, not the aliased
+    // `ghl` (which is undefined in the predicate's eyes). The predicate
+    // signature uses `ghlContactId`.
+    // Import from repair-predicates (the pure helper file), not
+    // from repair-settings (the CLI) — the CLI runs main() at
+    // import time and would call process.exit(2) on missing args.
+    const { shouldMergeStranded } = await import(
+      "../scripts/repair-predicates"
+    );
+    expect(
+      shouldMergeStranded(
+        { ghlContactId: ghost[0]?.ghl ?? null },
+        { ghlContactId: live[0]?.ghl ?? null }
+      )
+    ).toBe(false);
+    // Sanity: the predicate accepts the obvious true case.
+    expect(
+      shouldMergeStranded(
+        { ghlContactId: ghost[0]?.ghl ?? null },
+        { ghlContactId: ghost[0]?.ghl ?? null }
+      )
+    ).toBe(true);
+    // And rejects null inputs.
+    expect(
+      shouldMergeStranded(undefined, { ghlContactId: live[0]?.ghl ?? null })
+    ).toBe(false);
+    expect(
+      shouldMergeStranded({ ghlContactId: ghost[0]?.ghl ?? null }, undefined)
+    ).toBe(false);
+
+    // Cleanup.
+    await d.delete(authUser).where(eq(authUser.id, ghostId));
+    await d.delete(authUser).where(eq(authUser.id, liveId));
+  });
+
+  it("the repair refuses to move rows when no shared ghlContactId exists", async () => {
+    // Predicate-level check: the repair's only proof of identity is
+    // a shared ghlContactId. We assert that by exercising the
+    // production stranded-recovery predicate directly. USER_A_ID
+    // (seeded by beforeAll) has ghlContactId=null, so any merge
+    // request against USER_A must be refused — no contact id means
+    // no identity proof.
+    // Import from the pure helper file, NOT the CLI (the CLI runs
+    // main() at import time and would call process.exit(2)).
+    const { shouldMergeStranded } = await import(
+      "../scripts/repair-predicates"
+    );
+    const d = await db.getDb();
+    if (!d) return;
+    const ghost = await d
+      .select({ ghl: authUser.ghlContactId })
+      .from(authUser)
+      .where(eq(authUser.id, USER_A_ID))
+      .limit(1);
+    // Map the aliased `ghl` field back to the predicate's
+    // `ghlContactId` parameter — otherwise the predicate sees
+    // `undefined === undefined` and incorrectly returns true.
+    const userAGhl = ghost[0]?.ghl ?? null;
+    // Two null contact ids: not identity proof, refuse.
+    expect(
+      shouldMergeStranded({ ghlContactId: userAGhl }, { ghlContactId: userAGhl })
+    ).toBe(false);
+    // One null and one populated: also refuse (the populated one
+    // could be anyone).
+    expect(
+      shouldMergeStranded({ ghlContactId: userAGhl }, { ghlContactId: "ghl_someone" })
+    ).toBe(false);
+    expect(
+      shouldMergeStranded({ ghlContactId: "ghl_someone" }, { ghlContactId: userAGhl })
+    ).toBe(false);
+  });
+});
+
 describe.skipIf(!hasDatabase)("verdictHistory (US12 / T049)", () => {
   function makeRow(overrides: Partial<EngineRow> = {}): EngineRow {
     return {

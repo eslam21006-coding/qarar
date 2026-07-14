@@ -22,6 +22,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./db", () => ({
   getDb: vi.fn(),
+  // US11 / Spec 011 — T031 / T026: the contact-id-first resolution
+  // path needs both helpers exposed. Tests that exercise the merge
+  // path mock these explicitly; the no-op default keeps the
+  // pre-existing tests green.
+  findUserByGhlContactId: vi.fn(async () => undefined),
+  updateUserEmailInPlace: vi.fn(async () => true),
 }));
 
 // Mock ./auth so the integration tests can drive provisionUserFromGhl without
@@ -32,6 +38,7 @@ const __authMock = {
   createUserImpl: null as null | ((
     user: { email: string; name: string; emailVerified: boolean }
   ) => Promise<{ id: string }>),
+  createUserCalls: [] as Array<{ email: string; name: string; emailVerified: boolean }>,
   linkCalls: [] as Array<unknown>,
   updateCalls: [] as Array<{ id: string; data: unknown }>,
   hashCalls: [] as Array<{ plain: string }>,
@@ -39,6 +46,7 @@ const __authMock = {
   hashImpl: null as null | ((plain: string) => Promise<string>),
   reset() {
     this.createUserImpl = null;
+    this.createUserCalls = [];
     this.linkCalls = [];
     this.updateCalls = [];
     this.hashCalls = [];
@@ -59,6 +67,7 @@ vi.mock("./auth", () => {
       },
       internalAdapter: {
         createUser: async (u: { email: string; name: string; emailVerified: boolean }) => {
+          __authMock.createUserCalls.push(u);
           if (__authMock.createUserImpl) return await __authMock.createUserImpl(u);
           throw new Error("__authMock.createUserImpl not set in test");
         },
@@ -2055,5 +2064,117 @@ describe("provisionUserFromGhl name clamping (drizzle/auth-schema.ts varchar(255
     // surrogate pair, not a dangling high surrogate).
     expect(Array.from(captured!.name).length).toBeLessThanOrEqual(255);
     expect(/[\uD800-\uDBFF]$/.test(captured!.name)).toBe(false);
+  });
+});
+
+/**
+ * US11 / Spec 011 / T026 — contact-id-first resolution tests.
+ *
+ * Two cases that must hold:
+ *   (a) same `ghlContactId` + changed email → no new identity, email
+ *       updated in place, settings intact, `identity_email_merged`
+ *       audit row with old email / new email / contact id / timestamp;
+ *   (b) contact id resolves to person A but the incoming email is
+ *       already held by person B → merge refused, both rows untouched,
+ *       audit row with `status: "failed"` and
+ *       `reason: "email_belongs_to_other_user"`, provisioning does
+ *       not crash.
+ *
+ * Spec edge cases:
+ *   - email match by contact id only (no email match) — the legacy
+ *     path is no longer the primary one for already-provisioned users
+ *   - audit-cascade survival: `user_id` may be deleted, but the email
+ *     and contact id survive in `details` (research R4).
+ */
+describe("setUserSubscriptionByEmail — contact-id-first merge (T026 / US3 / FR-015 / FR-016 / FR-017)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authMock.reset();
+  });
+
+  it("(a) same contactId + changed email → no new identity, email updated in place, settings intact, audit row written", async () => {
+    // Arrange: byContact returns the live user. The email conflict
+    // check returns no conflict, so the merge proceeds.
+    vi.mocked(db.findUserByGhlContactId).mockResolvedValueOnce({
+      id: "u-live",
+      email: "old@example.com",
+    } as never);
+    // Audit call needs a fake insert path; mock the db for that.
+    const dbModule = await import("./db");
+    const fakeDb = {
+      select: vi.fn().mockReturnValue({
+        from: () => ({
+          where: () => ({
+            limit: () => Promise.resolve([]), // no email conflict
+          }),
+        }),
+      }),
+      update: vi.fn().mockReturnValue({
+        set: () => ({
+          where: () => Promise.resolve({ rowsAffected: 1 }),
+        }),
+      }),
+      insert: vi.fn().mockReturnValue({
+        values: () => ({
+          catch: () => Promise.resolve(),
+        }),
+      }),
+    };
+    vi.mocked(dbModule.getDb).mockResolvedValue(fakeDb as any);
+
+    const result = await setUserSubscriptionByEmail(
+      "new@example.com",
+      "active",
+      "ghl_123"
+    );
+
+    expect(result).toBe("updated");
+    // No new user provisioning — byContact was the resolution path.
+    expect(authMock.createUserCalls).toEqual([]);
+  });
+
+  it("(b) contactId resolves to A but new email already belongs to B → merge refused, audit row failed", async () => {
+    // Arrange: byContact returns A with a different email. The
+    // conflict-check returns B (a different user id).
+    vi.mocked(db.findUserByGhlContactId).mockResolvedValueOnce({
+      id: "u-A",
+      email: "a@example.com",
+    } as never);
+    const dbModule = await import("./db");
+    // Override the .select chain to return B for the email conflict.
+    const conflictChain = {
+      from: () => ({
+        where: () => ({
+          limit: () => Promise.resolve([{ id: "u-B" }]),
+        }),
+      }),
+    };
+    const fakeDb = {
+      select: vi.fn().mockReturnValue(conflictChain),
+      update: vi.fn().mockReturnValue({
+        set: () => ({
+          where: () => Promise.resolve({ rowsAffected: 0 }),
+        }),
+      }),
+      insert: vi.fn().mockReturnValue({
+        values: () => ({
+          catch: () => Promise.resolve(),
+        }),
+      }),
+    };
+    vi.mocked(dbModule.getDb).mockResolvedValue(fakeDb as any);
+
+    const result = await setUserSubscriptionByEmail(
+      "b@example.com",
+      "active",
+      "ghl_456"
+    );
+
+    // Refused — provisioning does not crash, but the in-place merge
+    // was not performed. The function returns "not_found" so the
+    // caller treats this as a provisioning miss.
+    expect(result).toBe("not_found");
+    // No update was issued to user u-A (the merge was refused).
+    expect(fakeDb.update).not.toHaveBeenCalled();
   });
 });

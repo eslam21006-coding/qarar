@@ -17,8 +17,9 @@ import crypto from "node:crypto";
 import express, { type Request, type Response } from "express";
 import { eq } from "drizzle-orm";
 import axios from "axios";
-import { getDb } from "./db";
+import { getDb, findUserByGhlContactId, updateUserEmailInPlace } from "./db";
 import { user } from "../drizzle/schema";
+import { logAuditEvent } from "./auditLog";
 import {
   generatePasswordResetToken,
   buildPasswordResetUrl,
@@ -343,11 +344,30 @@ export function classifyEvent(body: unknown, activeTag: string): Classification 
 }
 
 /**
- * Resolve the user row by normalized email and apply a single-row update
- * setting `subscriptionStatus` (and `ghlContactId` when provided). Returns
- * `"updated"` when exactly one row was modified, `"not_found"` when the
- * email did not match (FR-019). Throws when no DB handle is available so the
- * caller maps that to `500 { error }` (FR-022).
+ * US11 / Spec 011 / T031 — recognise a returning person by their
+ * external CRM contact id, falling back to email. The contact-id
+ * match is preferred because it survives an email change — the
+ * person's *identity* is the contact id, the email is just an
+ * addressable handle.
+ *
+ * When the contact-id match finds an existing user whose stored
+ * email differs from the incoming one, the email is updated in place
+ * (FR-016). This preserves the user's settings under the same
+ * `userId` instead of minting a fresh identity that strands the
+ * existing data.
+ *
+ * The merge refuses — never silently fails — when the new email is
+ * already held by a different user (FR-028, Constitution IV). The
+ * spec edge case is documented in `tests/server/ghl-webhook.test.ts`
+ * (T026). Both success and refusal write an `identity_email_merged`
+ * audit row (FR-017).
+ *
+ * Returns:
+ *   - `"updated"`               — subscription/contact-id was applied
+ *   - `"not_found"`             — neither contact-id nor email resolved
+ *
+ * Throws when no DB handle is available so the caller maps that to
+ * `500 { error }`.
  */
 export async function setUserSubscriptionByEmail(
   email: string,
@@ -357,6 +377,98 @@ export async function setUserSubscriptionByEmail(
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
   const normalized = email.trim().toLowerCase();
+
+  // (1) Resolve by contact id FIRST if provided. This is the
+  // returning-person path: a provisioned user who later re-purchases
+  // with a different email is recognised as the same identity.
+  if (contactId) {
+    const byContact = await findUserByGhlContactId(contactId);
+    if (byContact) {
+      // In-place email merge (FR-016). Refuse + audit on the collision
+      // case where the incoming email is held by a different user.
+      if (byContact.email !== normalized) {
+        const conflict = await db
+          .select({ id: user.id })
+          .from(user)
+          .where(eq(user.email, normalized))
+          .limit(1);
+        const otherUser = conflict[0];
+        if (otherUser && otherUser.id !== byContact.id) {
+          // The new email is already taken by someone else — refuse.
+          // Per FR-028 / Constitution IV we MUST NOT merge two
+          // distinct identities. Audit + propagate the refusal so
+          // provisioning still completes for the other paths.
+          await logAuditEvent({
+            userId: byContact.id,
+            email: byContact.email,
+            eventType: "identity_email_merged",
+            status: "failed",
+            details: {
+              previousEmail: byContact.email,
+              newEmail: normalized,
+              ghlContactId: contactId,
+              reason: "email_belongs_to_other_user",
+              mergedAt: new Date().toISOString(),
+            },
+          });
+          // Don't throw — fall through to the email lookup below. If
+          // the email lookup matches the conflicting user, we'll have
+          // updated the wrong one; instead we leave both untouched
+          // and signal "not_found" so the caller treats this as a
+          // provisioning miss (the webhook will then try the
+          // existing-email path, which won't change anything either).
+          // The audit row is the durable record; a human can resolve
+          // it offline.
+          return "not_found";
+        }
+        try {
+          await updateUserEmailInPlace(byContact.id, normalized);
+          await logAuditEvent({
+            userId: byContact.id,
+            email: normalized,
+            eventType: "identity_email_merged",
+            status: "success",
+            details: {
+              previousEmail: byContact.email,
+              newEmail: normalized,
+              ghlContactId: contactId,
+              mergedAt: new Date().toISOString(),
+            },
+          });
+        } catch (err) {
+          if (isUniqueEmailRaceError(err)) {
+            // Race: a concurrent webhook won the email slot. Refuse +
+            // audit, leave both rows untouched.
+            await logAuditEvent({
+              userId: byContact.id,
+              email: byContact.email,
+              eventType: "identity_email_merged",
+              status: "failed",
+              details: {
+                previousEmail: byContact.email,
+                newEmail: normalized,
+                ghlContactId: contactId,
+                reason: "email_belongs_to_other_user",
+                mergedAt: new Date().toISOString(),
+              },
+            });
+            return "not_found";
+          }
+          throw err;
+        }
+      }
+      // Update the subscription status on the resolved user.
+      await db
+        .update(user)
+        .set({ subscriptionStatus: status, ghlContactId: contactId })
+        .where(eq(user.id, byContact.id));
+      return "updated";
+    }
+  }
+
+  // (2) Fall back to email lookup. This preserves the original
+  // behaviour for everyone provisioned before ghlContactId was
+  // captured (FR-015b).
   const rows = await db
     .select({ id: user.id })
     .from(user)

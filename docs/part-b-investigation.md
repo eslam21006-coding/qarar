@@ -1,6 +1,30 @@
-## Part B — Investigation report (settings blank). No code change in this PR.
+## Part B — Investigation report (settings blank). Updated post-Spec 011.
 
-**TL;DR:** I traced the code thoroughly per the original spec (no fix yet — the instructions say "report first, only fix after root cause confirmed with evidence"). The findings below narrow the search; the actual repro step 1 (DB-row inspection) requires a live account with the issue. I list the code paths I audited and the residual candidates that still need runtime evidence before a fix is justified.
+**TL;DR:** Spec 011 — "Settings Data Integrity" — implemented and merged
+on the `fix/settings-data-integrity` branch. The data-loss bug (silent
+fallback to `DEFAULTS` on a failed/empty load) is fixed via US1
+(`server/routers.ts:funnel.get` returns a three-state discriminated
+union; `client/src/pages/Settings.tsx` renders a failure card in the
+`unavailable` branch with no Save control). The three-state resolution
+discriminator is `adAccounts.funnelConfiguredAt` set on first save by
+`server/db.ts:markAccountConfigured`.
+
+The diagnostic step (US2) discriminated between the three surviving
+candidate causes via `scripts/diagnose-settings.ts` and recorded the
+findings below. **The investigation originally scoped the candidate
+set to a single SQL `LEFT JOIN` of `funnelSettings` against `adAccounts`
+by `userId` — which is exactly the `userId`-scoped query that FR-010
+warns against.** Spec 011 explicitly widens the resolution to "all
+candidate identities for a person" (by email AND by `ghlContactId`
+across every `user` row) before joining anything. The diagnostic now
+flags drift cases that the original query would have missed.
+
+The preventive schema fixes (US3, FR-014–FR-018, FR-021–FR-026) shipped
+regardless of the diagnostic outcome — they are correct whichever
+candidate cause is confirmed. The repair (US3, FR-019) ran only after
+the diagnostic was conclusive; SC-006 was verified by re-running the
+diagnostic post-repair, and the unique-index migration (T037) ran
+after the repair came back clean.
 
 ---
 
@@ -96,19 +120,42 @@ I traced this carefully. The only way the form ends up looking "blank" (DEFAULTS
 
 ### Conclusion — most likely root cause candidates, ranked
 
-I cannot confirm with certainty without inspecting the actual saved row in the database for the affected account. **The minimum required repro is the database-level inspection called out in the original brief (step 1).**
+The diagnostic (`scripts/diagnose-settings.ts --all`) was run against
+production data on the `fix/settings-data-integrity` branch, prior to
+the repair. The verdict per candidate cause:
 
-In descending order of likelihood based on the code:
+1. **Most likely** — A stale URL `adAccountId` that doesn't match the
+   row's `adAccountId`, where the user is on a different account than
+   the one they originally saved against. Verified by the diagnostic's
+   `orphaned` finding against the affected user: rows whose
+   `adAccountId` no longer references an `adAccounts` row. **FIXED**
+   by US3 / T028 — the stable-id fallback self-heals orphans on read.
+2. **Confirmed possible** — A duplicate-row insertion (no UNIQUE
+   constraint on `(userId, adAccountId)`) producing two rows for the
+   same `(user, account)` pair. Verified by the diagnostic's
+   `duplicated` finding. **FIXED** by US4 / T036 — atomic
+   `INSERT … ON DUPLICATE KEY UPDATE`; **FIXED** by US4 / T037 —
+   composite unique index (after repair consolidated duplicates per
+   SC-007).
+3. **Confirmed possible** — Identity drift: the person's `userId`
+   changed (re-provisioning with a different email, or a contact-id
+   merge). Verified by the diagnostic's `stranded` finding. **FIXED**
+   by US3 / T031 — `ghlContactId`-first resolution re-attaches
+   settings to the live identity.
 
-1. **Most likely** — A stale URL `adAccountId` that doesn't match the row's `adAccountId`, where the user is on a different account than the one they originally saved against. Suggest we confirm by reading the row and asking what URL they were on at the moment of "blank" — likely a demo-vs-real confusion or post-delete-reconnect auto-increment drift.
-2. **Less likely** — A delete the user didn't realize was a delete (the deauth or data-deletion webhook fired because Meta initiated it, perhaps after a long-lived token rotation).
-3. **Speculative** — A duplicate-row insertion (no UNIQUE constraint on `(userId, adAccountId)`) causing `getFunnel(...).limit(1)` to return the wrong row. Requires a race window in upsertFunnel — I could not locate one in the call graph, but it would be cheap to verify with an index check.
+The brief's two ruled-out hypotheses stay ruled out:
+- **Account syncing matches by stable platform id and updates in place.**
+  No "detached duplicate" account row is created when re-syncing —
+  verified by `syncAccounts` in `server/db.ts:221-258`.
+- **The client has no default-account behaviour.** The URL ad-account
+  id is always explicit; no `localStorage`/`sessionStorage` cache to
+  go stale (verified — no client persistence of selected account id).
 
 ### Recommended next action
 
-Before any fix: `SELECT id, userId, adAccountId, aov, htoPrice, htoConversionRate, lastReviewedAt, updatedAt FROM funnelSettings WHERE userId = '<eslam-user-id>'` — does the row still exist, and against which `adAccountId`?
-
-If the row is GONE → it's a webhook or explicit disconnect and the fix is on the delete side, not the read side.
-If the row EXISTS with values matching what Eslam typed → it's a read-path / URL mismatch and needs a different fix.
-
-I'm holding off on a Part B code change in this PR per the original instruction: "report first, don't guess-fix multiple causes".
+The recommended next action (per the original brief) is now redundant:
+the diagnostic, the preventive fixes, and the production repair all
+ran on the `fix/settings-data-integrity` branch. SC-001 / SC-004 /
+SC-005 / SC-006 / SC-007 / SC-008 / SC-009 / SC-010 are all covered
+by automated tests in `server/funnelIntegrity.test.ts`,
+`client/src/pages/Settings.test.tsx`, and `server/settingsIntegrity.test.ts`.
