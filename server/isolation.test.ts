@@ -264,10 +264,19 @@ describe.skipIf(!hasDatabase)("repair cross-identity guard (T027 / US3 / FR-028)
       )
     ).toBe(false);
     // Sanity: the predicate accepts the obvious true case.
-    expect(shouldMergeStranded(ghost[0], ghost[0])).toBe(true);
+    expect(
+      shouldMergeStranded(
+        { ghlContactId: ghost[0]?.ghl ?? null },
+        { ghlContactId: ghost[0]?.ghl ?? null }
+      )
+    ).toBe(true);
     // And rejects null inputs.
-    expect(shouldMergeStranded(undefined, live[0])).toBe(false);
-    expect(shouldMergeStranded(ghost[0], undefined)).toBe(false);
+    expect(
+      shouldMergeStranded(undefined, { ghlContactId: live[0]?.ghl ?? null })
+    ).toBe(false);
+    expect(
+      shouldMergeStranded({ ghlContactId: ghost[0]?.ghl ?? null }, undefined)
+    ).toBe(false);
 
     // Cleanup.
     await d.delete(authUser).where(eq(authUser.id, ghostId));
