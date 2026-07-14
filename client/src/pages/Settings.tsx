@@ -24,7 +24,7 @@ import {
   RotateCw,
   Save,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useParams } from "wouter";
 
@@ -108,11 +108,25 @@ export default function Settings() {
   //   "found"            → hydrate from the server row
   //   "never_configured" → empty first-time form (placeholders only)
   //   "unavailable"      → failure card; no fields rendered at all
+  //
+  // T017 hardening: reset account-scoped state (loadedFromServer,
+  // freshStartConfirmed, and the form itself) on accountId change.
+  // Without this, navigating from one account to another would leak
+  // the previous account's values into the new account's form (a
+  // cross-account write if the user hits Save).
   const [form, setForm] = useState<FormState>(() => emptyFormState(accountCurrency));
   const [loadedFromServer, setLoadedFromServer] = useState(false);
   // T018 — explicit user confirmation to start fresh from the failure
   // state. Save is unavailable until this flips true (FR-004).
   const [freshStartConfirmed, setFreshStartConfirmed] = useState(false);
+  const lastSeenAccountId = useRef(accountId);
+  useEffect(() => {
+    if (lastSeenAccountId.current === accountId) return;
+    lastSeenAccountId.current = accountId;
+    setForm(emptyFormState(accountCurrency));
+    setLoadedFromServer(false);
+    setFreshStartConfirmed(false);
+  }, [accountId, accountCurrency]);
 
   const loadStatus: "loading" | "found" | "never_configured" | "unavailable" =
     funnel.isLoading
@@ -125,27 +139,30 @@ export default function Settings() {
     if (!funnel.data) return;
     if (funnel.data.status === "found") {
       const s = funnel.data.settings;
-      if (!loadedFromServer) {
-        setForm({
-          archetype: s.archetype as FunnelArchetype,
-          liveComponent: s.liveComponent,
-          offerDescription: s.offerDescription ?? "",
-          ticketPrice: s.ticketPrice != null ? String(s.ticketPrice) : "",
-          arena: s.arena,
-          bestInterest: s.bestInterest ?? "",
-          geoTiers: ((s.geoTiers as string[] | null) ?? []).join("، "),
-          inputCurrency: s.inputCurrency ?? accountCurrency,
-          aov: String(s.aov),
-          htoPrice: String(s.htoPrice),
-          htoConversionRate: String(s.htoConversionRate),
-          frontEndRoas: String(s.frontEndRoas),
-          dailyBudget: s.dailyBudget != null ? String(s.dailyBudget) : "",
-          marketCplBenchmark:
-            s.marketCplBenchmark != null ? String(s.marketCplBenchmark) : "",
-          htoUnderperforming: s.htoUnderperforming,
-        });
-        setLoadedFromServer(true);
-      }
+      // Re-hydrate whenever the server returns data for the
+      // CURRENT accountId, even if loadedFromServer is true. This
+      // keeps the form in sync with the server across the
+      // accountId-change reset above. The previous-account values
+      // were already cleared by the reset effect.
+      setForm({
+        archetype: s.archetype as FunnelArchetype,
+        liveComponent: s.liveComponent,
+        offerDescription: s.offerDescription ?? "",
+        ticketPrice: s.ticketPrice != null ? String(s.ticketPrice) : "",
+        arena: s.arena,
+        bestInterest: s.bestInterest ?? "",
+        geoTiers: ((s.geoTiers as string[] | null) ?? []).join("، "),
+        inputCurrency: s.inputCurrency ?? accountCurrency,
+        aov: String(s.aov),
+        htoPrice: String(s.htoPrice),
+        htoConversionRate: String(s.htoConversionRate),
+        frontEndRoas: String(s.frontEndRoas),
+        dailyBudget: s.dailyBudget != null ? String(s.dailyBudget) : "",
+        marketCplBenchmark:
+          s.marketCplBenchmark != null ? String(s.marketCplBenchmark) : "",
+        htoUnderperforming: s.htoUnderperforming,
+      });
+      setLoadedFromServer(true);
       return;
     }
     if (funnel.data.status === "never_configured") {
@@ -198,7 +215,7 @@ export default function Settings() {
 
   const save = trpc.funnel.save.useMutation({
     onSuccess: data => {
-      if (data?.status === "found" && data.settings) {
+      if (data?.status === "found" && data.outcome === "freshStartRefused" && data.settings) {
         // Fresh-start save refused — server returned the existing row.
         // Hydrate and tell the user (FR-006, contracts/funnel-get.md).
         const s = data.settings;

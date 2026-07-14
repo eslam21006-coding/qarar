@@ -373,6 +373,13 @@ export const appRouter = router({
     save: activeProcedure.input(funnelInputSchema).mutation(async ({ ctx, input }) => {
       const account = await requireAccount(ctx.user.id, input.adAccountId);
       const { adAccountId, freshStart, ...data } = input;
+      // US11 / Spec 011 / T029 — persist the stable ad-account id
+      // (account.accountId, e.g. "act_1234567890") alongside every
+      // save. This is the recovery key for the stable-id fallback
+      // (T028): if the internal adAccountId ever goes stale (e.g. the
+      // adAccounts row was deleted and re-created with a new internal
+      // id), getFunnel can still resolve the orphan via this field.
+      const enrichedData = { ...data, metaAccountId: account.accountId };
 
       if (freshStart) {
         // Re-check at write time — the row that was missing at load
@@ -385,11 +392,19 @@ export const appRouter = router({
             existing.inputCurrency,
             account.currency ?? null
           );
-          return { status: "found" as const, settings: existing, targets };
+          // `outcome: "freshStartRefused"` lets the client distinguish
+          // this case from a normal save (which also returns
+          // `status: "found"` after a write).
+          return {
+            status: "found" as const,
+            outcome: "freshStartRefused" as const,
+            settings: existing,
+            targets,
+          };
         }
       }
 
-      const saved = await db.upsertFunnel(ctx.user.id, adAccountId, data as any);
+      const saved = await db.upsertFunnel(ctx.user.id, adAccountId, enrichedData as any);
       // Batch 2 / ISSUE-009 — derive with currencies so the saved funnel's
       // inputCurrency is honored on the return value (no-op when equal/null).
       const targets = saved
@@ -400,7 +415,12 @@ export const appRouter = router({
             account.currency ?? null
           )
         : null;
-      return { status: "found" as const, settings: saved, targets };
+      return {
+        status: "found" as const,
+        outcome: "saved" as const,
+        settings: saved,
+        targets,
+      };
     }),
 
     /** Pure preview of derived targets while typing — no persistence. */

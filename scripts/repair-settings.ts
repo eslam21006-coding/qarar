@@ -58,10 +58,34 @@ interface PlanStep {
   writes: boolean;
 }
 
+/**
+ * Pure predicate extracted from `planRepairsForPerson` so it can be
+ * unit-tested in isolation. Returns true iff the stranded-recovery
+ * step would authorize a write (move) for a `findStranded` finding
+ * given the live sibling identities from the resolution set.
+ *
+ * Mirrors the body of the recovery loop exactly:
+ *   1. Ghost user row must exist
+ *   2. Ghost must have a non-empty ghlContactId
+ *   3. There must be exactly one live sibling identity
+ *   4. That sibling's ghlContactId must equal the ghost's
+ */
+export function shouldMergeStranded(
+  ghost: { ghlContactId: string | null } | undefined,
+  liveUser: { ghlContactId: string | null } | undefined
+): boolean {
+  if (!ghost) return false;
+  if (!ghost.ghlContactId || ghost.ghlContactId.length === 0) return false;
+  if (!liveUser) return false;
+  if (liveUser.ghlContactId !== ghost.ghlContactId) return false;
+  return true;
+}
+
 async function planRepairsForPerson(
   email: string | undefined,
   contactId: string | undefined,
-  isPreview: boolean
+  isPreview: boolean,
+  presetUserIds?: string[]
 ): Promise<{ steps: PlanStep[]; userIds: string[] }> {
   const db = await getDb();
   if (!db) {
@@ -69,7 +93,12 @@ async function planRepairsForPerson(
     process.exit(2);
   }
 
-  const userIds = await resolveCandidateIdentities({ email, contactId });
+  // presetUserIds is the fleet mode: skip the resolution step and
+  // plan for an explicit list of user ids. Used by `--all` so each
+  // user is examined independently of email/contactId resolution.
+  const userIds = presetUserIds
+    ? presetUserIds
+    : await resolveCandidateIdentities({ email, contactId });
   if (userIds.length === 0) {
     return { steps: [], userIds: [] };
   }
@@ -135,7 +164,9 @@ async function planRepairsForPerson(
   }
 
   // 2. Recover stranded identities — ONLY when shared ghlContactId
-  // proves they are the same person (FR-028).
+  // proves they are the same person (FR-028). Require a NON-EMPTY
+  // ghost contact id: two missing contact ids (null === null) is
+  // not identity proof — it would let unrelated identities merge.
   for (const f of stranded) {
     const ghostUser = await db
       .select()
@@ -151,6 +182,14 @@ async function planRepairsForPerson(
       });
       continue;
     }
+    if (!ghost.ghlContactId || ghost.ghlContactId.length === 0) {
+      steps.push({
+        kind: "recover stranded",
+        detail: `REPORT-ONLY: stranded ${f.userId}/${f.adAccountId} has no ghlContactId on file — cannot prove identity — refusing`,
+        writes: false,
+      });
+      continue;
+    }
     const live = userIds.find(id => id !== f.userId);
     if (!live) {
       steps.push({
@@ -160,13 +199,17 @@ async function planRepairsForPerson(
       });
       continue;
     }
-    // Proof: shared ghlContactId.
+    // Proof: shared ghlContactId. Select the unique live sibling
+    // whose ghlContactId EXACTLY matches the ghost's. We do not use
+    // the first userIds entry because the contact-id match must be
+    // the deciding factor — a random sibling with a different
+    // contact id is NOT a valid merge target.
     const liveUser = await db
       .select()
       .from(authUser)
       .where(eq(authUser.id, live))
       .limit(1);
-    if (liveUser[0]?.ghlContactId !== ghost.ghlContactId) {
+    if (!shouldMergeStranded(ghost, liveUser[0])) {
       steps.push({
         kind: "recover stranded",
         detail: `REPORT-ONLY: stranded ${f.userId}/${f.adAccountId} has no shared ghlContactId with any live identity — refusing`,
@@ -330,13 +373,19 @@ async function main(): Promise<void> {
       process.exit(2);
     }
     const allUsers = await db.select({ id: authUser.id }).from(authUser);
-    const allSteps: PlanStep[] = [];
-    let declinedCount = 0;
-    for (const u of allUsers) {
-      const { steps } = await planRepairsForPerson(undefined, undefined, isPreview);
-      allSteps.push(...steps);
-      declinedCount += steps.filter(s => !s.writes).length;
-    }
+    const allUserIds = allUsers.map((u) => u.id);
+    // Pass the explicit userIds list so planRepairsForPerson plans
+    // for the full fleet ONCE (per user, via the predicates that
+    // accept a userId list). The previous loop re-called the planner
+    // with email=undefined, contactId=undefined, which always
+    // returned the empty set — i.e. --all did nothing.
+    const { steps: allSteps } = await planRepairsForPerson(
+      undefined,
+      undefined,
+      isPreview,
+      allUserIds
+    );
+    const declinedCount = allSteps.filter((s) => !s.writes).length;
     if (json) {
       process.stdout.write(JSON.stringify({ steps: allSteps }, null, 2) + "\n");
     } else {
