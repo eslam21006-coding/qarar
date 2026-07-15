@@ -4,6 +4,8 @@
  * and — with explicit user confirmation in the UI — can pause/resume a
  * campaign, ad set, or ad (the ONLY write operation, via setObjectStatus).
  */
+import { AsyncLocalStorage } from "node:async_hooks";
+import { performance } from "node:perf_hooks";
 import {
   AccountSnapshotPayload,
   Baselines,
@@ -15,6 +17,31 @@ import {
 } from "../shared/qarar";
 
 const GRAPH = "https://graph.facebook.com/v23.0";
+
+// ---------- Refresh instrumentation ----------
+// Per-refresh counters, kept in AsyncLocalStorage so concurrent refreshes from
+// different users never share a counter. Populated only when buildSnapshot runs
+// inside refreshMetrics.run(...); every other caller of graphGet (OAuth, single
+// account lookups) sees an undefined store and pays nothing. Cost when active is
+// a handful of integer adds and one performance.now() pair per Graph round-trip
+// — negligible against the network time it measures, so it ships permanently.
+type RefreshMetrics = {
+  graphCalls: number; // total Graph round-trips (GET pages; excludes async POST/poll)
+  graphRetries: number; // extra attempts spent on transient Meta errors
+  asyncFallbacks: number; // times a sync insights query bounced to the async job path
+  metaMs: number; // summed wall-time spent inside fetch() to Meta (serial sum, not wall-clock)
+};
+
+const refreshMetrics = new AsyncLocalStorage<RefreshMetrics>();
+
+function newRefreshMetrics(): RefreshMetrics {
+  return { graphCalls: 0, graphRetries: 0, asyncFallbacks: 0, metaMs: 0 };
+}
+
+/** True only when the caller explicitly opts in via REFRESH_TIMING=1. */
+function timingVerbose(): boolean {
+  return process.env.REFRESH_TIMING === "1";
+}
 
 export const META_APP_ID = () => process.env.FACEBOOK_APP_ID ?? "";
 export const META_APP_SECRET = () => process.env.FACEBOOK_APP_SECRET ?? "";
@@ -39,11 +66,18 @@ async function graphGet(path: string, params: Record<string, string>): Promise<a
   const qs = new URLSearchParams(params);
   const url = `${GRAPH}${path}?${qs.toString()}`;
   let lastErr: any = null;
+  const m = refreshMetrics.getStore();
   // Up to 3 attempts: Meta returns transient "unknown error" (code 1/2) on heavy queries
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise(r => setTimeout(r, 1500 * attempt));
+    if (m) {
+      m.graphCalls++;
+      if (attempt > 0) m.graphRetries++;
+    }
+    const fetchStart = m ? performance.now() : 0;
     const res = await fetch(url);
     const json: any = await res.json().catch(() => ({}));
+    if (m) m.metaMs += performance.now() - fetchStart;
     if (res.ok && !json.error) return json;
     const err = json.error || {};
     const e: any = new Error(err.message || `Meta API error ${res.status}`);
@@ -280,6 +314,13 @@ async function fetchLevelInsights(
       e.isTransient ||
       /reduce the amount of data|too large|unknown error/i.test(e.message ?? "")
     ) {
+      const m = refreshMetrics.getStore();
+      if (m) m.asyncFallbacks++;
+      if (timingVerbose()) {
+        console.log(
+          `[refresh-timing] async-fallback level=${level} reason="${(e.message ?? "").slice(0, 80)}"`
+        );
+      }
       const { access_token: _t, limit: _l, ...asyncParams } = params;
       rows = await fetchInsightsAsync(token, accountId, asyncParams);
     } else {
@@ -386,67 +427,189 @@ function ageDaysFrom(createdTime: string | undefined | null): number {
  * Build the complete normalized snapshot for an ad account.
  * Windows: 3-day rolling, today, last_7d daily; baselines: 90d median Link CTR,
  * 14d avg CPM, 30d median CPA.
+ *
+ * Note on the ad-level daily call (refresh bottleneck fix):
+ * the verdict path historically asked Meta for the last_30d daily per ad
+ * (875 ads × up-to-30 rows = the 108s slow call, see refresh-bottleneck-
+ * root-cause.txt). Investigation proved that EVERY verdict-feeding rule
+ * (decayMap K4/W2/S1/W1, fatigueSignals F1/F2, watchRules W2, continueRules
+ * S1, weeklyConversions learning gate) reads only the last 7 days of that
+ * series; the other 23 days feed NOTHING but the DecisionTable date-range
+ * selector's 14d/30d/custom chart view. We split the call:
+ *
+ *   hot path (this function)   : last_7d daily per ad — same dates/values
+ *                               as the trailing 7 of a last_30d query.
+ *   lazy path                  : last_30d daily per ad (display only) fetched
+ *                               on-demand by `fetchAdDailyHistory` below.
+ *   presence signal (this fn)  : last_30d AGGREGATE per ad (no time_increment
+ *                               → 1 row per ad, ~30× lighter than the daily
+ *                               30d call) — keeps the relevance filter's
+ *                               membership identical to before.
  */
 export async function buildSnapshot(
   token: string,
   accountId: string,
   currency: string
 ): Promise<AccountSnapshotPayload> {
-  // Meta's native "last N days" preset covers the last 3 fully-elapsed days
+  // Meta's native "last N days" preset covers the last N fully-elapsed days
   // (ending yesterday, evaluated in the ad account's timezone) and excludes
-  // today — matching the sibling `today`/`last_30d` presets below. This is the
-  // window every Kill/Watch/Continue rule judges against (spec 010 FR-001/002).
+  // today — matching the sibling `today` preset below. This is the window
+  // every Kill/Watch/Continue rule judges against (spec 010 FR-001/002).
   const threeDay = { date_preset: "last_3d" };
   const today = { date_preset: "today" };
-  // last 30 days daily — powers both daily7 (engine) and the date-range selector (display)
+  // Verdict path: last 7 days, daily, at ad level (was last_30d — see header).
+  // Picked up by decayMap / fatigueSignals / watchRules / continueRules.
+  const last7daily = { date_preset: "last_7d", time_increment: "1" };
+  // Display path: per-row aggregate of "did this ad deliver in 30d?" — only
+  // used to compute isRelevant() (presence-only, .length > 0). Omitting
+  // time_increment collapses the per-ad response to one row per ad that
+  // delivered anything in the window; dramatically smaller payload than the
+  // historical last_30d time_increment=1 call.
+  const last30aggregate = { date_preset: "last_30d" };
+  // Cheap daily path for campaign and ad-set levels (already 34 + 186 objects;
+  // the daily per-row volume at these levels doesn't dominate refresh time).
   const last30daily = { date_preset: "last_30d", time_increment: "1" };
 
-  const { campaigns, adsets, ads } = await fetchHierarchy(token, accountId);
+  // Instrumentation: establish per-refresh counters for every graphGet spawned
+  // below (enterWith propagates the store across all following awaits without
+  // wrapping the whole body). t0 anchors every phase offset.
+  const metrics = newRefreshMetrics();
+  refreshMetrics.enterWith(metrics);
+  const t0 = performance.now();
+  const phase: Record<string, number> = {};
 
-  // Parallelize the 3 levels × 3 windows = 9 fetchLevelInsights calls. Meta's
-  // own UI does not serialize these, and each call already round-trips
-  // pagination internally; serializing here added 9× the per-call latency
-  // to every refresh. The output maps (w3dMaps/todayMaps/dailyMaps) are
-  // built from the same fetches at the same time, so the resolved values
-  // are byte-for-byte identical to the previous sequential version. If any
-  // one of the 9 calls rejects (rate-limit / transient / auth), Promise.all
-  // surfaces the first rejection — preserving the existing error-mapping in
-  // routers.ts#dashboard.refresh (isRateLimit → RATE_LIMITED, isAuthError →
-  // RECONNECT_REQUIRED, else BAD_GATEWAY).
-  const levels: Array<"campaign" | "adset" | "ad"> = ["campaign", "adset", "ad"];
+  const tHier = performance.now();
+  const { campaigns, adsets, ads } = await fetchHierarchy(token, accountId);
+  phase.fetchHierarchy = Math.round(performance.now() - tHier);
+
+  // Run all per-level calls in parallel. Two facts to lock in:
+  //  (1) campaign + adset levels keep the historical last_30d daily call
+  //      (cheap — 34 + 186 objects; the previous bottleneck was specifically
+  //      the ad-level 30d daily call which was 875 ads × up to 30 rows).
+  //  (2) ad level uses last_7d daily for the verdict path + a cheap
+  //      last_30d AGGREGATE (no time_increment) for the relevance-filter
+  //      presence check. The aggregate's per-ad row is byte-equivalent to
+  //      "did this ad ever deliver in 30d" — the only signal the relevance
+  //      filter needs.
+  // The previous 9-call layout (3 levels × 3 windows) is preserved for
+  // campaign + adset (cheap). For the ad level, the historical daily call
+  // is replaced by a 7d daily call, and a cheap aggregate fills the
+  // presence role previously filled by `dailyMaps.get("ad").get(id).length`.
+  // Net: 9 calls + 1 ad-level cheap presence aggregate = 10 calls, with
+  // the dominant 30d-daily cost at the ad level removed.
   const w3dMaps = new Map<string, Map<string, any[]>>();
   const todayMaps = new Map<string, Map<string, any[]>>();
+  // Per-level daily maps. Campaign & adset still hold the full last_30d
+  // daily series (cheap), and power both `daily7` (engine) and `daily30`
+  // (display) at those levels. At the ad level the map now holds last_7d
+  // daily — engine reads daily7 via toDaily(...) directly with no slice.
   const dailyMaps = new Map<string, Map<string, any[]>>();
-  const windows: ReadonlyArray<{
-    bucket: "w3dMaps" | "todayMaps" | "dailyMaps";
-    params: Record<string, string>;
-  }> = [
-    { bucket: "w3dMaps", params: threeDay },
-    { bucket: "todayMaps", params: today },
-    { bucket: "dailyMaps", params: last30daily },
+  // ad-level presence map (last_30d aggregate, 1 row per ad) — feeds only
+  // the relevance filter (.length > 0). Kept separate from dailyMaps so the
+  // daily maps stay a pure verdict/display artifact.
+  const adPresence30d = new Map<string, boolean>();
+
+  type CallSpec =
+    | { kind: "level"; level: "campaign" | "adset" | "ad"; bucket: "w3dMaps" | "todayMaps" | "dailyMaps"; params: Record<string, string> }
+    | { kind: "adPresence"; params: Record<string, string> };
+  const calls: CallSpec[] = [
+    ...(["campaign", "adset", "ad"] as const).flatMap(level =>
+      (["w3dMaps", "todayMaps", "dailyMaps"] as const).map(bucket => {
+        let params: Record<string, string>;
+        if (bucket === "w3dMaps") params = threeDay;
+        else if (bucket === "todayMaps") params = today;
+        else params = level === "ad" ? last7daily : last30daily;
+        return { kind: "level" as const, level, bucket, params };
+      })
+    ),
+    { kind: "adPresence", params: last30aggregate },
   ];
+
+  // Per-call start-offset + duration proves the calls are genuinely
+  // concurrent. If they were accidentally serialized the start offsets
+  // would climb monotonically instead of all clustering near 0.
+  const tInsights = performance.now();
+  const callTrace: Array<{ label: string; startOffMs: number; durMs: number; rows: number }> = [];
   await Promise.all(
-    levels.flatMap(level =>
-      windows.map(w =>
-        fetchLevelInsights(token, accountId, level, w.params).then(map => {
-          if (w.bucket === "w3dMaps") w3dMaps.set(level, map);
-          else if (w.bucket === "todayMaps") todayMaps.set(level, map);
-          else dailyMaps.set(level, map);
-        })
-      )
-    )
+    calls.map(c => {
+      const startOff = performance.now() - tInsights;
+      const callStart = performance.now();
+      if (c.kind === "level") {
+        return fetchLevelInsights(token, accountId, c.level, c.params).then(map => {
+          if (timingVerbose()) {
+            let rows = 0;
+            for (const arr of Array.from(map.values())) rows += arr.length;
+            callTrace.push({
+              label: `${c.level}/${c.bucket}`,
+              startOffMs: Math.round(startOff),
+              durMs: Math.round(performance.now() - callStart),
+              rows,
+            });
+          }
+          if (c.bucket === "w3dMaps") w3dMaps.set(c.level, map);
+          else if (c.bucket === "todayMaps") todayMaps.set(c.level, map);
+          else dailyMaps.set(c.level, map);
+        });
+      }
+      // c.kind === "adPresence" — ad-level 30d aggregate (1 row per ad).
+      // Built via fetchLevelInsights so it shares the same paging + retry +
+      // async-fallback path; params deliberately omit `time_increment` so
+      // Meta returns one row per ad that delivered anything in the window.
+      return fetchLevelInsights(token, accountId, "ad", c.params).then(map => {
+        if (timingVerbose()) {
+          let rows = 0;
+          for (const arr of Array.from(map.values())) rows += arr.length;
+          callTrace.push({
+            label: "ad/presence30d",
+            startOffMs: Math.round(startOff),
+            durMs: Math.round(performance.now() - callStart),
+            rows,
+          });
+        }
+        for (const id of Array.from(map.keys())) adPresence30d.set(id, true);
+      });
+    })
   );
+  phase.insightsParallel = Math.round(performance.now() - tInsights);
+  if (timingVerbose()) {
+    (phase as Record<string, unknown>).insightsCallTrace = callTrace;
+  }
 
   // Baselines
+  const tBaselines = performance.now();
   const baselines = await fetchBaselines(token, accountId);
+  phase.fetchBaselines = Math.round(performance.now() - tBaselines);
 
   // Relevance filter: keep objects that are currently delivering OR had any
   // delivery in the last 30 days. Mature accounts hold thousands of long-dead
   // paused objects that would drown the decision table in noise.
-  const hadDelivery = (lvl: "campaign" | "adset" | "ad", id: string) =>
-    (dailyMaps.get(lvl)!.get(id)?.length ?? 0) > 0 ||
-    (w3dMaps.get(lvl)!.get(id)?.length ?? 0) > 0 ||
-    (todayMaps.get(lvl)!.get(id)?.length ?? 0) > 0;
+  //
+  // At the ad level the historical implementation read dailyMaps (last_30d
+  // daily) for a presence-only `.length > 0` test — paying for ~875 ads ×
+  // up-to-30 rows of daily values to answer "did this ad ever deliver".
+  // After the refresh-bottleneck fix, the ad-level daily call is last_7d,
+  // so the 30d presence signal now comes from `adPresence30d` (a separate
+  // cheap aggregate call — 1 row per ad that delivered in 30d). This
+  // preserves the EXACT same membership as before: an ad that delivered
+  // 8–30 days ago but is silent in the last 7d still appears in the
+  // decision table.
+  const hadDelivery = (lvl: "campaign" | "adset" | "ad", id: string) => {
+    if (lvl === "ad") {
+      // ad-level uses the cheap 30d aggregate for 30d presence; w3d/today
+      // still cover the last-3-days and today windows.
+      if (adPresence30d.get(id)) return true;
+      if ((w3dMaps.get(lvl)!.get(id)?.length ?? 0) > 0) return true;
+      if ((todayMaps.get(lvl)!.get(id)?.length ?? 0) > 0) return true;
+      return false;
+    }
+    // campaign + adset still have last_30d daily in dailyMaps; the original
+    // semantics apply unchanged.
+    return (
+      (dailyMaps.get(lvl)!.get(id)?.length ?? 0) > 0 ||
+      (w3dMaps.get(lvl)!.get(id)?.length ?? 0) > 0 ||
+      (todayMaps.get(lvl)!.get(id)?.length ?? 0) > 0
+    );
+  };
   const isRelevant = (lvl: "campaign" | "adset" | "ad", o: any) =>
     o.effective_status === "ACTIVE" || hadDelivery(lvl, o.id);
 
@@ -532,8 +695,20 @@ export async function buildSnapshot(
       ageDays: ageDaysFrom(a.created_time),
       w3d: parseInsightsRow(firstRow(w3dMaps.get("ad")!.get(a.id))),
       today: parseInsightsRow(firstRow(todayMaps.get("ad")!.get(a.id))),
-      daily7: last7(toDaily(dailyMaps.get("ad")!.get(a.id))),
-      daily30: toDaily(dailyMaps.get("ad")!.get(a.id)),
+      // Verdict path: the ad-level daily call is now last_7d (was last_30d).
+      // The verdict rulebook only ever reads ad.daily7 here; last7(...) of a
+      // last_30d series and toDaily(...) of a last_7d series produce the SAME
+      // rows + values for the same dates (engine tests in
+      // server/daily7Slice.test.ts prove the byte-identity).
+      daily7: toDaily(dailyMaps.get("ad")!.get(a.id)),
+      // Display path: only the campaign/adset levels still hold a daily30
+      // series on the snapshot. Ad-level `daily30` is now populated lazily
+      // via routers.ts#dashboard.adDailyHistory when the user picks a
+      // 14d/30d/custom range in the date-range selector (DecisionTable.tsx).
+      // Empty here keeps the per-row aggregate logic in clients/routers.ts
+      // working — it already falls back to `o.daily7` (or sums children)
+      // when `daily30` is short or missing.
+      daily30: [],
       spendSharePct: null,
       thumbnailUrl: a.creative?.image_url || a.creative?.thumbnail_url || null,
       effectiveStatus: a.effective_status ?? null,
@@ -549,6 +724,7 @@ export async function buildSnapshot(
   // current date (intentional error path per spec note U1 — not an FR-012
   // violation, which governs the normal path).
   let asOfDate: string;
+  const tTz = performance.now();
   try {
     const acct = await graphGet(`/${accountId}`, {
       fields: "timezone_name",
@@ -561,6 +737,32 @@ export async function buildSnapshot(
   } catch {
     asOfDate = new Intl.DateTimeFormat("en-CA").format(new Date());
   }
+  phase.accountTimezone = Math.round(performance.now() - tTz);
+
+  // Instrumentation summary. One structured line per refresh — cheap enough to
+  // leave on permanently (it measures phases that each take seconds). Note this
+  // covers Meta-fetch + CPU only; it stops before the DB write, which happens in
+  // routers.ts#dashboard.refresh (saveSnapshot) outside buildSnapshot's scope.
+  phase.buildSnapshotTotal = Math.round(performance.now() - t0);
+  const summary: Record<string, unknown> = {
+    accountId,
+    counts: {
+      campaigns: campaigns.length,
+      adsets: adsets.length,
+      ads: ads.length,
+      keptObjects: objects.length,
+    },
+    phaseMs: phase,
+    metaRoundTrips: metrics.graphCalls,
+    metaRetries: metrics.graphRetries,
+    asyncFallbacks: metrics.asyncFallbacks,
+    // Serial sum of time inside fetch() to Meta. metaMs > buildSnapshotTotal
+    // means concurrency is helping (work overlapped); metaMs ≈ total means the
+    // fetches ran serially. The gap is what Promise.all bought us.
+    metaMsSerialSum: Math.round(metrics.metaMs),
+  };
+  if (timingVerbose()) summary.insightsCallTrace = callTrace;
+  console.log(`[refresh-timing] ${JSON.stringify(summary)}`);
 
   return {
     accountId,
@@ -571,6 +773,52 @@ export async function buildSnapshot(
     baselines,
     attributionStraddle: daysAgo(90) < ATTRIBUTION_CHANGE_DATE,
   };
+}
+
+/**
+ * Lazy 30-day ad-level daily history for the DecisionTable date-range chart.
+ * Returns the FULL ad-level daily series for the requested window (default
+ * 30d, supports 14d). Per-row it is the same shape the historical buildSnapshot
+ * populated `ad.daily30` with; consumed by the display-only `aggregate()`
+ * helper in DecisionTable.tsx when the user selects 14d/30d/custom.
+ *
+ * Refresh-bottleneck rationale: previously this data was pulled on every
+ * refresh — the dominant 108s call on a real 875-ad account. It feeds no
+ * verdict rule (only the date-range chart), so it now lives behind this
+ * separate, on-demand fetch. Per-call timed via the AsyncLocalStorage counter
+ * — every graphGet round-trip increments `metrics.graphCalls`. Concurrent
+ * calls (refresh ticking while user opens a 30d chip) are safe; the metric
+ * store is per-request via enterWith().
+ */
+export async function fetchAdDailyHistory(
+  token: string,
+  accountId: string,
+  days: 14 | 30 = 30
+): Promise<DailyMetrics[]> {
+  // Lazy fetch — opt into the same instrumentation store that buildSnapshot
+  // uses, so [refresh-timing] counters still credit every round-trip. If we
+  // are called outside a previously-entered store (e.g. the standalone
+  // measure-refresh-timing harness), establish a fresh one in this async
+  // context so counters still increment.
+  if (!refreshMetrics.getStore()) {
+    refreshMetrics.enterWith(newRefreshMetrics());
+  }
+  const preset = days === 14 ? "last_14d" : "last_30d";
+  const map = await fetchLevelInsights(token, accountId, "ad", {
+    date_preset: preset,
+    time_increment: "1",
+  });
+  // Flatten the per-ad daily rows into one date-sorted series for the UI.
+  // The DecisionTable date-range aggregator sums these per-day, so we hand
+  // it the raw rows it expects (an array of DailyMetrics, with `date`).
+  const all: DailyMetrics[] = [];
+  for (const rows of Array.from(map.values())) {
+    for (const r of rows) {
+      all.push({ ...parseInsightsRow(r), date: r.date_start as string });
+    }
+  }
+  all.sort((a, b) => a.date.localeCompare(b.date));
+  return all;
 }
 
 /** Spend share within ad set — required for rule K5 (computed client-side per spec A3.6). */

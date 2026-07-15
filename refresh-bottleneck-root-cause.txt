@@ -1,0 +1,218 @@
+================================================================================
+REFRESH BOTTLENECK — ROOT CAUSE / CONSUMER TRACE
+Branch: fix/refresh-actual-bottleneck
+Date: 2026-07-15
+Account: wearefforce (act_1163959057640939) — 34 campaigns / 186 ad sets / 875 ads
+Measured: buildSnapshot ≈ 129s total; 108s (84%) = ONE call:
+          fetchLevelInsights(level="ad", {date_preset:"last_30d", time_increment:"1"})
+          i.e. dailyMaps at the "ad" level. The other 8 of 9 parallel calls: <4s each.
+Scope: INVESTIGATION ONLY. No fix implemented. Options + tradeoffs at the end.
+================================================================================
+
+--------------------------------------------------------------------------------
+0. BOTTOM LINE
+--------------------------------------------------------------------------------
+The slow call fetches TWO different things that get conflated onto every ad:
+    ad.daily7   = last 7 days of the series   (meta.ts:605 via last7(), :513)
+    ad.daily30  = all 30 days of the series   (meta.ts:606)
+
+They have DIFFERENT consumers with DIFFERENT needs:
+
+  • ad.daily7  → ENGINE VERDICTS. Genuinely needs PER-AD daily granularity, but
+                 only the last ~7 days. Must be fresh every refresh.
+  • ad.daily30 → DISPLAY date-range selector ONLY (7d/14d/30d/custom chips).
+                 No verdict depends on it. Tolerates staleness / lazy loading.
+                 Days 8–30 are fetched on every refresh but feed nothing but a
+                 chart the user may never open.
+
+So the 30-day window is the wrong question to ask on the verdict-critical path.
+The verdict path needs `last_7d` at ad level (≈4× less data). The extra 23 days
+exist solely for a display feature that does not need to be fresh and is not
+even on screen unless the user picks a ≥7-day range.
+
+  → Evidence says option (b) is the real fix: split the ad-level daily fetch so
+    the verdict path pulls only last_7d fresh, and the 30-day display history is
+    fetched lazily / on a longer cache cycle. Option (a) — dropping ad-level
+    granularity to ad-set level — is NOT viable for verdicts (proof in §3), and
+    option (c) — keep as-is — is contradicted by the fact that 84% of the wait
+    buys data that no verdict reads. Full tradeoffs in §6.
+
+--------------------------------------------------------------------------------
+1. WHAT THE SLOW CALL PRODUCES, AND HOW IT'S STORED
+--------------------------------------------------------------------------------
+fetchLevelInsights("ad", last30daily) → dailyMaps.set("ad", map)   meta.ts:490-501
+For each kept ad (meta.ts:593-606):
+    daily7:  last7(toDaily(dailyMaps.get("ad").get(a.id)))   ← last 7 elements
+    daily30: toDaily(dailyMaps.get("ad").get(a.id))          ← all 30 elements
+`toDaily` just parses+sorts rows by date (meta.ts:508-511); `last7` is .slice(-7)
+(meta.ts:513). So daily7 is a strict suffix of daily30 — fetching last_7d instead
+of last_30d would yield the IDENTICAL daily7, and a 7-long daily30.
+
+The same three-window trio is also fetched at campaign and ad-set level, but
+those are cheap (34 and 186 objects). ONLY the ad-level 30-day-daily call is slow,
+because it is 875 ads × up-to-30 days = thousands of rows / ~578 KB (measured).
+
+--------------------------------------------------------------------------------
+2. COMPLETE CONSUMER INVENTORY of the ad-level daily data (grep-traced, not guessed)
+--------------------------------------------------------------------------------
+
+CONSUMER 1 — ENGINE VERDICT RULES  (server/engine.ts)   [via ad.daily7 only]
+  Reached through evaluateAd (engine.ts:826-877):
+    a) decayMap(ad, baselines)            engine.ts:361-410   rules K4 / W2 / S1 / W1
+       - guard: ad.ageDays ≤ 4 AND ad.daily7.length ≥ 3        (:362)
+       - days = ad.daily7.filter(impressions>100)              (:364)
+       - compares day1.ctrLink vs last.ctrLink WITHIN ONE AD   (:367-371)
+       → REQUIRES per-ad daily granularity. Cannot be served by ad-set level.
+    b) fatigueSignals(ad, baselines)      engine.ts:416-458   rules F1 / F2
+       - guard: ad.ageDays > 4 AND ad.daily7.length ≥ 4        (:417)
+       - first-3-days CTR peak vs recent, per ad               (:423-434)
+       → REQUIRES per-ad daily granularity.
+    c) watchRules W2  o.daily7            engine.ts:486-506   (runs on ad @:873 and adset @:899)
+       - "single bad day after 2–3 good days": last day vs prior 3 (:489-496)
+    d) continueRules S1  o.daily7         engine.ts:585-590   (runs on ad @:877 and adset @:903)
+       - "3 consecutive rolling days at/under target"          (:586-589)
+    e) weeklyConversions(o)               engine.ts:1073-1074  (learning-phase gate in continueRules)
+       - sums o.daily7 conversions; FALLS BACK to w3d.conversions*2.33 if empty (:1073)
+  SPAN NEEDED: last 7 days (daily7). Rules read at most days.slice(0,3) and the
+               last element — never day 8+.
+  FRESHNESS: VERDICT-CRITICAL. Must be fresh on every refresh.
+  GRANULARITY: (a) and (b) are ad-level and intrinsically per-ad. (c)(d)(e) run
+               per-object — for ADS they need the ad-level daily; for AD SETS
+               they use the ad-set daily call (the fast one).
+
+CONSUMER 2 — DISPLAY DATE-RANGE SELECTOR  (client)   [via daily30, full 30 days]
+  Server builds the series:  routers.ts dashboard.get, dailyOf()  routers.ts:461-505
+    series[i].daily30 = own daily30, or (for campaign/adset) sum of children.
+  Client aggregation:  DecisionTable.tsx aggregate()  DecisionTable.tsx:125-156
+    - loops `for (const d of s.daily30)` summing spend/imps/conv/... within the
+      chosen [since,until]                                     (:145-156)
+    - Range chips: RangeKey = today | 3d | 7d | 14d | 30d | custom  (:73)
+        today → aggFromWindow(s.today)  (does NOT touch daily30)  (:133)
+        3d    → falls back to w3d if daily30 empty               (:136)
+        7d / 14d / 30d / custom → REQUIRE daily30                (:137-156)
+    - Applied to EVERY row incl. ads (rangeMetrics, DecisionTable.tsx:435)
+  FRESHNESS: DISPLAY ONLY. No engine rule reads daily30. Safe to be stale/lazy.
+  GRANULARITY: per-ad, but only because ad rows show their own range totals.
+
+CONSUMER 3 — RELEVANCE FILTER  (server/meta.ts hadDelivery)   [presence only]
+  hadDelivery(lvl,id)  meta.ts:487-490  →  isRelevant  :491-492
+    keeps an object if effective_status==="ACTIVE" OR it has ANY row in
+    dailyMaps / w3dMaps / todayMaps for that id.
+  SPAN NEEDED: 30-day PRESENCE (did this ad deliver at all in 30d) — the VALUES
+               are not read here, only `.length > 0`.
+  FRESHNESS: every refresh (decides which rows appear in the table).
+  NOTE: this is the one place the 30-day *window* (not the daily granularity)
+        earns its keep — see the behavior-change caveat in §7.
+
+NON-CONSUMERS (verified):
+  • evaluateCampaign (engine.ts:757-820): reads o.w3d only — no daily.
+  • circuitBreaker CB1/CB2 (engine.ts:151-171): adset-level, reads o.today only.
+  • Kill rules K1/K2/K3/K5, today-kills, W3/W4/W5/W6, S2/S3/S4: read w3d/today.
+  • server/demo.ts: hardcoded demo arrays, not a Meta fetch.
+  • *.test.ts: fixtures only.
+
+--------------------------------------------------------------------------------
+3. CAN THE GRANULARITY DROP TO AD-SET LEVEL?  (task Q2)  → NO for verdicts.
+--------------------------------------------------------------------------------
+decayMap (K4) and fatigueSignals (F1/F2) compare a single ad's own day-1 CTR to
+its recent CTR (engine.ts:367-371, :423-434). That day-over-day trend of ONE
+creative is exactly what an ad-set-level daily row cannot represent — an ad set
+aggregates many ads, so its daily CTR trend is not any individual ad's trend.
+These rules produce KILL and WATCH verdicts (K4, F1, F2). Therefore:
+    Dropping ad-level daily to ad-set level would silently disable K4/F1/F2 and
+    the ad-level W2/S1 refinements. That changes verdicts → not acceptable for
+    the fresh path.
+The granularity is genuinely required — but ONLY for CONSUMER 1, and ONLY for 7
+days. It is NOT required for CONSUMER 2 (display), where ad-set-level daily would
+render a perfectly good chart (the tradeoff there is a UX one, see §6-a).
+
+--------------------------------------------------------------------------------
+4. DOES IT NEED TO BE FRESH EVERY REFRESH?  (task Q3)  → only the 7-day slice.
+--------------------------------------------------------------------------------
+  Fresh-critical:  ad.daily7 (last 7 days)         → CONSUMER 1 (verdicts)
+  Not fresh-critical: ad.daily30 days 8–30         → CONSUMER 2 (a chart)
+The 23 "extra" days are fetched on every single refresh but are read by nothing
+except a date-range chart the user opens on demand. That is the definition of
+work that can move off the hot path (lazy on chip-select, or a slower cache).
+
+--------------------------------------------------------------------------------
+5. WHICH OF THE 9 CALLS EACH VERDICT DEPENDS ON  (task Q4, precise)
+--------------------------------------------------------------------------------
+9 calls = {campaign, adset, ad} × {w3d=last_3d, today, daily=last_30d+1}.
+
+  Verdict rule / gate         Reads                     Call(s) it needs
+  --------------------------  ------------------------  --------------------------
+  GATE (campaign too-early)   campaign w3d              campaign×w3d
+  CB1 / CB2 (circuit breaker) adset today               adset×today
+  K1/K2/K3 (kill parity)      w3d                       (level)×w3d
+  today-kills (:153-166)      today                     (level)×today
+  K5 (spend share)            w3d                       ad×w3d + adset×w3d
+  W1/W3/W4/W5/W6              w3d                       (level)×w3d
+  S2/S3/S4                    w3d                       (level)×w3d
+  K4 + W2/S1/W1 (decayMap)    AD daily7 (≤7 days)       ad×daily   ← THE SLOW CALL
+  F1 / F2 (fatigueSignals)    AD daily7 (≤7 days)       ad×daily   ← THE SLOW CALL
+  W2 / S1 on ad sets          ADSET daily7              adset×daily (fast)
+  learning gate (weeklyConv)  daily7 (w3d fallback)     (level)×daily, degrades ok
+
+CONCLUSION: The verdict engine touches the SLOW call (ad×daily) through EXACTLY
+two code paths — decayMap and fatigueSignals — and both read only daily7. Every
+other verdict is satisfied by w3d/today (8 of the 9 calls, all <4s) or by the
+cheap campaign/adset daily calls. Nothing verdict-related reads ad daily days 8–30.
+
+--------------------------------------------------------------------------------
+6. OPTIONS & TRADEOFFS  (recommendation, not yet a decision)
+--------------------------------------------------------------------------------
+(a) Drop ad-level daily granularity to ad-set level (same 30-day range)
+    - PRO: 186 vs 875 objects → big cut; trivially small code change.
+    - CON: BREAKS K4/F1/F2 and the ad-level W2/S1 (see §3) — they need per-ad
+      day-over-day trends. This silently changes verdicts. On the display side it
+      also means ad rows can no longer show their own date-range totals.
+    - VERDICT: not acceptable for the verdict path. Only defensible for the chart.
+
+(b) Keep ad-level granularity but split fresh vs. lazy  ★ RECOMMENDED DIRECTION
+    Fresh path (every refresh):  fetch ad×daily as last_7d instead of last_30d.
+        · Produces byte-identical daily7 (it's .slice(-7), §1) → verdicts unchanged.
+        · ~4× fewer ad-day rows on the one call that is 84% of the wait.
+    Display path (days 8–30):  fetch ad×last_30d daily LAZILY (only when the user
+        selects a 14d/30d/custom>7d chip) or on a longer background cache cycle,
+        separate from the verdict-critical refresh.
+    - PRO: verdicts stay exactly correct AND fresh; the hot path stops paying for
+      display-only history; matches how the data is actually consumed.
+    - CON: more moving parts (a second, lazy fetch + a place to cache it); the
+      first time a user opens a long range they wait for that fetch; must handle
+      the relevance-filter window change (§7).
+    - Expected impact: the dominant 108s call shrinks toward the size of the other
+      ad-level calls; RE-RUN the §8 harness from the previous investigation to
+      confirm the real number rather than trusting this estimate.
+
+(c) Keep as-is
+    - Only justified if the 30-day per-ad daily were verdict-critical and needed
+      fresh. Investigation shows it is NOT: 84% of the wait feeds a display chart
+      that no verdict reads and the user may never open. So (c) is contradicted by
+      the evidence.
+
+--------------------------------------------------------------------------------
+7. BEHAVIOR-CHANGE CAVEATS the fix must handle (flagged, not solved)
+--------------------------------------------------------------------------------
+  1. RELEVANCE FILTER (Consumer 3): if the fresh ad call becomes last_7d, then
+     hadDelivery's ad-level presence net shrinks from 30 days to 7. An ad that
+     delivered 8–30 days ago but is now paused/idle would drop off the table
+     (unless ACTIVE). Fix options: (i) accept it — a non-active ad with no
+     delivery in 7 days is arguably not actionable; or (ii) keep a CHEAP ad-level
+     last_30d AGGREGATE call (no time_increment → 1 row per ad, tiny) purely for
+     presence. This preserves today's membership at a fraction of the cost.
+  2. DISPLAY LAZY-LOAD: the date-range chips currently assume daily30 is already
+     present in the snapshot (DecisionTable.tsx:137-156, with a 3d→w3d fallback
+     only). A lazy design needs a loading state for ad rows on ≥14d ranges, or a
+     graceful "aggregate not yet loaded" fallback.
+  3. daily7 vs a 7-day fetch edge: rules require ≥3/≥4 daily rows (engine.ts:362,
+     :417). last_7d yields up to 7 — sufficient. No rule reads beyond the last 7.
+
+================================================================================
+SUMMARY: The 108s call answers a 30-day question on the verdict-critical path,
+but verdicts only read the last 7 days of it (decayMap + fatigueSignals), and the
+other 23 days feed a display-only date-range chart. Recommended direction is (b):
+last_7d fresh for verdicts + lazy/cached 30-day history for the chart, with the
+relevance-filter window handled by a cheap presence call. Re-run the instrumented
+harness after any change to confirm the measured delta.
+================================================================================

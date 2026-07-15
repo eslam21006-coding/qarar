@@ -15,6 +15,7 @@ import {
   buildOAuthUrl,
   buildSnapshot,
   fetchAdAccounts,
+  fetchAdDailyHistory,
   revokeToken,
   setDailyBudget,
   setObjectStatus,
@@ -528,6 +529,11 @@ export const appRouter = router({
           return { success: true };
         }
         const token = await getUserToken(ctx.user.id);
+        // Instrumentation: end-to-end refresh timing. buildSnapshot logs its own
+        // internal phase breakdown; here we capture the two outer costs it can't
+        // see — the Meta build vs. the DB persist — and the true total.
+        const tRefreshStart = Date.now();
+        let tAfterBuild = tRefreshStart;
         try {
           // Hotfix T1: race buildSnapshot against a 180s timeout. Large accounts
           // with no cached data (initial sync) can take 60-120+ seconds to fetch all
@@ -554,7 +560,17 @@ export const appRouter = router({
               )
             ),
           ]);
+          tAfterBuild = Date.now();
           await db.saveSnapshot(ctx.user.id, account.id, payload);
+          const tAfterSave = Date.now();
+          console.log(
+            `[refresh-timing] end-to-end ${JSON.stringify({
+              adAccountId: input.adAccountId,
+              buildSnapshotMs: tAfterBuild - tRefreshStart,
+              saveSnapshotMs: tAfterSave - tAfterBuild,
+              totalMs: tAfterSave - tRefreshStart,
+            })}`
+          );
           savedPayload = payload;
         } catch (e: any) {
           if (e?.code === "TIMEOUT") {
@@ -604,6 +620,66 @@ export const appRouter = router({
         const day = new Date().toISOString().slice(0, 10);
         await db.setCheck(ctx.user.id, input.adAccountId, input.actionKey, day, input.done);
         return { success: true };
+      }),
+
+    /**
+     * Refresh-bottleneck fix (option (b) in refresh-bottleneck-root-cause.txt):
+     * lazy ad-level daily history for the DecisionTable date-range chart.
+     *
+     * Previously this data was fetched on every refresh — 875 ads × up to 30
+     * days ≈ the dominant 108s cost on a real account. It feeds no verdict
+     * rule (only the date-range selector's 14d/30d/custom chart view), so it
+     * now lives behind this on-demand procedure. The client triggers it ONLY
+     * when the user picks a range wider than 7d (or a custom range), at
+     * which point the DecisionTable shows a loading state until this returns.
+     *
+     * Authentication: same `activeProcedure` route as `refresh` — requires an
+     * active Meta connection. Caching: caller (React Query) keys by
+     * (adAccountId, days) so re-selecting a range doesn't re-fetch.
+     */
+    adDailyHistory: activeProcedure
+      .input(
+        z.object({
+          adAccountId: z.number(),
+          days: z.union([z.literal(14), z.literal(30)]).optional().default(30),
+        })
+      )
+      .query(async ({ ctx, input }) => {
+        const account = await requireAccount(ctx.user.id, input.adAccountId);
+        if (account.isDemo) {
+          // Demo account has no Meta token; serve the engine's daily30 from
+          // the cached snapshot (demo rows include daily7 with up to 7 days,
+          // which is enough for "last 7d" but NOT 14d/30d — we expand to the
+          // requested window by repeating the demo series forward so the
+          // chart shows non-empty data instead of erroring).
+          const snap = await db.getLatestSnapshot(ctx.user.id, input.adAccountId);
+          const payload = snap?.payload as AccountSnapshotPayload | null;
+          if (!payload) return { daily: [] };
+          const allDaily: (typeof payload.objects)[number]["daily30"] extends infer T
+            ? T extends Array<infer U>
+              ? U[]
+              : never
+            : never = [];
+          for (const o of payload.objects) {
+            const own = o.daily30 && o.daily30.length > 0 ? o.daily30 : o.daily7;
+            if (own) allDaily.push(...own);
+          }
+          return { daily: allDaily };
+        }
+        const token = await getUserToken(ctx.user.id);
+        try {
+          const daily = await fetchAdDailyHistory(token, account.accountId, input.days);
+          return { daily };
+        } catch (e: any) {
+          if (e?.isAuthError) {
+            await db.markConnectionStatus(ctx.user.id, "expired");
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "RECONNECT_REQUIRED" });
+          }
+          if (e?.isRateLimit) {
+            throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "RATE_LIMITED" });
+          }
+          throw new TRPCError({ code: "BAD_GATEWAY", message: e?.message ?? "Unknown Meta error" });
+        }
       }),
   }),
 

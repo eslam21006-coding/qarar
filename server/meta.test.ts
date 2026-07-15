@@ -68,7 +68,7 @@ function levelInsightCalls(calls: InsightCall[]): InsightCall[] {
 describe("buildSnapshot — engine 3-day window (US1, contract C1.1/C1.4)", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("requests the w3d window with date_preset=last_3d and no time_range", async () => {
+  it("requests the w3d window with date_preset=last_3d and no time_increment", async () => {
     const calls = await captureInsightCalls();
     const level = levelInsightCalls(calls);
 
@@ -83,18 +83,50 @@ describe("buildSnapshot — engine 3-day window (US1, contract C1.1/C1.4)", () =
     }
   });
 
-  it("leaves the today and last_30d daily windows unchanged (C1.4)", async () => {
+  // C1.4 + refresh-bottleneck fix: today + per-level daily windows. After
+  // the fix the per-level daily shape becomes:
+  //   - campaign : last_30d, time_increment=1 (unchanged — 34 objs)
+  //   - adset   : last_30d, time_increment=1 (unchanged — 186 objs)
+  //   - ad      : last_7d, time_increment=1 (was last_30d; verdict rules
+  //               only read 7d, the other 23 days fed only the display
+  //               date-range chart, now lazy-loaded via
+  //               dashboard.adDailyHistory).
+  // Plus a cheap ad-level 30d AGGREGATE (no time_increment → 1 row per ad)
+  // that preserves the relevance filter's 30d membership.
+  it("today unchanged (3 calls) + ad-level daily is last_7d (the bottleneck split) + cheap 30d presence", async () => {
     const calls = await captureInsightCalls();
     const level = levelInsightCalls(calls);
 
+    // today's window is unchanged across the split
     const today = level.filter(c => c.params.date_preset === "today");
     expect(today.length).toBe(3);
     for (const c of today) expect(c.params.time_range).toBeUndefined();
 
-    const daily = level.filter(
+    // per-level daily: campaign + adset still last_30d daily; ad is now
+    // last_7d (verdict-only).
+    const dailyLong = level.filter(
       c => c.params.date_preset === "last_30d" && c.params.time_increment === "1"
     );
-    expect(daily.length).toBe(3);
+    expect(dailyLong.length).toBe(2);
+    expect(dailyLong.map(c => c.params.level).sort()).toEqual(["adset", "campaign"]);
+
+    const dailyAd = level.filter(
+      c =>
+        c.params.date_preset === "last_7d" &&
+        c.params.time_increment === "1" &&
+        c.params.level === "ad"
+    );
+    expect(dailyAd.length).toBe(1);
+
+    // Cheap ad-level 30d aggregate (no time_increment) for the relevance
+    // filter's "did this ad ever deliver in 30d" presence check.
+    const presence = calls.filter(
+      c =>
+        c.params.level === "ad" &&
+        c.params.date_preset === "last_30d" &&
+        c.params.time_increment === undefined
+    );
+    expect(presence.length).toBe(1);
   });
 
   it("sends no hand-computed time_range on any per-level insights call", async () => {

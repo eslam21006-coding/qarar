@@ -127,13 +127,24 @@ export function aggregate(
   range: RangeKey,
   from: string,
   to: string,
-  asOfDate: string
+  asOfDate: string,
+  /**
+   * Refresh-bottleneck fix: optional override for `s.daily30` when the
+   * DecisionTable has fired the lazy 30-day ad-level fetch
+   * (dashboard.adDailyHistory). At the ad level, `s.daily30` is intentionally
+   * empty in the cached snapshot (the verdict path is `last_7d` only), so the
+   * caller threads the lazy series through here for the 14d/30d/custom view.
+   * Pass `null` (or omit) when the lazy data has not yet resolved — the caller
+   * is then expected to render a loading state instead of zero/garbage.
+   */
+  lazyDaily: DailyMetrics[] | null = null
 ): FilterAgg | null {
   if (!s) return null;
   if (range === "today") return aggFromWindow(s.today);
   // if the daily series is missing entirely, fall back to the engine's 3-day
   // window (which now itself excludes today — server date_preset:"last_3d")
-  if (range === "3d" && s.daily30.length === 0) return aggFromWindow(s.w3d);
+  const dailyForAgg = lazyDaily && lazyDaily.length > 0 ? lazyDaily : s.daily30;
+  if (range === "3d" && dailyForAgg.length === 0) return aggFromWindow(s.w3d);
   const days = range === "3d" ? 3 : range === "7d" ? 7 : range === "14d" ? 14 : 30;
   // Preset chips: window ends YESTERDAY (account-tz asOfDate − 1), never today
   // (spec 010 FR-004). custom keeps the user-picked from/to.
@@ -142,7 +153,7 @@ export function aggregate(
   const until = range === "custom" ? to : preset!.until;
   if (!since || !until) return null;
   let spend = 0, imps = 0, clicks = 0, linkClicks = 0, conv = 0, lp = 0, v3 = 0, tp = 0, value = 0;
-  for (const d of s.daily30) {
+  for (const d of dailyForAgg) {
     if (d.date < since || d.date > until) continue;
     spend += d.spend;
     imps += d.impressions;
@@ -426,15 +437,46 @@ export function DecisionTable({
     [rows]
   );
 
+  // Lazy 14d/30d/custom ad-level daily history (refresh-bottleneck fix). The
+  // cached snapshot no longer carries ad.daily30 — the verdict path is
+  // `last_7d` only, and we pay no extra Meta round-trips until a user picks
+  // a wider range. Only ENABLED for ranges wider than 7d to avoid hitting
+  // Meta on every table mount / range switch.
+  const needsLazyHistory = range === "14d" || range === "30d" || range === "custom";
+  // For "custom" we always pass days=30 (the lazy endpoint answers either
+  // 14 or 30 — a custom range longer than 30d is out of scope and will
+  // simply render against the available 30d slice).
+  const lazyDays: 14 | 30 = range === "14d" ? 14 : 30;
+  const lazyHistory = trpc.dashboard.adDailyHistory.useQuery(
+    { adAccountId: accountId, days: lazyDays },
+    { enabled: needsLazyHistory && accountId > 0, retry: false, staleTime: 60_000 }
+  );
+  // Surface a loader copy whenever the lazy fetch is running. We tolerate
+  // an empty `daily` result (e.g. the new account has no rows yet) without
+  // showing the spinner — that's a server-side empty, not a "loading" state.
+  const showLazyLoading =
+    needsLazyHistory && (lazyHistory.isLoading || (!lazyHistory.data && !lazyHistory.error));
+  // If the lazy call errored, surface a small warning; otherwise swallow it
+  // (the aggregate() function falls back to its 3-day window on empty data
+  // and the table stays usable — better than blocking the UI).
+  const lazyError = needsLazyHistory && lazyHistory.error
+    ? lazyHistory.error.message
+    : null;
+
   // aggregate metrics per row for the selected range (all rows, for filter support)
   const aggs = useMemo(() => {
     // Anchor preset chips to the account-tz "today"; fall back to the browser
     // date only for snapshots cached before asOfDate existed (spec 010, R4).
     const asOf = asOfDate ?? dateStr(0);
+    const lazyDaily = lazyHistory.data?.daily ?? null;
+    // While loading, pass null so aggregate() does not silently render zero
+    // totals against the empty `s.daily30` (refresh-bottleneck fix load state).
     const m = new Map<string, FilterAgg | null>();
-    for (const r of rows) m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to, asOf));
+    for (const r of rows) {
+      m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to, asOf, lazyDaily));
+    }
     return m;
-  }, [rows, seriesMap, range, from, to, asOfDate]);
+  }, [rows, seriesMap, range, from, to, asOfDate, lazyHistory.data]);
 
   // visible rows — when searching/filtering, search across ALL levels
   const hasFilters = filterRules.length > 0;
@@ -941,10 +983,40 @@ export function DecisionTable({
         )}
 
         {range !== "3d" && (
-          <p className="text-[11px] text-muted-foreground">
-            ℹ️ الأرقام معروضة لفترة «{RANGE_LABELS[range]}» — لكن <b>الحكم</b> محسوب دائمًا حسب
-            قواعد التقييم (آخر 3 أيام + اليوم) ولا يتأثر بالفترة المختارة.
-          </p>
+          <div className="space-y-1.5">
+            <p className="text-[11px] text-muted-foreground">
+              ℹ️ الأرقام معروضة لفترة «{RANGE_LABELS[range]}» — لكن <b>الحكم</b> محسوب دائمًا حسب
+              قواعد التقييم (آخر 3 أيام + اليوم) ولا يتأثر بالفترة المختارة.
+            </p>
+            {/*
+              Refresh-bottleneck fix: ad-level daily history wider than 7 days
+              is now lazy-loaded on demand (routers.ts#dashboard.adDailyHistory).
+              Without a loading state the cells would briefly show zeros / the
+              w3d fallback, which misleads the user. We surface a tiny inline
+              loader while the call is in flight and an error note if it
+              fails. Crisp Arabic copy, consistent with the rest of the app.
+            */}
+            {showLazyLoading && (
+              <p
+                className="flex items-center gap-1.5 text-[11px] text-primary"
+                role="status"
+                aria-live="polite"
+                data-testid="lazy_history_loading"
+              >
+                <Loader2 className="h-3 w-3 animate-spin" />
+                جاري تحميل بيانات الـ {RANGE_LABELS[range]}…
+              </p>
+            )}
+            {lazyError && (
+              <p
+                className="text-[11px] text-v-watch"
+                role="alert"
+                data-testid="lazy_history_error"
+              >
+                تعذّر تحميل بيانات الفترة — يتم عرض آخر 3 أيام كبديل ({lazyError}).
+              </p>
+            )}
+          </div>
         )}
       </CardHeader>
 

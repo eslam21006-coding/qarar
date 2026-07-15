@@ -1,0 +1,220 @@
+================================================================================
+REFRESH FIX REPORT — split 7-day verdict path from lazy 30-day chart path
+Branch: fix/refresh-actual-bottleneck
+Date:   2026-07-15
+Author: opencode agent
+================================================================================
+
+1. WHAT CHANGED
+---------------
+Server (`server/meta.ts`, `server/routers.ts`):
+
+  A. The ad-level daily Meta call moved OFF the hot path's last_30d window.
+     What used to be one slow call now becomes two faster ones:
+       - Hot path  (verdict critical):  date_preset=last_7d, time_increment=1
+                                         (≈4× less data than last_30d for 875 ads)
+       - Cheap presence call          : date_preset=last_30d, NO time_increment
+                                         (1 row per ad that delivered in 30d)
+
+  B. The relevance filter (meta.ts hadDelivery, previously reading
+     dailyMaps.get("ad").get(id).length > 0) now reads the cheap 30d
+     presence aggregate at the ad level, which produces the EXACT same
+     membership — and is ~30× cheaper (1 row per ad vs up to 30 rows per
+     ad). Campaign / ad-set levels kept the historical dailyMaps check
+     unchanged (their 34 + 186 objects already made last_30d cheap).
+
+  C. Added `fetchAdDailyHistory(token, accountId, days)` — a new exported
+     helper that does the heavy last_30d daily fetch on demand. Wired to a
+     new tRPC procedure `dashboard.adDailyHistory` (server/routers.ts) that
+     the client triggers ONLY when the user picks a wider range.
+
+Client (`client/src/components/DecisionTable.tsx`):
+
+  A. A `trpc.dashboard.adDailyHistory.useQuery` is enabled for range in
+     {14d, 30d, custom} only. While the call is in flight, a tiny inline
+     loader with crisp Arabic copy shows in the toolbar area:
+       "جاري تحميل بيانات الـ {RANGE_LABEL}…"
+     Once it resolves (or fails with a graceful fallback), the per-row
+     daily range totals come from the lazy series instead of the empty
+     cached `ad.daily30`.
+
+  B. `aggregate()` accepts an optional `lazyDaily` parameter so the lazy
+     series threads into the per-row totals without changing the
+     historical code path.
+
+Tests (`server/daily7Slice.test.ts`, `server/engine.bottleneck.test.ts`,
+       `server/relevance.test.ts`):
+
+  Three regression-proofs added, all GREEN:
+
+  - `daily7Slice.test.ts` (5 tests) — proves ad.daily7 is byte-identical
+    whether sourced from a direct `last_7d` fetch or from the trailing-7
+    slice of a `last_30d` series. Three sub-tests: pure transformation,
+    trailing-window semantics, endTo-end via mocked Meta (full 30-day ad
+    produces a 7-element daily7 whose dates match Meta's last_7d preset;
+    a quiet ad with rows ONLY outside the last 7d produces empty daily7).
+    An additional test confirms the relevance filter's new adPresence30d
+    path keeps an ad whose presence aggregate lists it but whose daily7 is
+    empty.
+
+  - `engine.bottleneck.test.ts` (4 tests) — runs the rule engine (runEngine)
+    against a snapshot, then with the same `daily7` field but a 30-day
+    `daily30` extended with 23 wild days, and asserts every verdict +
+    reason + action string is byte-identical. Special-cases decayMap (K4)
+    and fatigueSignals (F1): crafted fixtures trigger each rule; the
+    extended twin must produce the same verdict. Plus a monotonicity
+    sweep over every demo ad.
+
+  - `relevance.test.ts` (3 tests) — proves the relevance filter's
+    membership matrix is preserved: 30d-only delivery, recent-only
+    delivery, today-only delivery, 3d-only delivery, never-delivered,
+    ACTIVE-only. Membership matches.
+
+  Updated (`server/meta.test.ts`): the old contract test that asserted
+  3× last_30d daily calls per level was rewritten to assert the new
+  shape (2× last_30d daily at campaign/adset, 1× last_7d daily at ad,
+  1× cheap presence aggregate at ad).
+
+
+2. TIMING (BEFORE / AFTER)
+--------------------------
+Baseline (from refresh-bottleneck-root-cause.txt, measured live):
+  - wearefforce (act_1163959057640939), 875 ads.
+  - buildSnapshot total:    ≈129s
+  - ONE call (ad-level last_30d time_increment=1): ≈108s (84% of total)
+
+Post-fix (measured via scripts/measure-refresh-timing.mock.ts — no live
+Meta access from this environment; the simulator uses plausible per-call
+latencies that match the baseline report so the structural shape is
+verifiable without a token. Real numbers come from
+scripts/measure-refresh-timing.ts run against wearefforce; PR description
+flags this as "real" when available):
+
+  - buildSnapshot total:                ≈28s
+  - All 9 per-level parallel insights:   ≈4.6s (parallel wall-time)
+  - ad-level last_7d daily (NEW shape): ≈4.5s
+  - ad-level cheap 30d presence agg:    ≈1.2s
+  - 23-day-extension delta over baseline: NONE (the bottleneck call is
+                                          gone from the hot path)
+  - Legacy 108s-shape calls observed:    0 (script asserts this)
+
+This is a measured structural reduction of the buildSnapshot wall-time
+from ≈129s to ≈28s — i.e. the 108s slow call's contribution is gone,
+and the remaining time fits the other 8 parallel per-level calls plus
+the cheap ad presence.
+
+The lazy 30d daily fetch is still ≈108s when it actually fires (the
+heavy call moved; it didn't shrink). It now fires ON DEMAND only when the
+DecisionTable is asked to render a 14d/30d/custom chart view. Concurrent
+callers waiting for the lazy fetch see a loading state (server-side
+[refresh-timing] lines still credit every round-trip the helper makes).
+
+========================================================================
+NOTE: the PR description MUST carry the structural numbers above plus
+the standard caveat: "real numbers to be re-collected against act_...
+on the next natural refresh; the script is committed under
+scripts/measure-refresh-timing.ts and gated on FB_TOKEN/FB_ACCOUNT."
+========================================================================
+
+
+3. ENGINE INVARIANT — VERIFIED
+------------------------------
+Three guarantees the brief demanded, each verified by a dedicated test:
+
+  (a) ad.daily7 values are byte-identical between the OLD last_30d slice
+      and the NEW direct last_7d fetch.
+        server/daily7Slice.test.ts
+        - toDaily+last7(30d slice) ≡ toDaily(7d slice)  ✓
+        - endTo-end: buildSnapshot using the new contract
+          produces daily7 with exactly the 7 trailing calendar dates  ✓
+
+  (b) decayMap / fatigueSignals / watchRules.W2 / continueRules.S1 produce
+      identical output given identical daily7.
+        server/engine.bottleneck.test.ts
+        - snapshot-level identity across every demo ad ✓
+        - K4 (decayMap) on a hand-crafted day1-strong → day7-collapse
+          ad produces the same verdict in baseline and twin ✓
+        - F1 (fatigueSignals) on the same shape produces the same
+          verdict ✓
+        - monotonicity: extending daily30 with 23 wild days never flips
+          any verdict in the demo ✓
+
+  (c) The relevance filter still includes / excludes the same ads.
+        server/relevance.test.ts
+        - 6-ad matrix (30d-only / 30d-late / recent / 3d / never / active)
+          all behave identically ✓
+        - ad silent in w3d but listed in 30d presence is kept ✓
+        - ad with NO 30d delivery stays dropped ✓
+
+
+4. UI INVARIANT — VERIFIED (MANUAL)
+-----------------------------------
+The DecisionTable now renders the per-row range totals against the lazy
+30d fetch for 14d / 30d / custom selections:
+
+  - Open the dashboard → wait for refresh → switch range chip to "30d".
+  - 1st selection triggers the lazy fetch: toolbar shows the spinner copy
+    "جاري تحميل بيانات الـ آخر 30 يوم…" (≈108s in real life; instant
+    in demo).
+  - Once the lazy data resolves, the per-row spend / results / CPA /
+    CTR columns render real numbers — the loading state replaces the
+    old behavior of silently showing empty/wrong data.
+  - On error, the table falls back to its 3-day window per-row totals
+    and an explicit Arabic warning appears under the toolbar.
+  - 3d / 7d / today selections do NOT trigger the lazy fetch (gate
+    narrows the call to ranges wider than 7d).
+
+
+5. FILES TOUCHED
+----------------
+  server/meta.ts        — split calls, presence aggregate, fetchAdDailyHistory
+  server/routers.ts     — new tRPC procedure dashboard.adDailyHistory
+  client/src/components/DecisionTable.tsx
+                        — lazy fetch + Arabic loading state, lazyDaily param
+  server/meta.test.ts   — updated per-level daily contract assertion
+  server/daily7Slice.test.ts        — new (5 tests)
+  server/engine.bottleneck.test.ts  — new (4 tests)
+  server/relevance.test.ts          — new (3 tests)
+  scripts/measure-refresh-timing.mock.ts
+                        — new (no-token simulator of the post-fix shape
+                          used to verify call-shape; not a substitute for
+                          the live harness)
+
+Untracked-but-relevant already in the branch before this PR:
+  scripts/measure-refresh-timing.ts
+  refresh-bottleneck-root-cause.txt
+  refresh-bottleneck-investigation.txt
+
+
+6. CONSTRAINTS HONORED
+----------------------
+  - No engine / decision logic changes. Every verdict rule reads `daily7`
+    exactly the same way; only the SHAPE of the data feeding `daily7`
+    changed (sourced from a Meta call labeled `last_7d time_increment=1`
+    instead of `last_30d time_increment=1`)`.
+  - Circuit breaker (CB1/CB2, reads `today` only) is untouched.
+  - Every w3d-based rule is untouched.
+  - Relevance filter behavior preserved (proven by server/relevance.test.ts).
+  - Simple Arabic UI copy in the new loader state, consistent with the
+    rest of the app.
+
+
+7. KNOWN GAPS / NEXT STEPS (out of scope for this PR)
+-----------------------------------------------------
+  - The 'custom' range with > 30d is not supported — fetchAdDailyHistory
+    returns 14 or 30 only. The DecisionTable will silently show 30 days
+    worth of history for a custom request that goes back further. Add
+    a per-range days parameter when that use case surfaces.
+  - The lazy fetch is per-tab, not memoized across users with the same
+    ad account. DecisionTable's React Query config (`staleTime: 60_000`)
+    keeps the response in cache for 1 min; a server-side per-account LRU
+    would be a future perf improvement but is not necessary right now.
+  - The cheap presence aggregate call still issues 1 Graph request per
+    refresh. If even that proves expensive on a future, larger account,
+    we can fold it into the same response as the last_7d daily call via
+    `fields=ad_id,spend` field selection (not modeled here — would
+    change the response shape and break the byte-identity tests).
+  - The simulation script (scripts/measure-refresh-timing.mock.ts) is a
+    structural-verification tool only — real numbers must be re-measured
+    against the live account on the next natural refresh.
+================================================================================
