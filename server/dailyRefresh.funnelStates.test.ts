@@ -44,7 +44,16 @@ const shared = vi.hoisted(() => ({
   buildDemoSnapshotCalls: 0,
   saveSnapshotCalls: 0,
   getLatestSnapshotCalls: 0,
+  getAccountCalls: 0,
+  // Used by the 24h-bound test: when true, any audit query returns
+  // a non-empty result (the simple case where we only care that the
+  // bound is checked at all).
   auditRowExists: false,
+  // Used by the prefix-collision test: set of adAccountIds for which
+  // an audit row already exists in the 24h window. The audit-query
+  // mock inspects the LIKE predicates to find the queried id and only
+  // returns a row when that exact id has an entry.
+  auditRowsByAdAccountId: new Set<number>(),
 }));
 
 type FunnelSettings = {
@@ -107,34 +116,97 @@ function resetShared(): void {
   shared.buildDemoSnapshotCalls = 0;
   shared.saveSnapshotCalls = 0;
   shared.getLatestSnapshotCalls = 0;
+  shared.getAccountCalls = 0;
   shared.auditRowExists = false;
+  shared.auditRowsByAdAccountId = new Set<number>();
+}
+
+// Walk a drizzle SQL expression's queryChunks tree and pull out every
+// LIKE pattern string. Production builds the predicate as
+//   and(... eq ... like('%"adAccountId":N,%') ... or(like,like))
+// so any LIKE's `value` chunk surfaces here. Used by the audit-query
+// mock to discover which adAccountId the bound is asking about.
+function extractAdAccountIdsFromPredicate(predicate: any): number[] {
+  const ids: number[] = [];
+  // Recursively flatten all chunk arrays/values in this SQL tree
+  // into a single string, then regex out every `"adAccountId":NNN`
+  // literal. The tree may be arbitrarily deep (and/or wrapping
+  // nested predicates) so the walker recurses through both raw
+  // arrays and SQL/string-chunk objects.
+  const parts: string[] = [];
+  function collect(node: any): void {
+    if (node == null) return;
+    if (typeof node === "string") {
+      parts.push(node);
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const c of node) collect(c);
+      return;
+    }
+    if (typeof node === "object") {
+      if (typeof node.value === "string") {
+        parts.push(node.value);
+      } else if (Array.isArray(node.value)) {
+        for (const v of node.value) collect(v);
+      }
+      if (node.queryChunks) collect(node.queryChunks);
+      // Some drizzle chunks wrap an inner SQL in `.sql` or `.chunk`.
+      if (node.chunk) collect(node.chunk);
+      if (node.sql) collect(node.sql);
+    }
+  }
+  collect(predicate?.queryChunks);
+  const joined = parts.join("");
+  const matches = joined.matchAll(/"adAccountId":(\d+)([,}])/g);
+  for (const m of matches) {
+    if (m[1] != null) ids.push(Number(m[1]));
+  }
+  return ids;
 }
 
 vi.mock("./db", () => ({
   getDb: async () => ({
-    // Minimal mock surface: processAccount's audit helper only calls
-    // .select().from().where().limit(). Returning [] means "no existing
-    // row in the 24h window" so a new audit row is written.
     select: () => ({
       from: () => ({
-        where: () => ({
-          limit: () => (shared.auditRowExists ? [{ id: "existing" }] : []),
-        }),
+        // Capture the predicate and inspect LIKE patterns so the
+        // per-adAccountId 24h bound can be exercised with arbitrary
+        // "already has a row" state. Tests seed
+        // `shared.auditRowsByAdAccountId`; the helper returns a row
+        // only when the queried id appears in that set.
+        where: (predicate: any) => {
+          const ids = extractAdAccountIdsFromPredicate(predicate);
+          if (ids.length === 0) {
+            return {
+              limit: () => (shared.auditRowExists ? [{ id: "existing" }] : []),
+            };
+          }
+          // Multiple ids appear because the production predicate is
+          // an OR of two LIKE patterns for the SAME id; we want a
+          // match only when AT LEAST ONE of them is in the set.
+          const matches = ids.some((id) => shared.auditRowsByAdAccountId.has(id));
+          return {
+            limit: () => (matches ? [{ id: "existing" }] : []),
+          };
+        },
       }),
     }),
   }),
   getConnection: async () => ({ status: "active", encryptedToken: "x" }),
-  getAccount: async (uid: string, id: number) => ({
-    id,
-    userId: uid,
-    accountId: "act_42",
-    name: "test account",
-    currency: "USD",
-    accountStatus: 1,
-    selected: true,
-    isDemo: true, // demo path avoids the token-decrypt branch
-    funnelConfiguredAt: null,
-  }),
+  getAccount: async (uid: string, id: number) => {
+    shared.getAccountCalls++;
+    return {
+      id,
+      userId: uid,
+      accountId: "act_42",
+      name: "test account",
+      currency: "USD",
+      accountStatus: 1,
+      selected: true,
+      isDemo: true, // demo path avoids the token-decrypt branch
+      funnelConfiguredAt: null,
+    };
+  },
   listAccounts: async () => [],
   listAllUsers: async () => [],
   getFunnelResult: async () => {
@@ -339,8 +411,9 @@ describe("processAccount — funnel three-state contract (FR-001/FR-003/SC-001)"
 
   it("24h bound: a second skip for the same (user, account) does NOT write a second audit row (FR-026)", async () => {
     // Simulate "an audit row already exists in the 24h window" by
-    // having the bounded query return a non-empty result.
-    shared.auditRowExists = true;
+    // seeding the per-id set with the same adAccountId we are about
+    // to query for.
+    shared.auditRowsByAdAccountId = new Set([46]);
     shared.funnelResult = { status: "unavailable", reason: "orphaned" };
     const { processAccount } = await import("./dailyRefresh");
     const { logAuditEvent } = await import("./auditLog");
@@ -350,6 +423,40 @@ describe("processAccount — funnel three-state contract (FR-001/FR-003/SC-001)"
 
     expect(result.skipped).toBe(true);
     expect((logAuditEvent as any).mock.calls).toHaveLength(0);
+  });
+
+  it("24h bound: distinct accounts sharing a digit prefix are NOT deduplicated against each other", async () => {
+    // CodeRabbit caught this: the original LIKE pattern was
+    // %"adAccountId":N% which matched both 4 AND 42 — prefix
+    // collision. The fix anchors the LIKE with a trailing JSON
+    // delimiter (`,` for a middle field, `}` for the last field).
+    // This test seeds the audit table with a row for account 4 and
+    // then verifies that querying for account 42 (a strict superset
+    // prefix of 4) does NOT find it and does write its own row.
+    shared.auditRowsByAdAccountId = new Set([4]);
+    shared.funnelResult = { status: "never_configured" };
+    const { processAccount } = await import("./dailyRefresh");
+    const { logAuditEvent } = await import("./auditLog");
+    (logAuditEvent as any).mockClear();
+
+    // Account 4 — its existing row IS found, so no second audit row.
+    await processAccount("u-prefix", 4);
+    expect((logAuditEvent as any).mock.calls).toHaveLength(0);
+
+    // Account 42 — its stored digit-prefix 4 must NOT match. The
+    // bounded query returns "no existing row" so this account
+    // writes its own audit row.
+    await processAccount("u-prefix", 42);
+    const calls = (logAuditEvent as any).mock.calls as Array<[any]>;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0].details?.adAccountId).toBe(42);
+
+    // Account 400 — same prefix-collision hazard in the other
+    // direction (400 starts with 4).
+    await processAccount("u-prefix", 400);
+    const calls2 = (logAuditEvent as any).mock.calls as Array<[any]>;
+    expect(calls2).toHaveLength(2);
+    expect(calls2[1][0].details?.adAccountId).toBe(400);
   });
 
   it("data isolation: audit details carry the SAME userId+adAccountId as the call (no cross-account writes)", async () => {
@@ -371,5 +478,38 @@ describe("processAccount — funnel three-state contract (FR-001/FR-003/SC-001)"
     expect(calls2).toHaveLength(2);
     expect(calls2[1][0].userId).toBe("u-iso-B");
     expect(calls2[1][0].details?.adAccountId).toBe(701);
+  });
+
+  it("audit helper reuses the account already fetched by processAccount (no redundant getAccount)", async () => {
+    // CodeRabbit caught this: the audit helper used to re-fetch the
+    // account via db.getAccount even though processAccount had
+    // already fetched it on the same call. Pass-through fix.
+    shared.funnelResult = { status: "unavailable", reason: "orphaned" };
+    const { processAccount } = await import("./dailyRefresh");
+    const getAccountFromDb = await import("./db");
+
+    const getAccountSpy = vi.fn(async (uid: string, id: number) => {
+      shared.getAccountCalls++;
+      return {
+        id,
+        userId: uid,
+        accountId: "act_42",
+        name: "test account",
+        currency: "USD",
+        accountStatus: 1,
+        selected: true,
+        isDemo: true,
+        funnelConfiguredAt: null,
+      };
+    });
+    // Replace the factory's getAccount with a spy for this test only.
+    (getAccountFromDb as any).getAccount = getAccountSpy;
+
+    const before = shared.getAccountCalls;
+    await processAccount("u-once", 47);
+    const after = shared.getAccountCalls;
+
+    // Exactly one fetch — processAccount's, not the audit helper's.
+    expect(after - before).toBe(1);
   });
 });

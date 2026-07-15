@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { TRPCError } from "@trpc/server";
-import { and, eq, gt, like } from "drizzle-orm";
+import { and, eq, gt, like, or } from "drizzle-orm";
 import { runEngine } from "./engine";
 import { notifyOwner } from "./_core/notification";
 import { logAuditEvent } from "./auditLog";
@@ -168,7 +168,8 @@ function funnelSettingsToInputs(
 async function recordFunnelUnavailableAudit(
   userId: string,
   adAccountId: number,
-  result: FunnelGetResult
+  result: FunnelGetResult,
+  account: { accountId: string; funnelConfiguredAt: Date | null } | null
 ): Promise<void> {
   try {
     const database = await db.getDb();
@@ -176,10 +177,14 @@ async function recordFunnelUnavailableAudit(
       return;
     }
     const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const account = await db.getAccount(userId, adAccountId);
     const metaAccountId = account?.accountId ?? null;
     // data-model.md §3 — bound by (user_id, event_type,
     // created_at > NOW() - 24h, LIKE "adAccountId":N in details).
+    // The trailing delimiter (`,` for a non-last field, `}` for the
+    // last field) is REQUIRED: without it `adAccountId:4` would match
+    // audit rows for `adAccountId:42` and `adAccountId:400` (prefix
+    // collision on a LIKE wildcard), which would defeat the per-pair
+    // 24h bound for any account whose id is a digit-prefix of another.
     const existing = await database
       .select({ id: auditLog.id })
       .from(auditLog)
@@ -188,7 +193,10 @@ async function recordFunnelUnavailableAudit(
           eq(auditLog.eventType, "funnel_settings_unavailable"),
           eq(auditLog.userId, userId),
           gt(auditLog.createdAt, windowStart),
-          like(auditLog.details, `%"adAccountId":${adAccountId}%`)
+          or(
+            like(auditLog.details, `%"adAccountId":${adAccountId},%`),
+            like(auditLog.details, `%"adAccountId":${adAccountId}}%`)
+          )
         )
       )
       .limit(1);
@@ -248,7 +256,15 @@ export async function processAccount(
     // entirely, do not call saveSnapshot (we have no verdict to
     // persist), and do not notifyOwner. Emit one bounded audit
     // event so the operator can see it without paging through logs.
-    await recordFunnelUnavailableAudit(userId, adAccountId, funnelResult);
+    await recordFunnelUnavailableAudit(
+      userId,
+      adAccountId,
+      funnelResult,
+      // processAccount already fetched the account above; the audit
+      // helper only needs accountId + funnelConfiguredAt, so pass the
+      // subset through instead of issuing a redundant getAccount.
+      { accountId: account.accountId, funnelConfiguredAt: account.funnelConfiguredAt }
+    );
     return {
       userId,
       accountId: adAccountId,
