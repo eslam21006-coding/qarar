@@ -1,11 +1,15 @@
 import "dotenv/config";
 import { TRPCError } from "@trpc/server";
+import { and, eq, gt, like, or } from "drizzle-orm";
 import { runEngine } from "./engine";
 import { notifyOwner } from "./_core/notification";
+import { logAuditEvent } from "./auditLog";
 import * as db from "./db";
+import type { FunnelGetResult } from "./db";
 import { buildSnapshot } from "./meta";
 import { buildDemoSnapshot } from "./demo";
 import { decryptToken } from "./crypto";
+import { auditLog } from "../drizzle/auth-schema";
 import type { AccountSnapshotPayload, EngineResult, EngineRow, FunnelInputs } from "../shared/qarar";
 
 /**
@@ -13,12 +17,27 @@ import type { AccountSnapshotPayload, EngineResult, EngineRow, FunnelInputs } fr
  * Triggered by a project-level Heartbeat cron at /api/scheduled/dailyRefresh.
  *
  * Pipeline (per (user, account) pair):
- *   1. Load the previous saved snapshot → runEngine → old kill set
- *   2. buildSnapshot (live) or buildDemoSnapshot (demo) → runEngine → new kill set
- *   3. saveSnapshot (replaces prior)
- *   4. If verdictHistory table exists, call recordVerdicts (US12 — conditional)
- *   5. diffKillSet → if any newly-killed objects, notifyOwner
- *   6. On auth error: mark connection expired + notifyOwner to reconnect
+ *   1. Resolve funnel settings via the three-state contract
+ *      (found / never_configured / unavailable) introduced in spec 011.
+ *        - "found"            → proceed as normal.
+ *        - "never_configured" → SKIP this account. No engine run, no
+ *          saveSnapshot, no notifyOwner. Audit `funnel_settings_unavailable`
+ *          once per (user, account) per 24h (FR-026).
+ *        - "unavailable"      → same skip treatment. The account looks
+ *          configured (its `funnelConfiguredAt` is set) but the row is
+ *          missing — investigating it is the user's job, not the cron's.
+ *      Why: the legacy path used a fabricated DEFAULT_FUNNEL (aov=43,
+ *      htoPrice=3500) as a fallback when the lookup missed. An unattended
+ *      cron would then send the owner a Kill/Watch/Continue verdict derived
+ *      entirely from numbers the user never entered. The three-state contract
+ *      distinguishes "no data" from "data could not be loaded", and the
+ *      cron now treats both as "do not run the engine".
+ *   2. Load the previous saved snapshot → runEngine → old kill set
+ *   3. buildSnapshot (live) or buildDemoSnapshot (demo) → runEngine → new kill set
+ *   4. saveSnapshot (replaces prior)
+ *   5. If verdictHistory table exists, call recordVerdicts (US12 — conditional)
+ *   6. diffKillSet → if any newly-killed objects, notifyOwner
+ *   7. On auth error: mark connection expired + notifyOwner to reconnect
  *
  * Idempotency: each (user, account) unit can be re-run safely — the diff is
  * computed against the now-saved snapshot, so a retry produces an empty
@@ -78,55 +97,133 @@ export function diffKillSet(input: KillSetDiffInput): NotificationDraft | null {
 // Orchestration (DB-dependent; live runs require a real DATABASE_URL)
 // ============================================================
 
-/** A safe fallback when the user's funnel settings aren't saved yet —
- *  uses the rulebook's worked-example defaults. The daily refresh still
- *  diffs the kill set; it just uses sensible defaults for CPA etc. */
-const DEFAULT_FUNNEL: FunnelInputs = {
-  archetype: "paid_lto",
-  liveComponent: true,
-  offerDescription: null,
-  ticketPrice: null,
-  aov: 43,
-  htoPrice: 3500,
-  htoConversionRate: 3,
-  frontEndRoas: 1.0,
-  dailyBudget: null,
-  marketCplBenchmark: null,
-  htoUnderperforming: false,
-  arena: "broad",
-  bestInterest: null,
-  geoTiers: null,
-};
-
+/**
+ * Resolve funnel settings for the cron, using the three-state contract
+ * introduced in spec 011. Unlike the legacy `getFunnel`/`null` shape,
+ * the result is a discriminator the caller MUST switch on — silently
+ * defaulting to fabricated values is exactly the bug we removed.
+ *
+ * Infrastructure errors (DB throws, no db handle) are mapped to
+ * `unavailable / unknown`, the same shape the read path emits for
+ * orphaned rows, so the cron treats them identically: skip + audit.
+ */
 async function getFunnelForRun(
   userId: string,
   adAccountId: number
-): Promise<FunnelInputs | null> {
+): Promise<FunnelGetResult> {
   try {
-    const row = await db.getFunnel(userId, adAccountId);
-    if (!row) return null;
-    // The funnel row has the full FunnelInputs fields as columns
-    return {
-      archetype: row.archetype,
-      liveComponent: row.liveComponent,
-      offerDescription: row.offerDescription,
-      ticketPrice: row.ticketPrice,
-      aov: row.aov,
-      htoPrice: row.htoPrice,
-      htoConversionRate: row.htoConversionRate,
-      frontEndRoas: row.frontEndRoas,
-      dailyBudget: row.dailyBudget,
-      marketCplBenchmark: row.marketCplBenchmark,
-      htoUnderperforming: row.htoUnderperforming,
-      arena: row.arena,
-      bestInterest: row.bestInterest,
-      geoTiers: row.geoTiers as string[] | null,
-      // Batch 2 / ISSUE-009 — carrier so the daily cron's runEngine()
-      // converts monetary inputs identically to the live dashboard path.
-      inputCurrency: row.inputCurrency,
-    };
+    return await db.getFunnelResult(userId, adAccountId);
   } catch {
-    return null;
+    return { status: "unavailable", reason: "unknown" };
+  }
+}
+
+/**
+ * Convert a stored funnel row (FunnelSettings) to the FunnelInputs shape
+ * the engine expects. Mirrors `funnelToInputs` in routers.ts; intentionally
+ * a private local copy because the cron is on its own (offline) path and
+ * should not depend on tRPC-internal helpers.
+ */
+function funnelSettingsToInputs(
+  row: NonNullable<Awaited<ReturnType<typeof db.getFunnel>>>
+): FunnelInputs {
+  return {
+    archetype: row.archetype,
+    liveComponent: row.liveComponent,
+    offerDescription: row.offerDescription,
+    ticketPrice: row.ticketPrice,
+    aov: row.aov,
+    htoPrice: row.htoPrice,
+    htoConversionRate: row.htoConversionRate,
+    frontEndRoas: row.frontEndRoas,
+    dailyBudget: row.dailyBudget,
+    marketCplBenchmark: row.marketCplBenchmark,
+    htoUnderperforming: row.htoUnderperforming,
+    arena: row.arena,
+    bestInterest: row.bestInterest,
+    geoTiers: (row.geoTiers as string[] | null) ?? null,
+    // Batch 2 / ISSUE-009 — carrier so the daily cron's runEngine()
+    // converts monetary inputs identically to the live dashboard path.
+    inputCurrency: row.inputCurrency,
+  };
+}
+
+/**
+ * US11 / Spec 011 / FR-024/FR-025/FR-026 — record a
+ * `funnel_settings_unavailable` audit event for an account the cron
+ * skipped because it had no usable funnel settings. Bounded by 24h
+ * per (user, adAccountId) pair so a manual re-run does not accumulate
+ * rows (FR-026). The 24h window is read from the audit table itself —
+ * no external state, no "resolved" flag.
+ *
+ * The query and insert mirror the same logic in
+ * `server/routers.ts:303-356` (the `funnel.get` query). A future
+ * cleanup is free to extract a shared helper, but this duplication is
+ * deliberate for now: the cron path is offline and must not import
+ * tRPC-internal modules.
+ *
+ * Observability must never break the refresh path — any failure here
+ * is logged and swallowed.
+ */
+async function recordFunnelUnavailableAudit(
+  userId: string,
+  adAccountId: number,
+  result: FunnelGetResult,
+  account: { accountId: string; funnelConfiguredAt: Date | null } | null
+): Promise<void> {
+  try {
+    const database = await db.getDb();
+    if (!database) {
+      return;
+    }
+    const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const metaAccountId = account?.accountId ?? null;
+    // data-model.md §3 — bound by (user_id, event_type,
+    // created_at > NOW() - 24h, LIKE "adAccountId":N in details).
+    // The trailing delimiter (`,` for a non-last field, `}` for the
+    // last field) is REQUIRED: without it `adAccountId:4` would match
+    // audit rows for `adAccountId:42` and `adAccountId:400` (prefix
+    // collision on a LIKE wildcard), which would defeat the per-pair
+    // 24h bound for any account whose id is a digit-prefix of another.
+    const existing = await database
+      .select({ id: auditLog.id })
+      .from(auditLog)
+      .where(
+        and(
+          eq(auditLog.eventType, "funnel_settings_unavailable"),
+          eq(auditLog.userId, userId),
+          gt(auditLog.createdAt, windowStart),
+          or(
+            like(auditLog.details, `%"adAccountId":${adAccountId},%`),
+            like(auditLog.details, `%"adAccountId":${adAccountId}}%`)
+          )
+        )
+      )
+      .limit(1);
+    if (!existing[0]) {
+      await logAuditEvent({
+        userId,
+        eventType: "funnel_settings_unavailable",
+        details: {
+          adAccountId,
+          metaAccountId,
+          configuredAt: account?.funnelConfiguredAt ?? null,
+          // The reason field from the three-state read path. For
+          // "never_configured" the result has no reason; the
+          // discriminator is the `status` field carried in
+          // `details.status` below.
+          reason: result.status === "unavailable" ? result.reason : null,
+          status: result.status,
+          source: "daily_refresh",
+        },
+      });
+    }
+  } catch (err) {
+    console.error(
+      `[DailyRefresh] failed to write funnel_settings_unavailable audit: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
   }
 }
 
@@ -135,9 +232,12 @@ interface ProcessAccountResult {
   accountId: number;
   notified: boolean;
   newKills: number;
+  /** True when the cron deliberately skipped the account because
+   *  funnel settings were missing or could not be loaded. */
+  skipped?: boolean;
 }
 
-async function processAccount(
+export async function processAccount(
   userId: string,
   adAccountId: number
 ): Promise<ProcessAccountResult> {
@@ -146,14 +246,42 @@ async function processAccount(
     return { userId, accountId: adAccountId, notified: false, newKills: 0 };
   }
 
-  // 1. Load previous snapshot → run engine → old kill set
+  // 1. Resolve funnel settings via the three-state contract. On any
+  // miss path the cron MUST NOT proceed — running the engine on
+  // fabricated numbers is the exact defect this fix removes.
+  const funnelResult = await getFunnelForRun(userId, adAccountId);
+  if (funnelResult.status !== "found") {
+    // "never_configured" or "unavailable" — the user's saved data
+    // either never existed or could not be loaded. Skip the engine
+    // entirely, do not call saveSnapshot (we have no verdict to
+    // persist), and do not notifyOwner. Emit one bounded audit
+    // event so the operator can see it without paging through logs.
+    await recordFunnelUnavailableAudit(
+      userId,
+      adAccountId,
+      funnelResult,
+      // processAccount already fetched the account above; the audit
+      // helper only needs accountId + funnelConfiguredAt, so pass the
+      // subset through instead of issuing a redundant getAccount.
+      { accountId: account.accountId, funnelConfiguredAt: account.funnelConfiguredAt }
+    );
+    return {
+      userId,
+      accountId: adAccountId,
+      notified: false,
+      newKills: 0,
+      skipped: true,
+    };
+  }
+  const funnel = funnelSettingsToInputs(funnelResult.settings);
+
+  // 2. Load previous snapshot → run engine → old kill set
   const prevSnap = await db.getLatestSnapshot(userId, adAccountId);
-  const funnel = (await getFunnelForRun(userId, adAccountId)) ?? DEFAULT_FUNNEL;
   const oldResult: EngineResult | null = prevSnap
     ? runEngine(prevSnap.payload as AccountSnapshotPayload, funnel)
     : null;
 
-  // 2. Build new snapshot (live or demo)
+  // 3. Build new snapshot (live or demo)
   let newPayload: AccountSnapshotPayload;
   if (account.isDemo) {
     newPayload = buildDemoSnapshot();
@@ -166,13 +294,13 @@ async function processAccount(
     );
   }
 
-  // 3. Save new snapshot
+  // 4. Save new snapshot
   await db.saveSnapshot(userId, adAccountId, newPayload, "ready");
 
-  // 4. Run engine on the new payload
+  // 5. Run engine on the new payload
   const newResult = runEngine(newPayload, funnel);
 
-  // 5. (US12, optional) record verdict transitions if the table exists
+  // 6. (US12, optional) record verdict transitions if the table exists
   try {
     const recordVerdicts = (db as unknown as { recordVerdicts?: Function }).recordVerdicts;
     if (typeof recordVerdicts === "function") {
@@ -182,7 +310,7 @@ async function processAccount(
     // verdictHistory not implemented (US12 pending) — ignore
   }
 
-  // 6. Diff and notify
+  // 7. Diff and notify
   const draft = diffKillSet({
     userId,
     adAccountId,
@@ -225,10 +353,10 @@ async function writeCursor(value: number): Promise<void> {
  * US11 — main entry point. Iterates over the rotating slice and
  * returns a summary. One failure must not abort the loop.
  */
-export async function runDailyRefresh(): Promise<{ processed: number; notified: number }> {
+export async function runDailyRefresh(): Promise<{ processed: number; notified: number; skipped: number }> {
   // No DB → no-op. The pure helpers (diffKillSet) still work for testing.
   if (!process.env.DATABASE_URL) {
-    return { processed: 0, notified: 0 };
+    return { processed: 0, notified: 0, skipped: 0 };
   }
 
   // Enumerate (user, account) pairs: selected + active connection.
@@ -255,10 +383,12 @@ export async function runDailyRefresh(): Promise<{ processed: number; notified: 
   await writeCursor(end >= pairs.length ? 0 : end);
 
   let notified = 0;
+  let skipped = 0;
   for (const pair of slice) {
     try {
       const result = await processAccount(pair.userId, pair.adAccountId);
       if (result.notified) notified++;
+      if (result.skipped) skipped++;
     } catch (e: unknown) {
       // Auth errors → mark connection expired + notify
       const err = e as { isAuthError?: boolean; code?: string };
@@ -278,5 +408,5 @@ export async function runDailyRefresh(): Promise<{ processed: number; notified: 
     }
   }
 
-  return { processed: slice.length, notified };
+  return { processed: slice.length, notified, skipped };
 }
