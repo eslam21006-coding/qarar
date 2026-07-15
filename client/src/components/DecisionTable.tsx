@@ -122,6 +122,13 @@ function aggFromWindow(w: WindowMetrics): FilterAgg {
   };
 }
 
+/**
+ * Refresh-bottleneck fix overload: lookup the row's own slice from a
+ * ROW-KEYED lazy history map (ad-id → sorted DailyMetrics). The server's
+ * `dashboard.adDailyHistory` returns the by-id map; rows with no entry
+ * fall through to the historical `s.daily30` (which is empty at the ad
+ * level post-fix, so for ad rows the loader / fallback decides).
+ */
 export function aggregate(
   s: SeriesObj | undefined,
   range: RangeKey,
@@ -129,21 +136,28 @@ export function aggregate(
   to: string,
   asOfDate: string,
   /**
-   * Refresh-bottleneck fix: optional override for `s.daily30` when the
-   * DecisionTable has fired the lazy 30-day ad-level fetch
-   * (dashboard.adDailyHistory). At the ad level, `s.daily30` is intentionally
-   * empty in the cached snapshot (the verdict path is `last_7d` only), so the
-   * caller threads the lazy series through here for the 14d/30d/custom view.
-   * Pass `null` (or omit) when the lazy data has not yet resolved — the caller
-   * is then expected to render a loading state instead of zero/garbage.
+   * Refresh-bottleneck fix: per-row slice of the lazy 30-day daily history.
+   * Pass `null` while the lazy fetch is still in flight — `aggregate()`
+   * then returns `null` (the caller renders a loading state) instead of
+   * silently rendering zero-valued totals against an empty `s.daily30`.
+   * Pass `undefined` (or omit) to mean "fall back to `s.daily30`" — the
+   * historical behavior at campaign / adset levels (which still carry
+   * daily30 in the cached snapshot).
    */
-  lazyDaily: DailyMetrics[] | null = null
+  lazyDaily?: DailyMetrics[] | null,
 ): FilterAgg | null {
   if (!s) return null;
   if (range === "today") return aggFromWindow(s.today);
-  // if the daily series is missing entirely, fall back to the engine's 3-day
-  // window (which now itself excludes today — server date_preset:"last_3d")
+  // Loading state — caller explicitly passed `null`. We deliberately do
+  // NOT aggregate against the empty default; the DecisionTable shows a
+  // row-level "—" with the toolbar spinner instead.
+  if (lazyDaily === null) return null;
+  // History: prefer the row's own slice when provided, otherwise the
+  // cached `s.daily30` (campaign/adset levels; ad level is empty by
+  // construction post-fix).
   const dailyForAgg = lazyDaily && lazyDaily.length > 0 ? lazyDaily : s.daily30;
+  // 3d preset is the one case the historical code allowed falling back to
+  // the engine's w3d window when daily30 was absent.
   if (range === "3d" && dailyForAgg.length === 0) return aggFromWindow(s.w3d);
   const days = range === "3d" ? 3 : range === "7d" ? 7 : range === "14d" ? 14 : 30;
   // Preset chips: window ends YESTERDAY (account-tz asOfDate − 1), never today
@@ -437,11 +451,15 @@ export function DecisionTable({
     [rows]
   );
 
-  // Lazy 14d/30d/custom ad-level daily history (refresh-bottleneck fix). The
-  // cached snapshot no longer carries ad.daily30 — the verdict path is
+  // Lazy 14d/30d/custom ad-level daily history (refresh-bottleneck fix).
+  // The cached snapshot no longer carries ad.daily30 — the verdict path is
   // `last_7d` only, and we pay no extra Meta round-trips until a user picks
   // a wider range. Only ENABLED for ranges wider than 7d to avoid hitting
   // Meta on every table mount / range switch.
+  //
+  // The response is ROW-KEYED (ad_id → sorted DailyMetrics[]) so each row's
+  // aggregate() picks only its own slice — passing a single flat series
+  // would silently sum every ad into every row's range totals.
   const needsLazyHistory = range === "14d" || range === "30d" || range === "custom";
   // For "custom" we always pass days=30 (the lazy endpoint answers either
   // 14 or 30 — a custom range longer than 30d is out of scope and will
@@ -452,7 +470,7 @@ export function DecisionTable({
     { enabled: needsLazyHistory && accountId > 0, retry: false, staleTime: 60_000 }
   );
   // Surface a loader copy whenever the lazy fetch is running. We tolerate
-  // an empty `daily` result (e.g. the new account has no rows yet) without
+  // an empty `byId` result (e.g. the new account has no rows yet) without
   // showing the spinner — that's a server-side empty, not a "loading" state.
   const showLazyLoading =
     needsLazyHistory && (lazyHistory.isLoading || (!lazyHistory.data && !lazyHistory.error));
@@ -468,15 +486,27 @@ export function DecisionTable({
     // Anchor preset chips to the account-tz "today"; fall back to the browser
     // date only for snapshots cached before asOfDate existed (spec 010, R4).
     const asOf = asOfDate ?? dateStr(0);
-    const lazyDaily = lazyHistory.data?.daily ?? null;
-    // While loading, pass null so aggregate() does not silently render zero
-    // totals against the empty `s.daily30` (refresh-bottleneck fix load state).
+    // Row-keyed lazy map: ad_id → sorted DailyMetrics[]. While the lazy
+    // fetch is still in flight, every ad row sees `null` (loading) instead
+    // of zero-valued metrics against the empty s.daily30. Once the data
+    // resolves, each row picks its own slice (`byId[r.id]`).
+    const lazyById = (lazyHistory.data?.byId ?? null) as Record<string, DailyMetrics[]> | null;
     const m = new Map<string, FilterAgg | null>();
     for (const r of rows) {
-      m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to, asOf, lazyDaily));
+      // For ranges that need the lazy history, threading `null` while
+      // loading makes aggregate() return `null` — the caller renders an
+      // em-dash per cell (not 0). After the data arrives we pass the
+      // row's own slice. campaign / adset rows fall back to s.daily30
+      // (which still carries the 30d daily post-fix).
+      let lazySlice: DailyMetrics[] | null | undefined;
+      if (needsLazyHistory) {
+        if (!lazyById) lazySlice = null;         // loading
+        else lazySlice = lazyById[r.id] ?? [];   // "fetched but no rows" → empty
+      }
+      m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to, asOf, lazySlice));
     }
     return m;
-  }, [rows, seriesMap, range, from, to, asOfDate, lazyHistory.data]);
+  }, [rows, seriesMap, range, from, to, asOfDate, lazyHistory.data, needsLazyHistory]);
 
   // visible rows — when searching/filtering, search across ALL levels
   const hasFilters = filterRules.length > 0;

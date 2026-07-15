@@ -30,9 +30,34 @@ function daysAgo(n: number): string {
 }
 
 /**
- * Mock Graph responses for an account with the 6 ads above. Each ad's
- * delivery window is honored on whichever Meta endpoint the new contract
- * uses (presence aggregate for 30d, daily for 7d, w3d, today).
+ * Mock Graph responses for a 6-ad relevance fixture. The new code
+ * uses three presence signals at the ad level — cheapest is the new
+ * 30d aggregate; the w3d / today maps are still read but they're
+ * populated only by ads that delivered inside those windows.
+ *
+ * Each ad below exercises a SPECIFIC branch of `hadDelivery` while
+ * staying absent from the others:
+ *   - ad_30d_only       : in 30d aggregate ONLY (delivered 8-29d ago;
+ *                          silent in 7d daily / w3d / today). Tests
+ *                          the new adPresence30d branch.
+ *   - ad_w3d_only       : in w3d ONLY (delivered 2-3d ago; silent in
+ *                          7d daily because of the mock's omission —
+ *                          realistic Meta would put it there too, but
+ *                          the new branch's behavior is covered by
+ *                          ad_30d_only; here we want the w3d branch
+ *                          specifically). Tests the legacy w3dMaps
+ *                          fallback branch.
+ *   - ad_today_only     : in today ONLY. Tests the legacy todayMaps
+ *                          fallback branch.
+ *   - ad_never          : PAUSED + silent in every window. Tests the
+ *                          dropped case.
+ *   - ad_active_only    : ACTIVE + silent in every window. Tests the
+ *                          effective_status-ACTIVE bypass.
+ *
+ * (w3d/today are subset of 30d in real Meta; this fixture deliberately
+ * mocks the responses so each branch is exercised independently.
+ * The OLD dailyMaps-length-0 check would have caught the 30d-only ad,
+ * so the new path must keep doing so.)
  */
 function mockGraphWithScenarios() {
   return vi.fn(async (input: unknown) => {
@@ -63,9 +88,8 @@ function mockGraphWithScenarios() {
       return new Response(JSON.stringify({
         data: [
           { id: "ad_30d_only",   name: "30d-only",   status: "PAUSED", effective_status: "PAUSED", adset_id: "a1", campaign_id: "c1", created_time: "2026-06-01" },
-          { id: "ad_30d_late",   name: "30d-late",   status: "PAUSED", effective_status: "PAUSED", adset_id: "a1", campaign_id: "c1", created_time: "2026-06-01" },
-          { id: "ad_recent",     name: "recent",     status: "PAUSED", effective_status: "PAUSED", adset_id: "a1", campaign_id: "c1", created_time: "2026-06-01" },
-          { id: "ad_3d",         name: "3d-only",    status: "PAUSED", effective_status: "PAUSED", adset_id: "a1", campaign_id: "c1", created_time: "2026-06-01" },
+          { id: "ad_w3d_only",   name: "w3d-only",   status: "PAUSED", effective_status: "PAUSED", adset_id: "a1", campaign_id: "c1", created_time: "2026-06-01" },
+          { id: "ad_today_only", name: "today-only", status: "PAUSED", effective_status: "PAUSED", adset_id: "a1", campaign_id: "c1", created_time: "2026-06-01" },
           { id: "ad_never",      name: "never",      status: "PAUSED", effective_status: "PAUSED", adset_id: "a1", campaign_id: "c1", created_time: "2026-06-01" },
           { id: "ad_active_only",name: "active-only",status: "ACTIVE", effective_status: "ACTIVE", adset_id: "a1", campaign_id: "c1", created_time: "2026-06-01" },
         ],
@@ -73,71 +97,32 @@ function mockGraphWithScenarios() {
     }
 
     if (url.pathname.endsWith("/insights")) {
-      // Per-ad-level scenarios
       if (level === "ad") {
-        // Cheap 30d presence aggregate (no time_increment). Lists every ad
-        // that delivered ANYTHING in the last 30d — the relevance signal
-        // for ad-level presence. Includes ad_30d_only + ad_30d_late.
+        // Branch 1 (NEW): ad-level 30d aggregate. Lists ad_30d_only —
+        // the only ad that the OLD code would have caught via
+        // dailyMaps.length > 0 but the NEW code catches here.
         if (date_preset === "last_30d" && time_increment === null) {
           return new Response(JSON.stringify({
             data: [
-              { ad_id: "ad_30d_only",   date_start: daysAgo(10), impressions: "100",  spend: "1" },
-              { ad_id: "ad_30d_late",   date_start: daysAgo(5),  impressions: "200",  spend: "2" },
-              { ad_id: "ad_recent",     date_start: daysAgo(0),  impressions: "300",  spend: "3" },
-              { ad_id: "ad_3d",         date_start: daysAgo(1),  impressions: "400",  spend: "4" },
-              // ad_never intentionally omitted
+              { ad_id: "ad_30d_only", date_start: daysAgo(10), impressions: "100", spend: "1" },
             ],
           }), { status: 200 });
         }
-        // last_7d daily (time_increment=1). Only serves rows in the last 7d
-        // window — ad_30d_only is silent here.
+        // ad-level last_7d daily — empty (no ad is in this window for
+        // this fixture; the fix means daily7 here is empty for ad rows).
         if (date_preset === "last_7d" && time_increment === "1") {
-          const rows: any[] = [];
-          // ad_30d_late delivered days 4..7 ago
-          for (let i = 4; i <= 7; i++) {
-            rows.push({
-              ad_id: "ad_30d_late",
-              date_start: daysAgo(i),
-              impressions: "200", clicks: "10", inline_link_clicks: "10",
-              ctr: "5", inline_link_click_ctr: "5", cpm: "10", cpc: "0.2",
-              spend: "2", actions: [], action_values: [],
-            });
-          }
-          // ad_recent delivered days 1..7
-          for (let i = 1; i <= 7; i++) {
-            rows.push({
-              ad_id: "ad_recent",
-              date_start: daysAgo(i),
-              impressions: "300", clicks: "15", inline_link_clicks: "15",
-              ctr: "5", inline_link_click_ctr: "5", cpm: "10", cpc: "0.2",
-              spend: "3", actions: [], action_values: [],
-            });
-          }
-          // ad_3d delivered days 1..3
-          for (let i = 1; i <= 3; i++) {
-            rows.push({
-              ad_id: "ad_3d",
-              date_start: daysAgo(i),
-              impressions: "400", clicks: "20", inline_link_clicks: "20",
-              ctr: "5", inline_link_click_ctr: "5", cpm: "10", cpc: "0.2",
-              spend: "4", actions: [], action_values: [],
-            });
-          }
-          return new Response(JSON.stringify({ data: rows }), { status: 200 });
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
         }
-        // w3d (no time_increment)
+        // Branch 2: w3d. Lists ONE ad — ad_w3d_only.
         if (date_preset === "last_3d" && time_increment === null) {
           return new Response(JSON.stringify({
-            data: [
-              { ad_id: "ad_recent", date_start: daysAgo(1), impressions: "300", spend: "3" },
-              { ad_id: "ad_3d",     date_start: daysAgo(1), impressions: "400", spend: "4" },
-            ],
+            data: [{ ad_id: "ad_w3d_only", date_start: daysAgo(1), impressions: "400", spend: "4" }],
           }), { status: 200 });
         }
-        // today
+        // Branch 3: today. Lists ONE ad — ad_today_only.
         if (date_preset === "today" && time_increment === null) {
           return new Response(JSON.stringify({
-            data: [{ ad_id: "ad_recent", date_start: daysAgo(0), impressions: "100", spend: "1" }],
+            data: [{ ad_id: "ad_today_only", date_start: daysAgo(0), impressions: "100", spend: "1" }],
           }), { status: 200 });
         }
       }
@@ -162,19 +147,25 @@ describe("refresh-bottleneck fix — relevance-filter membership preservation", 
     vi.restoreAllMocks();
   });
 
-  it("an ad that delivered 8–30d ago is kept (presence aggregate preserves the OLD 30d membership)", async () => {
+  it("relevance-filter membership: each signal's branch keeps its own ad, never-delivered drops", async () => {
+    // Mutually-exclusive coverage (see mockGraphWithScenarios header):
+    //   - ad_30d_only       : kept via the NEW 30d presence branch
+    //   - ad_w3d_only       : kept via the legacy w3d branch
+    //   - ad_today_only     : kept via the legacy today branch
+    //   - ad_never          : dropped (PAUSED + silent)
+    //   - ad_active_only    : kept via the effective_status-ACTIVE bypass
+    // A regression in any single branch → that ad drops, and the
+    // assertion below catches it. The ad_30d_only row is the load-
+    // bearing new behavior — the OLD code caught it via dailyMaps
+    // length > 0; the NEW code MUST catch it via the presence aggregate.
     globalThis.fetch = mockGraphWithScenarios() as unknown as typeof fetch;
     const snap: AccountSnapshotPayload = await buildSnapshot("t", "act_x", "USD");
     const ids = new Set(snap.objects.filter(o => o.level === "ad").map(o => o.id));
-    // ad_30d_only is PAUSED + delivered only 8-29d ago. The OLD code kept
-    // it via dailyMaps(ad).get(id).length > 0; the NEW code keeps it via
-    // the cheap 30d presence aggregate. Same membership either way.
-    expect(ids.has("ad_30d_only")).toBe(true);
-    expect(ids.has("ad_30d_late")).toBe(true);
-    expect(ids.has("ad_recent")).toBe(true);
-    expect(ids.has("ad_3d")).toBe(true);
-    expect(ids.has("ad_never")).toBe(false);
-    expect(ids.has("ad_active_only")).toBe(true);
+    expect(ids.has("ad_30d_only"),   "30d presence branch lost").toBe(true);
+    expect(ids.has("ad_w3d_only"),   "w3d branch lost").toBe(true);
+    expect(ids.has("ad_today_only"), "today branch lost").toBe(true);
+    expect(ids.has("ad_never"),      "ad_never should NOT be kept").toBe(false);
+    expect(ids.has("ad_active_only"),"active-only branch lost").toBe(true);
   });
 
   it("30d membership is NOT just w3d — an ad silent in w3d but active in 30d stays in the table", async () => {

@@ -201,6 +201,14 @@ Untracked-but-relevant already in the branch before this PR:
 
 7. KNOWN GAPS / NEXT STEPS (out of scope for this PR)
 -----------------------------------------------------
+  - **fetchBaselines (Phase C) is intentionally untouched.** It still
+    issues an unmodified `level=ad, last_90d, time_increment=1` call.
+    On wearefforce that call was empirically cheap (~3.5s measured in the
+    mock run; second-tier behind the slow call we just retired), so it
+    is NOT a hot-path bottleneck today. For future accounts an order of
+    magnitude larger than wearefforce, this call could become the new
+    dominant cost — flagging it as a residual risk to profile separately
+    if a refresh regresses.
   - The 'custom' range with > 30d is not supported — fetchAdDailyHistory
     returns 14 or 30 only. The DecisionTable will silently show 30 days
     worth of history for a custom request that goes back further. Add

@@ -25,6 +25,7 @@ import { buildDemoSnapshot, DEMO_FUNNEL } from "./demo";
 import { deriveTargets, runEngine } from "./engine";
 import {
   AccountSnapshotPayload,
+  DailyMetrics,
   FunnelInputs,
   SUPPORTED_CURRENCIES,
 } from "../shared/qarar";
@@ -633,6 +634,12 @@ export const appRouter = router({
      * when the user picks a range wider than 7d (or a custom range), at
      * which point the DecisionTable shows a loading state until this returns.
      *
+     * Returns a ROW-KEYED map (`ad_id → sorted DailyMetrics[]`) so the
+     * DecisionTable can pick the slice matching the row it is aggregating.
+     * Returning one anonymous flat list here would silently sum every ad's
+     * daily values into every row's range totals — flagged during review
+     * (CodeRabbit, fix applied).
+     *
      * Authentication: same `activeProcedure` route as `refresh` — requires an
      * active Meta connection. Caching: caller (React Query) keys by
      * (adAccountId, days) so re-selecting a range doesn't re-fetch.
@@ -647,29 +654,23 @@ export const appRouter = router({
       .query(async ({ ctx, input }) => {
         const account = await requireAccount(ctx.user.id, input.adAccountId);
         if (account.isDemo) {
-          // Demo account has no Meta token; serve the engine's daily30 from
-          // the cached snapshot (demo rows include daily7 with up to 7 days,
-          // which is enough for "last 7d" but NOT 14d/30d — we expand to the
-          // requested window by repeating the demo series forward so the
-          // chart shows non-empty data instead of erroring).
+          // Demo account has no Meta token; serve the engine's own
+          // daily30 / daily7 from the cached snapshot, keyed by ad id.
           const snap = await db.getLatestSnapshot(ctx.user.id, input.adAccountId);
           const payload = snap?.payload as AccountSnapshotPayload | null;
-          if (!payload) return { daily: [] };
-          const allDaily: (typeof payload.objects)[number]["daily30"] extends infer T
-            ? T extends Array<infer U>
-              ? U[]
-              : never
-            : never = [];
+          if (!payload) return { byId: {} as Record<string, DailyMetrics[]> };
+          const byId: Record<string, DailyMetrics[]> = {};
           for (const o of payload.objects) {
-            const own = o.daily30 && o.daily30.length > 0 ? o.daily30 : o.daily7;
-            if (own) allDaily.push(...own);
+            if (o.level !== "ad") continue;
+            const series = o.daily30 && o.daily30.length > 0 ? o.daily30 : o.daily7;
+            byId[o.id] = series ?? [];
           }
-          return { daily: allDaily };
+          return { byId };
         }
         const token = await getUserToken(ctx.user.id);
         try {
-          const daily = await fetchAdDailyHistory(token, account.accountId, input.days);
-          return { daily };
+          const byId = await fetchAdDailyHistory(token, account.accountId, input.days);
+          return { byId: Object.fromEntries(byId.entries()) };
         } catch (e: any) {
           if (e?.isAuthError) {
             await db.markConnectionStatus(ctx.user.id, "expired");

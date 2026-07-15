@@ -385,6 +385,15 @@ async function fetchHierarchy(token: string, accountId: string) {
  * Start an async insights report (POST /{accountId}/insights → report_run_id),
  * poll until completion, then page through the results. This POST creates a
  * report only — it never modifies the ad account (the app stays read-only).
+ *
+ * Instrumentation: the per-request RefreshMetrics store sees:
+ *   - the POST as `graphCalls` (round-trip) and `metaMs` (wall-time)
+ *   - each polling status GET inside `graphGet` (already counts)
+ *   - the final result download (`graphGetAll` walks paging.next) inside
+ *     `graphGet` (already counts)
+ * Originally the POST bypassed `graphGet` and so did NOT contribute to
+ * the per-refresh totals — a real gap when a large account bounces to
+ * the async path. Promoted here to use the same instrumentation primitive.
  */
 async function fetchInsightsAsync(
   token: string,
@@ -393,18 +402,26 @@ async function fetchInsightsAsync(
   timeoutMs = 120000
 ): Promise<any[]> {
   const body = new URLSearchParams({ ...params, access_token: token });
+  const m = refreshMetrics.getStore();
+  // The POST is a creation call (no GET read), so we count it manually to
+  // match graphGet's accounting shape — graphCalls, retries (0 here — POST
+  // is not retried), and metaMs. graphGet's retry-and-instrument logic
+  // doesn't fit a POST, so the same metrics primitive is reused by hand.
+  if (m) m.graphCalls++;
+  const fetchStart = m ? performance.now() : 0;
   const startRes = await fetch(`${GRAPH}/${accountId}/insights`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
   });
+  if (m) m.metaMs += performance.now() - fetchStart;
   const startJson: any = await startRes.json().catch(() => ({}));
   const reportId = startJson.report_run_id;
   if (!reportId) {
     throw new Error(startJson.error?.message || "Failed to start async insights job");
   }
   const deadline = Date.now() + timeoutMs;
-  // poll job status
+  // poll job status — graphGet already increments counters per poll.
   for (;;) {
     if (Date.now() > deadline) throw new Error("Async insights job timed out");
     const status = await graphGet(`/${reportId}`, { access_token: token });
@@ -414,6 +431,8 @@ async function fetchInsightsAsync(
     }
     await new Promise(r => setTimeout(r, 2000));
   }
+  // Final download — graphGetAll walks the result pages through graphGet,
+  // so every result page call is already in the totals.
   return graphGetAll(`/${reportId}/insights`, { limit: "500", access_token: token }, 40);
 }
 
@@ -794,7 +813,7 @@ export async function fetchAdDailyHistory(
   token: string,
   accountId: string,
   days: 14 | 30 = 30
-): Promise<DailyMetrics[]> {
+): Promise<Map<string, DailyMetrics[]>> {
   // Lazy fetch — opt into the same instrumentation store that buildSnapshot
   // uses, so [refresh-timing] counters still credit every round-trip. If we
   // are called outside a previously-entered store (e.g. the standalone
@@ -808,17 +827,19 @@ export async function fetchAdDailyHistory(
     date_preset: preset,
     time_increment: "1",
   });
-  // Flatten the per-ad daily rows into one date-sorted series for the UI.
-  // The DecisionTable date-range aggregator sums these per-day, so we hand
-  // it the raw rows it expects (an array of DailyMetrics, with `date`).
-  const all: DailyMetrics[] = [];
-  for (const rows of Array.from(map.values())) {
-    for (const r of rows) {
-      all.push({ ...parseInsightsRow(r), date: r.date_start as string });
-    }
+  // Build a per-AD keyed map (rowId → date-sorted DailyMetrics). The
+  // DecisionTable picks the slice matching the row being aggregated —
+  // without row identity, every row's range totals would include every
+  // other ad's spend (each row sees the union). See aggregate() in
+  // client/src/components/DecisionTable.tsx for the consumer side.
+  const byId = new Map<string, DailyMetrics[]>();
+  for (const [adId, rows] of Array.from(map.entries())) {
+    const series: DailyMetrics[] = rows
+      .map(r => ({ ...parseInsightsRow(r), date: r.date_start as string }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    byId.set(adId, series);
   }
-  all.sort((a, b) => a.date.localeCompare(b.date));
-  return all;
+  return byId;
 }
 
 /** Spend share within ad set — required for rule K5 (computed client-side per spec A3.6). */

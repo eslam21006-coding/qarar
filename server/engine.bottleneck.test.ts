@@ -162,27 +162,34 @@ describe("refresh-bottleneck fix — engine verdict stability across daily30 siz
       });
     }
 
+    // Baseline: pristine demo snapshot with ad_flash promoted to ACTIVE +
+    // age=4 so the decayMap gate clears. This is what the OLD pre-fix
+    // behavior would have seen for this ad (no daily30 extension).
     const baseSnap = buildDemoSnapshot();
     const baseFlash = baseSnap.objects.find(o => o.id === "ad_flash")!;
     baseFlash.ageDays = 4;
     baseFlash.status = "ACTIVE";
     baseFlash.effectiveStatus = "ACTIVE";
     baseFlash.daily7 = flashOriginalDaily7;
-    baseFlash.daily30 = extendedDaily30(baseFlash.daily7);
-    baseFlash.daily7 = baseFlash.daily30.slice(-7);
+    // (no daily30 mutation on the baseline — keep the demo's series)
 
-    const originalResult = runEngine(baseSnap, funnel);
-    const flashOriginal = originalResult.rows.find(r => r.id === "ad_flash")!;
-    expect(flashOriginal.rule).toBe("K4");
+    const baselineResult = runEngine(baseSnap, funnel);
+    const baselineRow = baselineResult.rows.find(r => r.id === "ad_flash")!;
+    expect(baselineRow.rule).toBe("K4");
 
-    // Twin — daily7 byte-identical, daily30 padded with 23 wild days.
+    // Twin: clone the (already-mutated) baseSnap, then extend daily30 on
+    // the twin's ad_flash only. The twin's daily7 stays equal to the
+    // baseline's daily7 (byte-identical) — that's the invariant under test.
     const twin = JSON.parse(JSON.stringify(baseSnap)) as AccountSnapshotPayload;
     const twinFlash = twin.objects.find(o => o.id === "ad_flash")!;
+    twinFlash.daily30 = extendedDaily30(twinFlash.daily7);
+    twinFlash.daily7 = twinFlash.daily30.slice(-7);
+
     const twinResult = runEngine(twin, funnel);
     const twinRow = twinResult.rows.find(r => r.id === "ad_flash")!;
-    expect(twinRow.verdict).toBe(flashOriginal.verdict);
-    expect(twinRow.rule).toBe(flashOriginal.rule);
-    expect(twinRow.reason_ar).toBe(flashOriginal.reason_ar);
+    expect(twinRow.verdict).toBe(baselineRow.verdict);
+    expect(twinRow.rule).toBe(baselineRow.rule);
+    expect(twinRow.reason_ar).toBe(baselineRow.reason_ar);
     expect(twinFlash.daily7).toEqual(flashOriginalDaily7);
   });
 
@@ -191,7 +198,7 @@ describe("refresh-bottleneck fix — engine verdict stability across daily30 siz
     //   ageDays > 4 AND daily7.length ≥ 4 AND
     //   peak (first 3 days) ctrLink ≥ median (peak >= 1.7) AND
     //   recent ctrLink drop ≥ 25% from peak AND cpmStable.
-    const originalDaily7: DailyMetrics[] = [
+    const fatigueDaily7: DailyMetrics[] = [
       // peak in first 3 days at 2.3, recent day-1 at 1.45, CPM stable at 18
       { spend: 75, impressions: 5600, reach: 5000, frequency: 1.1, clicks: 130, linkClicks: 130, ctrLink: 2.3, ctrAll: 2.3, cpm: 18, cpc: 0.58, conversions: 2, conversionValue: 86, lpViews: 110, cpa: 37.5, date: new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10) },
       { spend: 75, impressions: 5500, reach: 5000, frequency: 1.1, clicks: 126, linkClicks: 126, ctrLink: 2.3, ctrAll: 2.3, cpm: 18.5, cpc: 0.6, conversions: 2, conversionValue: 86, lpViews: 100, cpa: 37.5, date: new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10) },
@@ -202,27 +209,31 @@ describe("refresh-bottleneck fix — engine verdict stability across daily30 siz
       { spend: 76, impressions: 3800, reach: 3500, frequency: 1.1, clicks: 55, linkClicks: 55, ctrLink: 1.45, ctrAll: 1.45, cpm: 20, cpc: 1.38, conversions: 1, conversionValue: 43, lpViews: 50, cpa: 76, date: new Date(Date.now() - 1 * 86400000).toISOString().slice(0, 10) },
     ];
 
+    // Baseline: demo snapshot with ad_fatigue promoted to ACTIVE + age=8.
     const baseSnap = buildDemoSnapshot();
-    const fatigue = baseSnap.objects.find(o => o.id === "ad_fatigue")!;
-    fatigue.ageDays = 8;
-    fatigue.status = "ACTIVE";
-    fatigue.effectiveStatus = "ACTIVE";
-    fatigue.daily7 = originalDaily7;
-    fatigue.daily30 = extendedDaily30(originalDaily7);
-    fatigue.daily7 = fatigue.daily30.slice(-7);
+    const baseFatigue = baseSnap.objects.find(o => o.id === "ad_fatigue")!;
+    baseFatigue.ageDays = 8;
+    baseFatigue.status = "ACTIVE";
+    baseFatigue.effectiveStatus = "ACTIVE";
+    baseFatigue.daily7 = fatigueDaily7;
 
-    const baseResult = runEngine(baseSnap, funnel);
-    const original = baseResult.rows.find(r => r.id === "ad_fatigue")!;
-    expect(original.rule).toBe("F1");
+    const baselineResult = runEngine(baseSnap, funnel);
+    const baselineRow = baselineResult.rows.find(r => r.id === "ad_fatigue")!;
+    expect(baselineRow.rule).toBe("F1");
 
+    // Twin: clone the baseline, then extend daily30 on the twin's
+    // ad_fatigue. daily7 stays byte-identical to the baseline.
     const twin = JSON.parse(JSON.stringify(baseSnap)) as AccountSnapshotPayload;
     const twinFatigue = twin.objects.find(o => o.id === "ad_fatigue")!;
+    twinFatigue.daily30 = extendedDaily30(twinFatigue.daily7);
+    twinFatigue.daily7 = twinFatigue.daily30.slice(-7);
+
     const twinResult = runEngine(twin, funnel);
     const twinRow = twinResult.rows.find(r => r.id === "ad_fatigue")!;
-    expect(twinRow.verdict).toBe(original.verdict);
-    expect(twinRow.rule).toBe(original.rule);
-    expect(twinRow.reason_ar).toBe(original.reason_ar);
-    expect(twinFatigue.daily7).toEqual(originalDaily7);
+    expect(twinRow.verdict).toBe(baselineRow.verdict);
+    expect(twinRow.rule).toBe(baselineRow.rule);
+    expect(twinRow.reason_ar).toBe(baselineRow.reason_ar);
+    expect(twinFatigue.daily7).toEqual(fatigueDaily7);
   });
 
   it("monotonicity — adding more days beyond 7 to daily30 never changes a verdict", () => {
