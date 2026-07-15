@@ -459,10 +459,22 @@ export const appRouter = router({
         const checks = await db.getChecks(ctx.user.id, input.adAccountId, day);
         const needsReview =
           Date.now() - new Date(funnel.lastReviewedAt).getTime() > 30 * 86400000;
-        // light per-object series for the display-only date-range selector
+        // light per-object series for the display-only date-range selector.
+        // Refresh-bottleneck fix (round-2 CodeRabbit): the post-fix code sets
+        // ad-level `daily30 = []` (an empty array, not undefined — the lazy
+        // display history now lives behind `dashboard.adDailyHistory`). With
+        // the historical `o.daily30 ?? o.daily7` check, the empty array
+        // passed the `??` (non-nullish is truthy) but `length > 0` then
+        // failed — leaving ad rows in the table with NO daily data until the
+        // lazy fetch resolves. Using `daily30?.length ? daily30 : daily7`
+        // gives ad rows a fallback to `daily7` immediately, while leaving
+        // campaign / adset rows on the longer daily30 series.
         const dailyOf = (o: (typeof payload.objects)[number]) => {
-          const own = o.daily30 ?? o.daily7;
-          if (own && own.length > 0) return own;
+          const own =
+            o.daily30 && o.daily30.length > 0 ? o.daily30
+              : o.daily7 && o.daily7.length > 0 ? o.daily7
+              : null;
+          if (own) return own;
           // fallback: sum children's daily series by date (demo campaigns have no own series)
           const children = payload.objects.filter(c =>
             o.level === "campaign" ? c.level === "adset" && c.campaignId === o.id : c.parentId === o.id
