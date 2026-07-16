@@ -91,7 +91,25 @@ describe("aggregate() — preset chips exclude today (SC-002)", () => {
   // a 30d-silent ad row would render as a "0s" row indistinguishable
   // from a 30d-noisy ad row whose lazy data resolved to []. Round-3
   // CodeRabbit caught the fall-through; this test locks it down.
+  //
+  // Round-4 CodeRabbit: the original "lazyDaily = [] ⇒ AUTHORITATIVE empty"
+  // assertion used a fixture whose s.daily30 was also `[]` — so a regression
+  // to the old fall-through behavior would STILL pass (s.daily30 empty ⇒
+  // zeros either way). The fixture below carries a NON-EMPTY s.daily30 with
+  // an in-window row, so the only way the assertion can hold is if the
+  // empty lazy slice is treated as authoritative (NOT a fall-through).
   describe("aggregate() — tri-state lazyDaily (refresh-bottleneck round-3)", () => {
+    const noisyDaily30ForAd: DailyMetrics[] = [
+      // A non-zero row inside the 30d window. If aggregate() falls through
+      // to s.daily30 (round-3 regression), this row's metrics would leak
+      // into the result and the assertion below would fail. With the
+      // authoritative-empty semantic in place, the lazy slice (empty)
+      // wins and the result is exactly zero.
+      {
+        ...win({ spend: 999, impressions: 99999, conversions: 99, linkClicks: 9999 }),
+        date: "2026-07-08",
+      },
+    ];
     const emptyAdSeries: SeriesObj = {
       id: "ad_silent_30d",
       level: "ad",
@@ -101,8 +119,10 @@ describe("aggregate() — preset chips exclude today (SC-002)", () => {
       thumbnailUrl: null,
       today: win({ spend: 1, impressions: 100, conversions: 0 }),
       w3d: win({ spend: 3, impressions: 300, conversions: 0 }),
-      // post-fix ad rows carry NO daily30 in the cached snapshot.
-      daily30: [],
+      // Round-4 fix: post-fix ad rows carry NO daily30 in the cached snapshot.
+      // The fixture keeps a non-zero row here so the test below proves the
+      // empty lazy slice is authoritative (not a fall-through to this row).
+      daily30: noisyDaily30ForAd,
     };
 
     it("lazyDaily = null ⇒ loading (returns null, caller renders em-dash)", () => {
@@ -110,12 +130,15 @@ describe("aggregate() — preset chips exclude today (SC-002)", () => {
       expect(agg).toBeNull();
     });
 
-    it("lazyDaily = [] ⇒ AUTHORITATIVE empty (zeros, not falling through)", () => {
+    it("lazyDaily = [] ⇒ AUTHORITATIVE empty (zeros, NOT falling through to s.daily30's non-zero row)", () => {
       const agg = aggregate(emptyAdSeries, "30d", "", "", ASOF, []);
       expect(agg).not.toBeNull();
       expect(agg!.spend).toBe(0);
       expect(agg!.impressions).toBe(0);
       expect(agg!.results).toBe(0);
+      // linkClicks is a derived field (sum of linkClicks across rows);
+      // also zero proves no row from s.daily30 leaked through.
+      expect(agg!.linkClicks).toBe(0);
     });
 
     it("lazyDaily = [] still returns the 3d-window fallback for the 3d chip", () => {
