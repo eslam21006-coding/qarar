@@ -79,13 +79,24 @@ async function buildSimulatedRefresh(): Promise<{ objects: any[] }> {
     // Schedule a delay matching the role of this call. The OLD ad-level
     // last_30d-time_increment=1 call would have hit AD_LEVEL_LATENCY_MS;
     // the post-fix code path no longer issues that shape, so slowCalls must
-    // stay at 0.
+    // stay at 0. Round-3 CodeRabbit: the legacy shape's delay was missing
+    // from this branch, weakening the slowCalls regression guard.
     let delay: number;
     if (url.pathname.endsWith("/campaigns") || url.pathname.endsWith("/adsets") || url.pathname.endsWith("/ads")) {
       delay = BASE_LATENCY_MS.hierarchy;
     } else if (url.pathname.endsWith("/insights")) {
+      // Legacy bottleneck shape — MUST NEVER fire under the post-fix code.
+      // Round-3: tagged with the 108s latency so the slowCalls guard
+      // catches any regression that re-introduces this call.
+      if (
+        qs.get("level") === "ad" &&
+        qs.get("date_preset") === "last_30d" &&
+        qs.get("time_increment") === "1"
+      ) {
+        delay = AD_LEVEL_LATENCY_MS;
+      }
       // presence30d (no time_increment, level=ad, last_30d) → cheap
-      if (qs.get("level") === "ad" && qs.get("date_preset") === "last_30d" && qs.get("time_increment") === null) {
+      else if (qs.get("level") === "ad" && qs.get("date_preset") === "last_30d" && qs.get("time_increment") === null) {
         delay = BASE_LATENCY_MS.presence_aggregate;
       }
       // last_7d ad-level daily → cheap (≈ same as other per-level calls)
@@ -185,7 +196,7 @@ async function simulatedLazyFetch() {
   }) as unknown as typeof fetch;
   try {
     const daily = await fetchAdDailyHistory("token", "act_test_simulation", 30);
-    console.log(`[mock] fetchAdDailyHistory returned ${daily.length} rows`);
+    console.log(`[mock] fetchAdDailyHistory returned ${daily.size} entries`);
   } finally {
     globalThis.fetch = realFetch;
   }

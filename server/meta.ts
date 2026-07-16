@@ -818,10 +818,14 @@ export async function fetchAdDailyHistory(
   // uses, so [refresh-timing] counters still credit every round-trip. If we
   // are called outside a previously-entered store (e.g. the standalone
   // measure-refresh-timing harness), establish a fresh one in this async
-  // context so counters still increment.
-  if (!refreshMetrics.getStore()) {
+  // context so counters still increment. We also emit a [refresh-timing]
+  // summary at the end (round-3 CodeRabbit: lazy-fetch round-trips were
+  // previously invisible in timing output).
+  const ownStore = !refreshMetrics.getStore();
+  if (ownStore) {
     refreshMetrics.enterWith(newRefreshMetrics());
   }
+  const t0 = performance.now();
   const preset = days === 14 ? "last_14d" : "last_30d";
   const map = await fetchLevelInsights(token, accountId, "ad", {
     date_preset: preset,
@@ -838,6 +842,26 @@ export async function fetchAdDailyHistory(
       .map(r => ({ ...parseInsightsRow(r), date: r.date_start as string }))
       .sort((a, b) => a.date.localeCompare(b.date));
     byId.set(adId, series);
+  }
+  // Emit the [refresh-timing] summary when we OWN the store — otherwise
+  // we're nested inside a refresh whose own summary already covers us, and
+  // a second emit would double-count the parent refresh's totals.
+  if (ownStore) {
+    const m = refreshMetrics.getStore();
+    if (m) {
+      console.log(
+        `[refresh-timing] adDailyHistory ${JSON.stringify({
+          accountId,
+          days,
+          wallMs: Math.round(performance.now() - t0),
+          metaRoundTrips: m.graphCalls,
+          metaRetries: m.graphRetries,
+          asyncFallbacks: m.asyncFallbacks,
+          metaMsSerialSum: Math.round(m.metaMs),
+          rowsReturned: byId.size,
+        })}`
+      );
+    }
   }
   return byId;
 }

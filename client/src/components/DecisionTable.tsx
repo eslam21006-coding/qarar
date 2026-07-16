@@ -125,9 +125,18 @@ function aggFromWindow(w: WindowMetrics): FilterAgg {
 /**
  * Refresh-bottleneck fix overload: lookup the row's own slice from a
  * ROW-KEYED lazy history map (ad-id → sorted DailyMetrics). The server's
- * `dashboard.adDailyHistory` returns the by-id map; rows with no entry
- * fall through to the historical `s.daily30` (which is empty at the ad
- * level post-fix, so for ad rows the loader / fallback decides).
+ * `dashboard.adDailyHistory` returns the by-id map.
+ *
+ * Tri-state lazyDaily argument (round-3 CodeRabbit):
+ *   - undefined → fall back to `s.daily30` (campaign / adset rows)
+ *   - null      → loading — return `null` so the caller renders an
+ *                  em-dash per cell (not 0)
+ *   - [] or any non-empty array → AUTHORITATIVE — use as-is for the
+ *                  aggregate. An empty array here means Meta reported
+ *                  zero daily rows for this ad in the 30d window; the
+ *                  fix preserves that signal (the post-fix `s.daily30`
+ *                  is also empty at the ad level, so falling through
+ *                  would be silent — exactly what round-3 caught).
  */
 export function aggregate(
   s: SeriesObj | undefined,
@@ -135,15 +144,6 @@ export function aggregate(
   from: string,
   to: string,
   asOfDate: string,
-  /**
-   * Refresh-bottleneck fix: per-row slice of the lazy 30-day daily history.
-   * Pass `null` while the lazy fetch is still in flight — `aggregate()`
-   * then returns `null` (the caller renders a loading state) instead of
-   * silently rendering zero-valued totals against an empty `s.daily30`.
-   * Pass `undefined` (or omit) to mean "fall back to `s.daily30`" — the
-   * historical behavior at campaign / adset levels (which still carry
-   * daily30 in the cached snapshot).
-   */
   lazyDaily?: DailyMetrics[] | null,
 ): FilterAgg | null {
   if (!s) return null;
@@ -152,10 +152,10 @@ export function aggregate(
   // NOT aggregate against the empty default; the DecisionTable shows a
   // row-level "—" with the toolbar spinner instead.
   if (lazyDaily === null) return null;
-  // History: prefer the row's own slice when provided, otherwise the
-  // cached `s.daily30` (campaign/adset levels; ad level is empty by
-  // construction post-fix).
-  const dailyForAgg = lazyDaily && lazyDaily.length > 0 ? lazyDaily : s.daily30;
+  // Tri-state pick:
+  //   undefined → use cached s.daily30
+  //   [] or [...items] → authoritative use the lazy slice (even if empty)
+  const dailyForAgg = lazyDaily !== undefined ? lazyDaily : s.daily30;
   // 3d preset is the one case the historical code allowed falling back to
   // the engine's w3d window when daily30 was absent.
   if (range === "3d" && dailyForAgg.length === 0) return aggFromWindow(s.w3d);
@@ -489,19 +489,32 @@ export function DecisionTable({
     // Row-keyed lazy map: ad_id → sorted DailyMetrics[]. While the lazy
     // fetch is still in flight, every ad row sees `null` (loading) instead
     // of zero-valued metrics against the empty s.daily30. Once the data
-    // resolves, each row picks its own slice (`byId[r.id]`).
+    // resolves, each ad row picks its own slice (`byId[r.id]`); an empty
+    // array here is AUTHORITATIVE — Meta reported zero daily rows for this
+    // ad in the 30d window — and aggregate() must use it as-is (not fall
+    // back to the post-fix `s.daily30`, which is also empty for ad rows).
+    // campaign / adset rows have their own daily30 in the cached snapshot,
+    // so we leave `lazySlice = undefined` for them and aggregate() will
+    // use s.daily30 transparently.
     const lazyById = (lazyHistory.data?.byId ?? null) as Record<string, DailyMetrics[]> | null;
     const m = new Map<string, FilterAgg | null>();
     for (const r of rows) {
-      // For ranges that need the lazy history, threading `null` while
-      // loading makes aggregate() return `null` — the caller renders an
-      // em-dash per cell (not 0). After the data arrives we pass the
-      // row's own slice. campaign / adset rows fall back to s.daily30
-      // (which still carries the 30d daily post-fix).
       let lazySlice: DailyMetrics[] | null | undefined;
       if (needsLazyHistory) {
-        if (!lazyById) lazySlice = null;         // loading
-        else lazySlice = lazyById[r.id] ?? [];   // "fetched but no rows" → empty
+        if (!lazyById) {
+          lazySlice = null; // loading — show em-dash until resolved
+        } else if (r.level === "ad") {
+          // AD ROWS: lazy data is authoritative even when empty. Pass
+          // the exact slice (or []) so aggregate() returns zero-valued
+          // metrics for an ad that delivered nothing in 30d, rather than
+          // falling through to s.daily30 (also empty post-fix).
+          lazySlice = lazyById[r.id] ?? [];
+        } else {
+          // CAMPAIGN / ADSET ROWS: keep using the cached s.daily30
+          // (which those levels still carry). aggregate() with
+          // `undefined` falls back to s.daily30 cleanly.
+          lazySlice = undefined;
+        }
       }
       m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to, asOf, lazySlice));
     }
