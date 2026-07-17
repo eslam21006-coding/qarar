@@ -557,31 +557,36 @@ export const appRouter = router({
         const tRefreshStart = Date.now();
         let tAfterBuild = tRefreshStart;
         try {
-          // Hotfix T1: race buildSnapshot against a 180s timeout. Large accounts
-          // with no cached data (initial sync) can take 60-120+ seconds to fetch all
-          // insights from Meta. Cloudflare workers have 30s limit, but Manus hosting
-          // supports longer timeouts. A clean TRPCError TIMEOUT lets the UI show a
-          // friendly message and try again.
+          // Hotfix T1 + round-10 CodeRabbit follow-on: pass an AbortSignal
+          // to buildSnapshot so a stalled Meta response aborts at the 180s
+          // deadline rather than waiting for the server's TCP timeout (which
+          // on a slow 30-day call can be minutes). We also keep the legacy
+          // Promise.race timer as a belt-and-suspenders safety net.
+          const refreshAbort = new AbortController();
+          refreshAbort.signal.addEventListener("abort", () => {
+            // No-op; signal passed to fetch() will cancel the request.
+          });
+          const refreshTimer = setTimeout(() => refreshAbort.abort(), 180_000);
           const payload = await Promise.race([
             buildSnapshot(
               token,
               account.accountId,
-              account.currency ?? "USD"
+              account.currency ?? "USD",
+              refreshAbort.signal,
             ),
             new Promise<never>((_, reject) =>
-              setTimeout(
-                () =>
-                  reject(
-                    new TRPCError({
-                      code: "TIMEOUT",
-                      message:
-                        "استغرق تحميل البيانات وقتًا طويلًا جدًا — حسابك كبير جداً. حاول مرة أخرى وقد تستغرق 3 دقائق.",
-                    })
-                  ),
+              setTimeout(() =>
+                reject(
+                  new TRPCError({
+                    code: "TIMEOUT",
+                    message:
+                      "استغرق تحميل البيانات وقتًا طويلًا جدًا — حسابك كبير جداً. حاول مرة أخرى وقد تستغرق 3 دقائق.",
+                  })
+                ),
                 180_000
               )
             ),
-          ]);
+          ]).finally(() => clearTimeout(refreshTimer));
           tAfterBuild = Date.now();
           await db.saveSnapshot(ctx.user.id, account.id, payload);
           const tAfterSave = Date.now();
@@ -672,6 +677,14 @@ export const appRouter = router({
      * makes the undercount EXPLICIT rather than silent — the alternative
      * of accepting larger windows would force Meta queries that exceed
      * `last_30d` (a different API surface we don't currently use).
+     *
+     * Round-10 CodeRabbit follow-on: thread an `AbortSignal.timeout()` to
+     * graphGet so a stalled Meta response aborts at the deadline rather
+     * than waiting for the server's TCP timeout (which on a slow 30-day
+     * call can be minutes). TIMEOUT is mapped onto TRPCError so the
+     * client sees a clean retry signal instead of a transport-level
+     * failure. 130s > the worst-case mock 108s so legitimate fetches
+     * finish cleanly; a real Meta 108s-equivalent fetch still completes.
      */
     adDailyHistory: activeProcedure
       .input(
@@ -697,10 +710,21 @@ export const appRouter = router({
           return { byId };
         }
         const token = await getUserToken(ctx.user.id);
+        // 130s deadline — tight enough to convert a hung socket into a
+        // retry-worthy TIMEOUT in seconds rather than minutes; loose
+        // enough to let the worst-case mock 108s ad-level last_30d call
+        // complete without aborting.
+        const signal = AbortSignal.timeout(130_000);
         try {
-          const byId = await fetchAdDailyHistory(token, account.accountId, input.days);
+          const byId = await fetchAdDailyHistory(token, account.accountId, input.days, signal);
           return { byId: Object.fromEntries(byId.entries()) };
         } catch (e: any) {
+          if (e?.name === "AbortError" || e?.code === "ABORT_ERR") {
+            throw new TRPCError({
+              code: "TIMEOUT",
+              message: "TIMEOUT",
+            });
+          }
           if (e?.isAuthError) {
             await db.markConnectionStatus(ctx.user.id, "expired");
             throw new TRPCError({ code: "PRECONDITION_FAILED", message: "RECONNECT_REQUIRED" });

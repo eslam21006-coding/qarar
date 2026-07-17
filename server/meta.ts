@@ -62,7 +62,11 @@ export function buildOAuthUrl(redirectUri: string, state: string): string {
   return `https://www.facebook.com/v23.0/dialog/oauth?${params.toString()}`;
 }
 
-async function graphGet(path: string, params: Record<string, string>): Promise<any> {
+async function graphGet(
+  path: string,
+  params: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<any> {
   const qs = new URLSearchParams(params);
   const url = `${GRAPH}${path}?${qs.toString()}`;
   let lastErr: any = null;
@@ -75,7 +79,7 @@ async function graphGet(path: string, params: Record<string, string>): Promise<a
       if (attempt > 0) m.graphRetries++;
     }
     const fetchStart = m ? performance.now() : 0;
-    const res = await fetch(url);
+    const res = await fetch(url, signal ? { signal } : {});
     const json: any = await res.json().catch(() => ({}));
     if (m) m.metaMs += performance.now() - fetchStart;
     if (res.ok && !json.error) return json;
@@ -292,7 +296,7 @@ async function fetchLevelInsights(
   accountId: string,
   level: "campaign" | "adset" | "ad",
   timeParams: Record<string, string>,
-  options?: { adIdFilter?: string[] }
+  options?: { adIdFilter?: string[]; signal?: AbortSignal },
 ): Promise<Map<string, any[]>> {
   const idField = level === "campaign" ? "campaign_id" : level === "adset" ? "adset_id" : "ad_id";
   const byId = new Map<string, any[]>();
@@ -319,7 +323,7 @@ async function fetchLevelInsights(
   }
   let rows: any[];
   try {
-    rows = await graphGetAll(`/${accountId}/insights`, params, 20);
+    rows = await graphGetAll(`/${accountId}/insights`, params, 20, options?.signal);
   } catch (e: any) {
     // Large accounts / heavy queries: fall back to Meta's async insights job
     if (
@@ -335,7 +339,7 @@ async function fetchLevelInsights(
         );
       }
       const { access_token: _t, limit: _l, ...asyncParams } = params;
-      rows = await fetchInsightsAsync(token, accountId, asyncParams);
+      rows = await fetchInsightsAsync(token, accountId, asyncParams, 120000, options?.signal);
     } else {
       throw e;
     }
@@ -353,13 +357,14 @@ async function fetchLevelInsights(
 async function graphGetAll(
   path: string,
   params: Record<string, string>,
-  maxPages = 20
+  maxPages = 20,
+  signal?: AbortSignal,
 ): Promise<any[]> {
   const out: any[] = [];
   let curPath: string | null = path;
   let curParams = params;
   for (let i = 0; i < maxPages && curPath; i++) {
-    const json: any = await graphGet(curPath, curParams);
+    const json: any = await graphGet(curPath, curParams, signal);
     out.push(...(json.data ?? []));
     const next = json.paging?.next as string | undefined;
     if (next) {
@@ -373,22 +378,41 @@ async function graphGetAll(
   return out;
 }
 
-async function fetchHierarchy(token: string, accountId: string) {
-  const campaigns = await graphGetAll(`/${accountId}/campaigns`, {
-    fields: "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,created_time",
-    limit: "200",
-    access_token: token,
-  });
-  const adsets = await graphGetAll(`/${accountId}/adsets`, {
-    fields: "id,name,status,effective_status,daily_budget,campaign_id,created_time,learning_stage_info",
-    limit: "500",
-    access_token: token,
-  });
-  const ads = await graphGetAll(`/${accountId}/ads`, {
-    fields: "id,name,status,effective_status,adset_id,campaign_id,created_time,creative{thumbnail_url,image_url}",
-    limit: "500",
-    access_token: token,
-  });
+async function fetchHierarchy(
+  token: string,
+  accountId: string,
+  signal?: AbortSignal,
+) {
+  const campaigns = await graphGetAll(
+    `/${accountId}/campaigns`,
+    {
+      fields: "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,created_time",
+      limit: "200",
+      access_token: token,
+    },
+    20,
+    signal,
+  );
+  const adsets = await graphGetAll(
+    `/${accountId}/adsets`,
+    {
+      fields: "id,name,status,effective_status,daily_budget,campaign_id,created_time,learning_stage_info",
+      limit: "500",
+      access_token: token,
+    },
+    20,
+    signal,
+  );
+  const ads = await graphGetAll(
+    `/${accountId}/ads`,
+    {
+      fields: "id,name,status,effective_status,adset_id,campaign_id,created_time,creative{thumbnail_url,image_url}",
+      limit: "500",
+      access_token: token,
+    },
+    20,
+    signal,
+  );
   return { campaigns, adsets, ads };
 }
 
@@ -412,7 +436,8 @@ async function fetchInsightsAsync(
   token: string,
   accountId: string,
   params: Record<string, string>,
-  timeoutMs = 120000
+  timeoutMs = 120000,
+  signal?: AbortSignal,
 ): Promise<any[]> {
   const body = new URLSearchParams({ ...params, access_token: token });
   const m = refreshMetrics.getStore();
@@ -426,6 +451,7 @@ async function fetchInsightsAsync(
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
+    signal,
   });
   if (m) m.metaMs += performance.now() - fetchStart;
   const startJson: any = await startRes.json().catch(() => ({}));
@@ -437,7 +463,8 @@ async function fetchInsightsAsync(
   // poll job status — graphGet already increments counters per poll.
   for (;;) {
     if (Date.now() > deadline) throw new Error("Async insights job timed out");
-    const status = await graphGet(`/${reportId}`, { access_token: token });
+    if (signal?.aborted) throw new Error("Aborted");
+    const status = await graphGet(`/${reportId}`, { access_token: token }, signal);
     if (status.async_status === "Job Completed") break;
     if (status.async_status === "Job Failed" || status.async_status === "Job Skipped") {
       throw new Error(`Async insights job ${status.async_status}`);
@@ -446,7 +473,7 @@ async function fetchInsightsAsync(
   }
   // Final download — graphGetAll walks the result pages through graphGet,
   // so every result page call is already in the totals.
-  return graphGetAll(`/${reportId}/insights`, { limit: "500", access_token: token }, 40);
+  return graphGetAll(`/${reportId}/insights`, { limit: "500", access_token: token }, 40, signal);
 }
 
 function ageDaysFrom(createdTime: string | undefined | null): number {
@@ -491,11 +518,20 @@ function ageDaysFrom(createdTime: string | undefined | null): number {
  *                               final.txt §3. The targeted call only fires
  *                               when silencedAdIds.length > 0 — most accounts
  *                               never pay for it.
+ *
+ * AbortSignal (round-7 CodeRabbit + round-10 follow-on): every Graph call is
+ * threaded with an optional `signal` so the route handler can pass
+ * `AbortSignal.timeout(ms)` (or a per-call deadline) all the way down to
+ * graphGet → fetch. A stalled Meta response aborts at the deadline and
+ * surfaces as TRPCError TIMEOUT; refresh callers can cancel a hung refresh
+ * without waiting for the server's TCP timeout. The signal is optional
+ * everywhere — passing nothing keeps the legacy "wait for Meta" behavior.
  */
 export async function buildSnapshot(
   token: string,
   accountId: string,
-  currency: string
+  currency: string,
+  signal?: AbortSignal,
 ): Promise<AccountSnapshotPayload> {
   // Meta's native "last N days" preset covers the last N fully-elapsed days
   // (ending yesterday, evaluated in the ad account's timezone) and excludes
@@ -533,8 +569,8 @@ export async function buildSnapshot(
     const t0 = performance.now();
     const phase: Record<string, number> = {};
 
-  const tHier = performance.now();
-  const { campaigns, adsets, ads } = await fetchHierarchy(token, accountId);
+    const tHier = performance.now();
+    const { campaigns, adsets, ads } = await fetchHierarchy(token, accountId, signal);
   phase.fetchHierarchy = Math.round(performance.now() - tHier);
 
   // Run all per-level calls in parallel. Two facts to lock in:
@@ -590,7 +626,7 @@ export async function buildSnapshot(
       const startOff = performance.now() - tInsights;
       const callStart = performance.now();
       if (c.kind === "level") {
-        return fetchLevelInsights(token, accountId, c.level, c.params).then(map => {
+        return fetchLevelInsights(token, accountId, c.level, c.params, { signal }).then(map => {
           if (timingVerbose()) {
             let rows = 0;
             for (const arr of Array.from(map.values())) rows += arr.length;
@@ -610,7 +646,7 @@ export async function buildSnapshot(
       // Built via fetchLevelInsights so it shares the same paging + retry +
       // async-fallback path; params deliberately omit `time_increment` so
       // Meta returns one row per ad that delivered anything in the window.
-      return fetchLevelInsights(token, accountId, "ad", c.params).then(map => {
+      return fetchLevelInsights(token, accountId, "ad", c.params, { signal }).then(map => {
         if (timingVerbose()) {
           let rows = 0;
           for (const arr of Array.from(map.values())) rows += arr.length;
@@ -692,7 +728,7 @@ export async function buildSnapshot(
           accountId,
           "ad",
           { date_preset: "last_30d", time_increment: "1" },
-          { adIdFilter: chunk },
+          { adIdFilter: chunk, signal },
         );
         for (const [id, rows] of Array.from(part.entries())) {
           adDaily30ForSilenced.set(id, rows);
@@ -947,7 +983,8 @@ export async function buildSnapshot(
 export async function fetchAdDailyHistory(
   token: string,
   accountId: string,
-  days: 14 | 30 = 30
+  days: 14 | 30 = 30,
+  signal?: AbortSignal,
 ): Promise<Map<string, DailyMetrics[]>> {
   // When called outside an already-entered refresh (e.g. the standalone
   // measure-refresh-timing harness), establish a fresh scope so every
@@ -958,10 +995,13 @@ export async function fetchAdDailyHistory(
   const doWork = async () => {
     const t0 = performance.now();
     const preset = days === 14 ? "last_14d" : "last_30d";
-    const map = await fetchLevelInsights(token, accountId, "ad", {
-      date_preset: preset,
-      time_increment: "1",
-    });
+    const map = await fetchLevelInsights(
+      token,
+      accountId,
+      "ad",
+      { date_preset: preset, time_increment: "1" },
+      { signal },
+    );
     // Build a per-AD keyed map (rowId → date-sorted DailyMetrics). The
     // DecisionTable picks the slice matching the row being aggregated —
     // without row identity, every row's range totals would include every

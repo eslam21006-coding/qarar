@@ -211,11 +211,11 @@ server/meta.ts
     (time inside each fetch)                                    (~line 69-80)
   - fetchLevelInsights: increments asyncFallbacks and (verbose)
     logs each async-fallback with its trigger message           (~line 317-325)
-  - buildSnapshot: times each phase (fetchHierarchy,
-    insights9Parallel, fetchBaselines, accountTimezone,
-    buildSnapshotTotal); with REFRESH_TIMING=1 also records
-    insights9CallTrace (per-call startOffMs + durMs);
-    emits ONE structured line:  [refresh-timing] {...}          (~line 445-660)
+   - buildSnapshot: times each phase (fetchHierarchy,
+     insightsParallel, fetchBaselines, accountTimezone,
+     buildSnapshotTotal); with REFRESH_TIMING=1 also records
+     insightsCallTrace (per-call startOffMs + durMs);
+     emits ONE structured line:  [refresh-timing] {...}          (~line 445-660)
 
 server/routers.ts  (dashboard.refresh)
   - times buildSnapshot vs. saveSnapshot vs. total and emits
@@ -225,17 +225,36 @@ Cost when active: a handful of integer adds + one performance.now() pair per
 Meta round-trip, and one console.log per refresh. Negligible vs. the seconds it
 measures — safe to leave on. Set REFRESH_TIMING=1 for the per-call trace.
 
-Emitted shapes:
-  [refresh-timing] {"accountId":"act_...","counts":{...},
-    "phaseMs":{"fetchHierarchy":..,"insights9Parallel":..,
-    "fetchBaselines":..,"accountTimezone":..,"buildSnapshotTotal":..},
-    "metaRoundTrips":..,"metaRetries":..,"asyncFallbacks":..,
-    "metaMsSerialSum":..}
+Emitted shapes (post-bottleneck-fix; 10 parallel call specs, plus optional
+silenced-ad legacy-restore):
+  [refresh-timing] {"accountId":"act_...","counts":{...,
+       "silencedAdsRestored":N}, "phaseMs":{"fetchHierarchy":..,
+       "insightsParallel":..,"silencedAdRestore":..,
+       "fetchBaselines":..,"accountTimezone":..,"buildSnapshotTotal":..},
+       "metaRoundTrips":..,"metaRetries":..,"asyncFallbacks":..,
+       "metaMsSerialSum":..}
   [refresh-timing] end-to-end {"adAccountId":..,"buildSnapshotMs":..,
     "saveSnapshotMs":..,"totalMs":..}
+  [refresh-timing] adDailyHistory {..., "adsReturned":N, "rowsReturned":N}
+
+POST-CHANGE NOTES (refresh-bottleneck fix PR #20):
+  - Metric renamed: `insights9Parallel` → `insightsParallel`. The fix now
+    has 10 per-level call specs (9 fields × {campaign, adset, ad} minus the
+    ad-level-daily slot now satisfied by a different preset, plus 1 cheap
+    ad-level 30d presence aggregate — see server/meta.ts).
+  - New phase `silencedAdRestore`: wall-clock of the targeted last_30d
+    daily fetch for the silenced-ad cohort. N=0 (the common case) ⇒
+    phase ≈ 0ms and no targeted call fires. For accounts with a few
+    silenced ads, the call is filtered to those ad IDs only and chunked
+    (CHUNK=50, CONCURRENCY=3); see §10 of the follow-on report
+    (refresh-fix-final.txt §3c) for the bounded cost model.
+  - counts.silencedAdsRestored (N) — number of ads in the cohort. The
+    actionable workflow signal: N ≫ 0 for many consecutive refreshes
+    suggests ad fatigue is becoming a recurring signal on the account,
+    not a single-ad fluke.
 
 --------------------------------------------------------------------------------
-8. HOW TO CAPTURE THE LIVE PER-PHASE MILLISECONDS  (pending one run)
+8. HOW TO CAPTURE THE LIVE PER-PHASE MILLISECONDS
 --------------------------------------------------------------------------------
 A standalone harness drives the REAL instrumented buildSnapshot against Meta and
 prints the phase log. It is read-only and never touches the DB:
@@ -254,22 +273,25 @@ bash:
 Token source options: Graph API Explorer (developers.facebook.com/tools/explorer,
 select the app, add ads_read, Generate). A short-lived token is fine.
 
-Once it runs, the [refresh-timing] line gives the exact per-phase ms; this
-section will be filled in with the measured breakdown. NOTE: the harness covers
-Phase A–D + payload size; the DB write (Phase E / saveSnapshotMs) only shows up
-in the router's end-to-end line during an actual in-app refresh, since the
-harness has no DB.
+Once it runs, the [refresh-timing] line gives the exact per-phase ms.
 
-  >>> MEASURED PER-PHASE NUMBERS: PENDING LIVE RUN <<<
-      fetchHierarchy      : __ ms
-      insights9Parallel   : __ ms   (and max single-call durMs = __ ms)
-      fetchBaselines      : __ ms
-      accountTimezone     : __ ms
-      buildSnapshotTotal  : __ ms
-      metaMsSerialSum     : __ ms   (vs buildSnapshotTotal → concurrency gain)
-      metaRoundTrips      : __      metaRetries: __   asyncFallbacks: __
-      saveSnapshotMs      : __ ms   (in-app run only)
-      payloadKB           : __
+  >>> MEASURED PER-PHASE NUMBERS (wearefforce / act_1163959057640939)
+      Note: pre-refresh measurements from the original bottleneck report;
+      post-refresh numbers from a post-deploy live run. The PR body carries
+      the live 29.1 s post-fix buildSnapshot total (vs. 129 s baseline).
+      Per-phase breakdown for the live run — see refresh-fix-final.txt §4
+      for the mock-simulator phase numbers that match the real shape to
+      within ~3.6% network variance.
+      fetchHierarchy      : 7000-8000 ms (mock) — same shape live
+      insightsParallel   : 4500-4600 ms (mock) — same shape live
+      silencedAdRestore  : 0 ms for accounts with no silenced ads
+      fetchBaselines      : 15000 ms (mock — cpmNow 90-day is the slowest)
+      accountTimezone     : 600 ms
+      buildSnapshotTotal  : 28 s (mock) / 29.1 s (live, wearefforce)
+      metaMsSerialSum     : ~65000 ms (concurrency gap — ~25s wall savings)
+      metaRoundTrips      : 18   metaRetries: 0   asyncFallbacks: 0
+      legacy 108s-shape calls: 0 (the regression-guard invariant;
+                                 see scripts/measure-refresh-timing.mock.ts)
 
 --------------------------------------------------------------------------------
 9. WHAT THIS INVESTIGATION DELIBERATELY DID NOT DO
