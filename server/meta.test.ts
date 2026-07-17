@@ -100,7 +100,14 @@ describe("buildSnapshot — engine 3-day window (US1, contract C1.1/C1.4)", () =
     // today's window is unchanged across the split
     const today = level.filter(c => c.params.date_preset === "today");
     expect(today.length).toBe(3);
-    for (const c of today) expect(c.params.time_range).toBeUndefined();
+    for (const c of today) {
+      expect(c.params.time_range).toBeUndefined();
+      // Round-5 CodeRabbit: defensive assertion. The "today" preset is a
+      // single rolling aggregate — passing time_increment=1 would change
+      // the response shape from "one row per object" to "one row per
+      // day" and silently break downstream parsing.
+      expect(c.params.time_increment).toBeUndefined();
+    }
 
     // per-level daily: campaign + adset still last_30d daily; ad is now
     // last_7d (verdict-only).

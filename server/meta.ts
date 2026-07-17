@@ -457,7 +457,11 @@ function ageDaysFrom(createdTime: string | undefined | null): number {
  * selector's 14d/30d/custom chart view. We split the call:
  *
  *   hot path (this function)   : last_7d daily per ad — same dates/values
- *                               as the trailing 7 of a last_30d query.
+ *                               as the trailing 7 of a last_30d query,
+ *                               ASSUMING Meta returns the same row set
+ *                               for both (true in practice — a day with
+ *                               zero spend/impressions is omitted by both
+ *                               queries, so the sparse row set matches).
  *   lazy path                  : last_30d daily per ad (display only) fetched
  *                               on-demand by `fetchAdDailyHistory` below.
  *   presence signal (this fn)  : last_30d AGGREGATE per ad (no time_increment
@@ -715,10 +719,19 @@ export async function buildSnapshot(
       w3d: parseInsightsRow(firstRow(w3dMaps.get("ad")!.get(a.id))),
       today: parseInsightsRow(firstRow(todayMaps.get("ad")!.get(a.id))),
       // Verdict path: the ad-level daily call is now last_7d (was last_30d).
-      // The verdict rulebook only ever reads ad.daily7 here; last7(...) of a
-      // last_30d series and toDaily(...) of a last_7d series produce the SAME
-      // rows + values for the same dates (engine tests in
-      // server/daily7Slice.test.ts prove the byte-identity).
+      // The verdict rulebook only ever reads ad.daily7 here. Daily7 =
+      // toDaily(dailyMaps.get("ad").get(a.id)) — whatever rows Meta returns
+      // for the last_7d window. When Meta returns a row for every calendar
+      // day in the window, daily7 ends up with 7 entries; on a sparse day
+      // (zero spend / impressions that day), Meta omits the row and daily7
+      // has fewer entries. The engine rules treat a missing day as a
+      // "no-impressions" day (daily7.length < 3 ⇒ bail, filter d.impressions
+      // > 100 ⇒ skip missing days). The OLD last_30d + last7() path had the
+      // SAME behavior on sparse delivery. So daily7 is byte-identical to
+      // the historical last-7-slice whenever Meta returns the same row set
+      // for both queries — which it does for any day that had delivery.
+      // See server/daily7Slice.test.ts for the explicit byte-identity
+      // coverage + the sparse-day explicit test.
       daily7: toDaily(dailyMaps.get("ad")!.get(a.id)),
       // Display path: only the campaign/adset levels still hold a daily30
       // series on the snapshot. Ad-level `daily30` is now populated lazily

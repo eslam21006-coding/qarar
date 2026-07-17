@@ -655,6 +655,14 @@ export const appRouter = router({
      * Authentication: same `activeProcedure` route as `refresh` — requires an
      * active Meta connection. Caching: caller (React Query) keys by
      * (adAccountId, days) so re-selecting a range doesn't re-fetch.
+     *
+     * Range bounds (round-5 CodeRabbit): only 14 or 30 days are accepted.
+     * The DecisionTable's "custom" range CAN technically go further back
+     * via its own from/to inputs; in that case the client is responsible
+     * for clamping the visible range to the returned 30d slice. This
+     * makes the undercount EXPLICIT rather than silent — the alternative
+     * of accepting larger windows would force Meta queries that exceed
+     * `last_30d` (a different API surface we don't currently use).
      */
     adDailyHistory: activeProcedure
       .input(

@@ -141,17 +141,28 @@ describe("refresh-bottleneck fix — engine verdict stability across daily30 siz
     // Build a fresh ad designed to trigger K4. decayMap fires when:
     //   ageDays ≤ 4 AND daily7.length ≥ 3 (we give it 7) AND
     //   day1.ctrLink > 0 AND day7.ctrLink dropped ≥ 50% from day1.
+    //
+    // Round-5 CodeRabbit: the fixture must mirror decayMap's day1/last
+    // semantics. decayMap reads days[0] (the OLDEST day in daily7) and
+    // days[days.length - 1] (the NEWEST day). To fire K4 the OLDEST day
+    // must have the higher CTR (2.6) and the NEWEST must have collapsed
+    // (0.9). The fixture below puts ctrLink=2.6 at position 0 (oldest,
+    // 7 days ago) and ctrLink=0.9 at the rest, matching the chronological
+    // order decayMap expects — instead of the previous "newest=2.6" mix
+    // that worked only by coincidence.
     const flashOriginalDaily7: DailyMetrics[] = [];
-    for (let i = 0; i < 7; i++) {
+    for (let i = 6; i >= 0; i--) {
+      // i=6 (oldest, 7 days ago): the flash-day CTR peak
+      // i=0 (newest, 1 day ago): collapsed
       flashOriginalDaily7.push({
-        spend: 26 - i * 1,
+        spend: 26 - (6 - i),
         impressions: 2100,
         reach: 2000,
         frequency: 1.2,
         clicks: 100,
         linkClicks: 80,
         ctrAll: 5,
-        ctrLink: i === 0 ? 2.6 : 0.9, // day0=2.6, day1-6=0.9 (collapse by day-2)
+        ctrLink: i === 6 ? 2.6 : 0.9, // oldest=2.6, then collapse
         cpm: 18,
         cpc: 0.5,
         conversions: 2,
@@ -241,7 +252,19 @@ describe("refresh-bottleneck fix — engine verdict stability across daily30 siz
     // 7 days (= only daily7), then again with daily30 extended to 30 days
     // of wild values. Verdict + rule + reason/action strings must match
     // because every rule reads at most daily7.
+    //
+    // Round-5 CodeRabbit: baseline should mirror the post-fix shape
+    // (ad-level daily30 = daily7) so the comparison reads cleanly. The
+    // twin extends daily30 with 23 wild days; daily7 stays equal.
     const baseSnap = buildDemoSnapshot();
+    // Mirror the post-fix shape on the baseline: every ad's daily30 is
+    // exactly its daily7. The engine verdict is identical to the demo
+    // default because the rules only read daily7 anyway, and now we can
+    // prove the extension step below is what changes (or doesn't) the
+    // verdicts.
+    for (const o of baseSnap.objects) {
+      if (o.level === "ad") o.daily30 = o.daily7.map(d => ({ ...d }));
+    }
     const baseline = runEngine(baseSnap, funnel);
 
     // Twin: extend each ad's daily30 to 30 wild days; daily7 unchanged.

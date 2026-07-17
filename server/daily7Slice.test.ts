@@ -296,6 +296,50 @@ describe("refresh-bottleneck fix — endTo-end daily7 contract via mocked Meta",
     expect(quiet!.daily7).toEqual([]);
   });
 
+  it("sparse-series identity — daily7 has fewer than 7 rows when Meta skips days (sparse delivery), and still matches a hypothetical last_30d slice of the SAME row set", async () => {
+    // Round-5 CodeRabbit: the byte-identity claim assumed Meta returns a
+    // row for every calendar day. Real Meta skips days with zero
+    // impressions/spend — the response is SPARSE. The fix's daily7 must
+    // remain identical to the historical `last7(toDaily(rows30))` for the
+    // SAME row set, even when that row set is sparse.
+    //
+    // Here the ad has 30-day fixtures, with only 3 days in the last 7d
+    // window actually receiving delivery (the others have no impressions).
+    // Both the OLD last_30d slice and the NEW last_7d call would return
+    // those same 3 rows for the trailing window. daily7 must contain
+    // exactly those 3 rows — neither more, nor fewer.
+    const sparseRows: any[] = [];
+    for (let i = 29; i >= 0; i--) {
+      // Skip dates 1..4 in the trailing window (no delivery that day) —
+      // only the last 3 days (i=0,1,2 ⇒ isoDate(1..3)) and the
+      // 8-29 range have rows.
+      if (i >= 1 && i <= 4) continue;
+      sparseRows.push(adInsightsRow("(ad)", i));
+    }
+    // Sanity check on the fixture itself
+    const last7Dates = new Set(
+      Array.from({ length: 7 }, (_, i) => isoDate(i + 1)),
+    );
+    const sparseInLast7 = sparseRows.filter(r => last7Dates.has(r.date_start));
+    expect(sparseInLast7.length).toBe(3); // exactly 3 days delivered
+
+    const ads = [{ id: "ad_sparse", daily30Rows: sparseRows, in30d: true }];
+    globalThis.fetch = mockFetchForContract({ ads }) as unknown as typeof fetch;
+    const snap = await buildSnapshot("t", "act_x", "USD");
+    const ad = snap.objects.find(o => o.id === "ad_sparse");
+    expect(ad).toBeDefined();
+    expect(ad!.daily7.length).toBe(3);
+    expect(new Set(ad!.daily7.map(d => d.date))).toEqual(
+      new Set(sparseInLast7.map(r => r.date_start)),
+    );
+    // Values must be preserved exactly — proves the post-fix path doesn't
+    // fabricate metrics for the missing days.
+    for (const d of ad!.daily7) {
+      expect(d.spend).toBeGreaterThan(0);
+      expect(d.impressions).toBeGreaterThan(0);
+    }
+  });
+
   it("an ad with NO 30d delivery is still kept (presence: ACTIVE/PAUSED irrelevance) — proves the relevance filter's new adPresence30d path still works", async () => {
     // No rows in any window for this ad. effective_status is PAUSED.
     // Under the OLD relevance rule: hadDelivery checks dailyMaps length,

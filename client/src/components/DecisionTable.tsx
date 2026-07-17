@@ -501,7 +501,17 @@ export function DecisionTable({
     for (const r of rows) {
       let lazySlice: DailyMetrics[] | null | undefined;
       if (needsLazyHistory) {
-        if (!lazyById) {
+        // Round-5 CodeRabbit: distinguish error from loading. On error,
+        // `lazyById` is null AND `lazyHistory.error` is set — pass
+        // `undefined` so aggregate() falls back to the cached s.daily30
+        // (or the w3d fallback for the 3d chip). On loading, pass `null`
+        // so aggregate() returns null and the caller renders an em-dash.
+        // Without this split, an error would render em-dashes across the
+        // whole table — the brief explicitly said "do not let the UI
+        // silently show empty/wrong data during that window".
+        if (lazyHistory.error) {
+          lazySlice = undefined; // error → use cached history, not em-dashes
+        } else if (!lazyById) {
           lazySlice = null; // loading — show em-dash until resolved
         } else if (r.level === "ad") {
           // AD ROWS: lazy data is authoritative even when empty. Pass
@@ -519,7 +529,7 @@ export function DecisionTable({
       m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to, asOf, lazySlice));
     }
     return m;
-  }, [rows, seriesMap, range, from, to, asOfDate, lazyHistory.data, needsLazyHistory]);
+  }, [rows, seriesMap, range, from, to, asOfDate, lazyHistory.data, lazyHistory.error, needsLazyHistory]);
 
   // visible rows — when searching/filtering, search across ALL levels
   const hasFilters = filterRules.length > 0;

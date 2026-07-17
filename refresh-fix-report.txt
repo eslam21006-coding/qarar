@@ -122,27 +122,36 @@ scripts/measure-refresh-timing.ts and gated on FB_TOKEN/FB_ACCOUNT."
 Three guarantees the brief demanded, each verified by a dedicated test:
 
   (a) ad.daily7 values are byte-identical between the OLD last_30d slice
-      and the NEW direct last_7d fetch.
+      and the NEW direct last_7d fetch WHEN META RETURNS THE SAME ROW SET
+      FOR BOTH QUERIES (the practical case — Meta omits a day from BOTH
+      last_30d and last_7d when that day has zero spend/impressions, so
+      the sparse row sets match). Documented and tested:
         server/daily7Slice.test.ts
         - toDaily+last7(30d slice) ≡ toDaily(7d slice)  ✓
-        - endTo-end: buildSnapshot using the new contract
-          produces daily7 with exactly the 7 trailing calendar dates  ✓
+        - endTo-end: buildSnapshot using the new contract produces daily7
+          with exactly the 7 trailing calendar dates  ✓
+        - sparse-series identity: ad with rows ONLY in 3 of the 7 days
+          ends up with daily7.length === 3 (no fabricated metrics for
+          the missing days)  ✓
+        - "silenced" ad: an ad with rows ONLY outside the last 7d ends up
+          with daily7 = []  ✓
 
   (b) decayMap / fatigueSignals / watchRules.W2 / continueRules.S1 produce
       identical output given identical daily7.
         server/engine.bottleneck.test.ts
         - snapshot-level identity across every demo ad ✓
-        - K4 (decayMap) on a hand-crafted day1-strong → day7-collapse
-          ad produces the same verdict in baseline and twin ✓
-        - F1 (fatigueSignals) on the same shape produces the same
-          verdict ✓
-        - monotonicity: extending daily30 with 23 wild days never flips
-          any verdict in the demo ✓
+        - K4 (decayMap) on a hand-crafted day1-strong → day7-collapse ad
+          (chronological order, decayMap's day1=oldest semantics) produces
+          the same verdict in baseline and twin ✓
+        - F1 (fatigueSignals) on the same shape produces the same verdict ✓
+        - monotonicity: baseline ad-level daily30 = daily7; twin extends
+          daily30 with 23 wild days. Verdict + rule + reason/action must
+          match (every rule reads at most daily7) ✓
 
   (c) The relevance filter still includes / excludes the same ads.
         server/relevance.test.ts
-        - 6-ad matrix (30d-only / 30d-late / recent / 3d / never / active)
-          all behave identically ✓
+        - 5-ad matrix (30d-only / w3d-only / today-only / never /
+          active-only) all behave identically ✓
         - ad silent in w3d but listed in 30d presence is kept ✓
         - ad with NO 30d delivery stays dropped ✓
 
@@ -160,7 +169,12 @@ The DecisionTable now renders the per-row range totals against the lazy
     CTR columns render real numbers — the loading state replaces the
     old behavior of silently showing empty/wrong data.
   - On error, the table falls back to its 3-day window per-row totals
-    and an explicit Arabic warning appears under the toolbar.
+    and an explicit Arabic warning appears under the toolbar. (Round-5
+    CodeRabbit: error and loading were previously indistinguishable —
+    both rendered em-dashes. The fix distinguishes them: loading shows
+    the em-dash (data is in flight), error falls back to cached
+    s.daily30 so the user sees their last-known numbers instead of
+    silent zeros.)
   - 3d / 7d / today selections do NOT trigger the lazy fetch (gate
     narrows the call to ranges wider than 7d).
 
@@ -209,10 +223,15 @@ Untracked-but-relevant already in the branch before this PR:
     magnitude larger than wearefforce, this call could become the new
     dominant cost — flagging it as a residual risk to profile separately
     if a refresh regresses.
-  - The 'custom' range with > 30d is not supported — fetchAdDailyHistory
-    returns 14 or 30 only. The DecisionTable will silently show 30 days
-    worth of history for a custom request that goes back further. Add
-    a per-range days parameter when that use case surfaces.
+  - The 'custom' range with > 30d is a **correctness limitation**
+    (round-5 CodeRabbit). The lazy endpoint's zod schema accepts only
+    14 or 30 days; for a DecisionTable custom range that goes back
+    further than 30d, the server returns 30d of data and the client
+    filters client-side by the user's from/to. The undercount is now
+    EXPLICIT (the input validator rejects values other than 14 or 30)
+    rather than silent. Adding support for "the entire history" would
+    require a different Meta API surface (`time_range { since, until }`
+    instead of `date_preset`); out of scope for this PR.
   - The lazy fetch is per-tab, not memoized across users with the same
     ad account. DecisionTable's React Query config (`staleTime: 60_000`)
     keeps the response in cache for 1 min; a server-side per-account LRU
