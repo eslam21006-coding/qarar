@@ -168,13 +168,17 @@ The DecisionTable now renders the per-row range totals against the lazy
   - Once the lazy data resolves, the per-row spend / results / CPA /
     CTR columns render real numbers — the loading state replaces the
     old behavior of silently showing empty/wrong data.
-  - On error, the table falls back to its 3-day window per-row totals
-    and an explicit Arabic warning appears under the toolbar. (Round-5
-    CodeRabbit: error and loading were previously indistinguishable —
-    both rendered em-dashes. The fix distinguishes them: loading shows
-    the em-dash (data is in flight), error falls back to cached
-    s.daily30 so the user sees their last-known numbers instead of
-    silent zeros.)
+  - On error, ad rows fall back to the engine's w3d window (forced
+    range="3d" inside the aggs useMemo). Campaign / adset rows are
+    unaffected — they always use the cached s.daily30 regardless of
+    loading state. An explicit Arabic warning appears under the
+    toolbar. (Round-5 + round-6 CodeRabbit: error and loading were
+    previously indistinguishable — both rendered em-dashes. The fix
+    distinguishes them: loading shows the em-dash (data is in flight),
+    error switches the ad-row aggregate range to 3d so the user sees
+    real w3d metrics instead of silent zeros. The toolbar warning
+    tells the user they're seeing the 3d fallback, not real 30d
+    numbers.)
   - 3d / 7d / today selections do NOT trigger the lazy fetch (gate
     narrows the call to ranges wider than 7d).
 

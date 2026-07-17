@@ -499,34 +499,37 @@ export function DecisionTable({
     const lazyById = (lazyHistory.data?.byId ?? null) as Record<string, DailyMetrics[]> | null;
     const m = new Map<string, FilterAgg | null>();
     for (const r of rows) {
+      // Round-6 CodeRabbit: a single needsLazyHistory gate was passing
+      // null to campaign/ad-set rows during loading/error and hiding
+      // their cached 3d/14d/30d numbers. Resolve the lazy slice FIRST
+      // for each row's level so non-ad rows never see null:
+      //   - non-ad rows → always `undefined` (cached s.daily30)
+      //   - ad rows     → tri-state: undefined (error, fall back to 3d
+      //     range below), null (loading, em-dash), or the slice.
       let lazySlice: DailyMetrics[] | null | undefined;
-      if (needsLazyHistory) {
-        // Round-5 CodeRabbit: distinguish error from loading. On error,
-        // `lazyById` is null AND `lazyHistory.error` is set — pass
-        // `undefined` so aggregate() falls back to the cached s.daily30
-        // (or the w3d fallback for the 3d chip). On loading, pass `null`
-        // so aggregate() returns null and the caller renders an em-dash.
-        // Without this split, an error would render em-dashes across the
-        // whole table — the brief explicitly said "do not let the UI
-        // silently show empty/wrong data during that window".
-        if (lazyHistory.error) {
-          lazySlice = undefined; // error → use cached history, not em-dashes
-        } else if (!lazyById) {
-          lazySlice = null; // loading — show em-dash until resolved
-        } else if (r.level === "ad") {
-          // AD ROWS: lazy data is authoritative even when empty. Pass
-          // the exact slice (or []) so aggregate() returns zero-valued
-          // metrics for an ad that delivered nothing in 30d, rather than
-          // falling through to s.daily30 (also empty post-fix).
-          lazySlice = lazyById[r.id] ?? [];
-        } else {
-          // CAMPAIGN / ADSET ROWS: keep using the cached s.daily30
-          // (which those levels still carry). aggregate() with
-          // `undefined` falls back to s.daily30 cleanly.
-          lazySlice = undefined;
-        }
+      let aggRange: RangeKey = range;
+      if (r.level !== "ad" || !needsLazyHistory) {
+        // CAMPAIGN / ADSET ROWS — always cached s.daily30. The lazy
+        // data is per-ad and doesn't apply to these levels.
+        lazySlice = undefined;
+      } else if (lazyHistory.error) {
+        // AD ROWS, ERROR: switch to "3d" so aggregate() triggers its
+        // w3d fallback (range === "3d" && dailyForAgg.length === 0 ⇒
+        // aggFromWindow(s.w3d)). Without this, ad rows on a 30d chip
+        // would show zeros after a failed lazy fetch. The toolbar shows
+        // an Arabic warning so the user knows they're seeing the 3d
+        // fallback, not real 30d numbers.
+        aggRange = "3d";
+        lazySlice = undefined;
+      } else if (!lazyById) {
+        // AD ROWS, LOADING: pass null so aggregate() returns null and
+        // the caller renders an em-dash per cell until the data arrives.
+        lazySlice = null;
+      } else {
+        // AD ROWS, FETCHED: lazy data is authoritative even when empty.
+        lazySlice = lazyById[r.id] ?? [];
       }
-      m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to, asOf, lazySlice));
+      m.set(r.id, aggregate(seriesMap.get(r.id), aggRange, from, to, asOf, lazySlice));
     }
     return m;
   }, [rows, seriesMap, range, from, to, asOfDate, lazyHistory.data, lazyHistory.error, needsLazyHistory]);

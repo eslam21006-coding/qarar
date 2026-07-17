@@ -862,6 +862,11 @@ export async function fetchAdDailyHistory(
   if (ownStore) {
     const m = refreshMetrics.getStore();
     if (m) {
+      // Round-6 CodeRabbit: `byId.size` is the number of ADS in the
+      // keyed map, not the number of daily-history rows returned.
+      // Sum the per-ad series lengths to report actual rows.
+      let totalRows = 0;
+      for (const series of Array.from(byId.values())) totalRows += series.length;
       console.log(
         `[refresh-timing] adDailyHistory ${JSON.stringify({
           accountId,
@@ -871,7 +876,8 @@ export async function fetchAdDailyHistory(
           metaRetries: m.graphRetries,
           asyncFallbacks: m.asyncFallbacks,
           metaMsSerialSum: Math.round(m.metaMs),
-          rowsReturned: byId.size,
+          adsReturned: byId.size,
+          rowsReturned: totalRows,
         })}`
       );
     }

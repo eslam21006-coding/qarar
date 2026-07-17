@@ -234,8 +234,16 @@ function mockFetchForContract(opts: {
  * unambiguous about which dates it captures.
  */
 function rows30ForAd(): any[] {
+  // Mirror Meta's actual last_30d response: 30 daily rows for the last
+  // 30 fully-elapsed days ending YESTERDAY (today is excluded — Meta's
+  // "last N days" presets cover N fully-elapsed days, never including
+  // the still-in-progress today). Round-6 CodeRabbit caught that the
+  // previous fixture included today, which made `last7(toDaily(rows30))`
+  // return rows for isoDate(0..6) while Meta's last_7d returns rows
+  // for isoDate(1..7) — these are NOT the same set, so the byte-identity
+  // assertion was vacuous against the real shape.
   const rows: any[] = [];
-  for (let i = 29; i >= 0; i--) rows.push(adInsightsRow("(ad)", i));
+  for (let i = 30; i >= 1; i--) rows.push(adInsightsRow("(ad)", i));
   return rows;
 }
 
@@ -263,15 +271,16 @@ describe("refresh-bottleneck fix — endTo-end daily7 contract via mocked Meta",
     const ad = snap.objects.find(o => o.id === "ad_full");
     expect(ad).toBeDefined();
 
-    // The 7 calendar dates ending yesterday (yesterday, today excluded by
-    // Meta's "last 7d" preset). Order matches toDaily's date-ascending sort.
-    const expectedDates = Array.from({ length: 7 }, (_, i) => isoDate(7 - i));
-    expect(ad!.daily7.map(d => d.date)).toEqual(expectedDates);
-    // Engagement metrics are not lost (sanity: each day's value is a function
-    // of `i` so this catches an accidental de-dup or null override).
-    for (let i = 0; i < 7; i++) {
-      expect(ad!.daily7[i]!.spend).toBeGreaterThan(0);
-    }
+    // Round-6 CodeRabbit: assert full DailyMetrics byte-identity (not just
+    // dates + spend > 0). The contract is byte-for-byte identical to the
+    // historical last_30d slice of the trailing 7 days. Compare against
+    // the EXACT same DailyMetrics the OLD code would have produced via
+    // last7(toDaily(rows30)). Since rows30ForAd is dense (30 daily
+    // entries covering every calendar day in the last 30 days), Meta's
+    // last_7d call returns the trailing 7 — and last7(toDaily(rows30))
+    // produces the same 7 elements.
+    const expectedDaily7 = last7(toDaily(rows30ForAd()));
+    expect(ad!.daily7).toEqual(expectedDaily7);
   });
 
   it("an ad with rows ONLY in days 8-29 (silenced for the last 7d) ends up with empty daily7 — proves the slice is meaningful", async () => {
@@ -296,48 +305,47 @@ describe("refresh-bottleneck fix — endTo-end daily7 contract via mocked Meta",
     expect(quiet!.daily7).toEqual([]);
   });
 
-  it("sparse-series identity — daily7 has fewer than 7 rows when Meta skips days (sparse delivery), and still matches a hypothetical last_30d slice of the SAME row set", async () => {
+  it("sparse-series delivery — daily7 reflects Meta's exact sparse response for the last_7d window", async () => {
     // Round-5 CodeRabbit: the byte-identity claim assumed Meta returns a
     // row for every calendar day. Real Meta skips days with zero
     // impressions/spend — the response is SPARSE. The fix's daily7 must
-    // remain identical to the historical `last7(toDaily(rows30))` for the
-    // SAME row set, even when that row set is sparse.
+    // accurately mirror Meta's last_7d response, even when sparse.
     //
-    // Here the ad has 30-day fixtures, with only 3 days in the last 7d
-    // window actually receiving delivery (the others have no impressions).
-    // Both the OLD last_30d slice and the NEW last_7d call would return
-    // those same 3 rows for the trailing window. daily7 must contain
-    // exactly those 3 rows — neither more, nor fewer.
+    // Fixture: the trailing 7 calendar days are isoDate(1..7). Only
+    // isoDate(5, 6, 7) have rows (the ad was silent on days 1-4). Meta's
+    // last_7d query returns 3 rows; daily7 must contain exactly those 3
+    // rows. The OLD code's last7(toDaily(rows30)) would yield a
+    // DIFFERENT set (7 rows including days 8-10 which are OUTSIDE the
+    // last_7d window) — the byte-identity claim holds only when Meta
+    // returns the same row set for both queries, which it does NOT when
+    // the trailing 30-day array has a gap at the end. This is a
+    // documented behavior of the sparse-delivery edge case (see
+    // refresh-fix-report.txt §3a).
     const sparseRows: any[] = [];
     for (let i = 29; i >= 0; i--) {
-      // Skip dates 1..4 in the trailing window (no delivery that day) —
-      // only the last 3 days (i=0,1,2 ⇒ isoDate(1..3)) and the
-      // 8-29 range have rows.
+      // Skip days 1..4 in the trailing window (no delivery); keep day 0
+      // (today) and days 5..29 of the older window.
       if (i >= 1 && i <= 4) continue;
       sparseRows.push(adInsightsRow("(ad)", i));
     }
-    // Sanity check on the fixture itself
     const last7Dates = new Set(
       Array.from({ length: 7 }, (_, i) => isoDate(i + 1)),
     );
-    const sparseInLast7 = sparseRows.filter(r => last7Dates.has(r.date_start));
-    expect(sparseInLast7.length).toBe(3); // exactly 3 days delivered
+    const expectedSparseInLast7 = sparseRows
+      .filter(r => last7Dates.has(r.date_start))
+      .map(r => ({ ...parseInsightsRow(r), date: r.date_start as string }))
+      .sort((a, b) => a.date.localeCompare(b.date));
 
     const ads = [{ id: "ad_sparse", daily30Rows: sparseRows, in30d: true }];
     globalThis.fetch = mockFetchForContract({ ads }) as unknown as typeof fetch;
     const snap = await buildSnapshot("t", "act_x", "USD");
     const ad = snap.objects.find(o => o.id === "ad_sparse");
     expect(ad).toBeDefined();
-    expect(ad!.daily7.length).toBe(3);
-    expect(new Set(ad!.daily7.map(d => d.date))).toEqual(
-      new Set(sparseInLast7.map(r => r.date_start)),
-    );
-    // Values must be preserved exactly — proves the post-fix path doesn't
-    // fabricate metrics for the missing days.
-    for (const d of ad!.daily7) {
-      expect(d.spend).toBeGreaterThan(0);
-      expect(d.impressions).toBeGreaterThan(0);
-    }
+
+    // Round-6 CodeRabbit: assert full DailyMetrics byte-identity (against
+    // the rows Meta would actually return for the last_7d window), not
+    // just dates + spend > 0.
+    expect(ad!.daily7).toEqual(expectedSparseInLast7);
   });
 
   it("an ad with NO 30d delivery is still kept (presence: ACTIVE/PAUSED irrelevance) — proves the relevance filter's new adPresence30d path still works", async () => {
