@@ -465,15 +465,24 @@ export function DecisionTable({
   // 14 or 30 — a custom range longer than 30d is out of scope and will
   // simply render against the available 30d slice).
   const lazyDays: 14 | 30 = range === "14d" ? 14 : 30;
+  // Round-9 CodeRabbit: the lazy fetch is per-AD. Only fire it when an
+  // ad row is actually rendered: ad-level view OR an active cross-level
+  // search/filter (which can show ads at any depth). For pure campaign /
+  // adset drill-downs there's no ad row to thread the data into, so the
+  // call is pure Graph traffic.
+  const lazyFetchEligible =
+    needsLazyHistory &&
+    accountId > 0 &&
+    (level === "ad" || q.trim() !== "" || verdicts.size > 0 || filterRules.length > 0);
   const lazyHistory = trpc.dashboard.adDailyHistory.useQuery(
     { adAccountId: accountId, days: lazyDays },
-    { enabled: needsLazyHistory && accountId > 0, retry: false, staleTime: 60_000 }
+    { enabled: lazyFetchEligible, retry: false, staleTime: 60_000 }
   );
   // Surface a loader copy whenever the lazy fetch is running. We tolerate
   // an empty `byId` result (e.g. the new account has no rows yet) without
   // showing the spinner — that's a server-side empty, not a "loading" state.
   const showLazyLoading =
-    needsLazyHistory && (lazyHistory.isLoading || (!lazyHistory.data && !lazyHistory.error));
+    lazyFetchEligible && (lazyHistory.isLoading || (!lazyHistory.data && !lazyHistory.error));
   // If the lazy call errored, surface a small warning; otherwise swallow it
   // (the aggregate() function falls back to its 3-day window on empty data
   // and the table stays usable — better than blocking the UI).
@@ -646,9 +655,14 @@ export function DecisionTable({
     const a = aggs.get(r.id);
     switch (key) {
       case "spend":
-        return money(a?.spend ?? 0, currencySymbol);
+        // Round-9 CodeRabbit Major: when the aggregate is null (loading
+        // state for an ad row during a lazyHistory fetch), render an em-dash
+        // rather than the default-0 value. Otherwise the table shows
+        // $0s across every cell while data is in flight — false data is
+        // worse than a missing cell.
+        return a == null ? "—" : money(a.spend, currencySymbol);
       case "results":
-        return num(a?.results ?? 0);
+        return a == null ? "—" : num(a.results);
       case "cpa":
         // Batch 2 / ISSUE-004 — in the default 3d view, the column must show
         // the engine's cpa_3d (the exact figure behind the verdict). For
@@ -662,10 +676,11 @@ export function DecisionTable({
             currency: currencySymbol,
           }).value;
         }
+        if (a == null) return "—";
         return cpaCell({
           verdict: r.verdict,
-          results: a?.results ?? 0,
-          cpa: a?.cpa ?? null,
+          results: a.results,
+          cpa: a.cpa,
           target: unitTarget,
           currency: currencySymbol,
         }).value;
@@ -690,7 +705,9 @@ export function DecisionTable({
       case "frequency":
         return r.frequency_3d ? r.frequency_3d.toFixed(2) : "—";
       case "impressions":
-        return num(a?.impressions ?? 0);
+        // Round-9 CodeRabbit Major: em-dash on null aggregate so the
+        // table doesn't show "$0 / 0 / 0" while the lazy fetch is in flight.
+        return a == null ? "—" : num(a.impressions);
     }
   };
 

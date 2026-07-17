@@ -642,15 +642,25 @@ export async function buildSnapshot(
   // and silently loses those verdicts — hiding a real fatigue signal
   // (an ad that went dark because Meta burned it out).
   //
-  // We pay a SINGLE targeted last_30d daily call ONLY when there are
-  // silenced ads (filtered to just those IDs). For healthy accounts this
-  // branch is a no-op (silencedAdIds.length === 0) and the bottleneck
-  // fix is preserved. For accounts with a few silenced ads, the targeted
-  // call is bounded by the silenced population (not the full account).
+  // We pay TARGETED last_30d daily calls ONLY when there are ads whose
+  // trailing-7d daily has fewer than 7 rows AND who actually delivered
+  // in the last 30d (adPresence30d has a row). The threshold is <7
+  // (not <3) — round-9 CodeRabbit Major pointed out that the <3
+  // threshold misses the 3-6 row case, where the legacy code would
+  // have included 2-4 older rows in the trailing-7 slice and the
+  // post-fix code doesn't. The threshold matches the legacy semantic:
+  // any time Meta's last_7d response is missing rows the legacy
+  // `last7(toDaily(rows30))` would have filled.
+  //
+  // For healthy accounts this branch is a no-op
+  // (silencedAdIds.length === 0) and the bottleneck fix is preserved.
+  // For accounts with a few silenced ads, the targeted call is bounded
+  // by the silenced population (chunked + concurrency-controlled to
+  // stay within Meta's filtering list limit).
   const silencedAdIds: string[] = [];
   for (const a of ads) {
     if (!adPresence30d.has(a.id)) continue;
-    if ((dailyMaps.get("ad")!.get(a.id)?.length ?? 0) < 3) {
+    if ((dailyMaps.get("ad")!.get(a.id)?.length ?? 0) < 7) {
       silencedAdIds.push(a.id);
     }
   }
@@ -659,19 +669,41 @@ export async function buildSnapshot(
   if (silencedAdIds.length > 0) {
     if (timingVerbose()) {
       console.log(
-        `[refresh-timing] silenced-ad restore: ${silencedAdIds.length} of ${ads.length} ads, fetching filtered last_30d daily`,
+        `[refresh-timing] silenced-ad restore: ${silencedAdIds.length} of ${ads.length} ads (last_7d.length<7), fetching filtered last_30d daily`,
       );
     }
-    const silencedMap = await fetchLevelInsights(
-      token,
-      accountId,
-      "ad",
-      { date_preset: "last_30d", time_increment: "1" },
-      { adIdFilter: silencedAdIds },
-    );
-    for (const [id, rows] of Array.from(silencedMap.entries())) {
-      adDaily30ForSilenced.set(id, rows);
+    // Round-9: chunk large ID lists (Meta's IN filter rejects large
+    // payloads) and control concurrency so we don't accidentally fire
+    // 100 simultaneous requests when one big account has 800 silenced
+    // ads in a sparse-delivery month.
+    const CHUNK = 50;
+    const CONCURRENCY = 3;
+    const chunks: string[][] = [];
+    for (let i = 0; i < silencedAdIds.length; i += CHUNK) {
+      chunks.push(silencedAdIds.slice(i, i + CHUNK));
     }
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < chunks.length) {
+        const i = cursor++;
+        const chunk = chunks[i]!;
+        const part = await fetchLevelInsights(
+          token,
+          accountId,
+          "ad",
+          { date_preset: "last_30d", time_increment: "1" },
+          { adIdFilter: chunk },
+        );
+        for (const [id, rows] of Array.from(part.entries())) {
+          adDaily30ForSilenced.set(id, rows);
+        }
+      }
+    };
+    const workers = Array.from(
+      { length: Math.min(CONCURRENCY, chunks.length) },
+      () => worker(),
+    );
+    await Promise.all(workers);
   }
   phase.silencedAdRestore = Math.round(performance.now() - tSilenced);
 

@@ -357,22 +357,59 @@ describe("refresh-bottleneck fix — endTo-end daily7 contract via mocked Meta",
     expect(quiet!.daily7).toEqual(expectedDaily7);
   });
 
-  it("sparse-series delivery — daily7 reflects Meta's exact sparse response for the last_7d window", async () => {
+  it("mid-sparse ad (3-6 trailing rows + older delivery) → restored legacy daily7 with 7 rows from the older history", async () => {
+    // Round-9 CodeRabbit Major: the round-8 threshold was <3 rows which
+    // only catches fully-silent ads. The 3-6 row case (Meta's last_7d
+    // returns ≤6 rows but the ad HAS older delivery in days 8-30) was
+    // missed — the legacy semantic would have filled those gaps via
+    // last7(toDaily(rows30)) but the fast path didn't. Threshold is now
+    // <7: any trailing-7d delivery with fewer than 7 rows triggers the
+    // restore.
+    //
+    // Fixture: ad has 4 rows in trailing 7d (isoDate 4, 5, 6, 7) and 5
+    // older rows in days 10-30. Both last_30d daily and last_7d daily
+    // return their respective sets; the restore substitutes the legacy
+    // last7(toDaily(rows30)) result. Final daily7 must contain 7 rows:
+    // the trailing 4 trailing-7d rows + the 3 most-recent of the older
+    // delivery (the last 7 elements of the sorted 9-row array).
+    const rows: any[] = [];
+    // 4 trailing-7d rows (i=4..7 ⇒ isoDate(4..7))
+    for (let i = 4; i <= 7; i++) rows.push(adInsightsRow("(ad)", i));
+    // 5 older rows (i=10, 14, 18, 22, 26)
+    for (const i of [10, 14, 18, 22, 26]) rows.push(adInsightsRow("(ad)", i));
+    expect(rows.length).toBe(9); // exactly 9 fixture rows
+
+    const ads = [{ id: "ad_midSparse", daily30Rows: rows, in30d: true }];
+    globalThis.fetch = mockFetchForContract({ ads }) as unknown as typeof fetch;
+    const snap = await buildSnapshot("t", "act_x", "USD");
+    const ad = snap.objects.find(o => o.id === "ad_midSparse");
+    expect(ad).toBeDefined();
+
+    // Legacy pattern: last7(toDaily(rows30)) = sorted ascending, slice(-7).
+    const expectedDaily7 = last7(toDaily(rows));
+    expect(expectedDaily7.length).toBe(7);
+    expect(ad!.daily7).toEqual(expectedDaily7);
+  });
+
+  it("sparse-series delivery — daily7 ≡ last7(toDaily(rows30)) when last_7d returns fewer than 7 rows (restore path)", async () => {
     // Round-5 CodeRabbit: the byte-identity claim assumed Meta returns a
     // row for every calendar day. Real Meta skips days with zero
     // impressions/spend — the response is SPARSE. The fix's daily7 must
     // accurately mirror Meta's last_7d response, even when sparse.
     //
+    // Round-9: with the silenced-ad restore threshold at <7 rows, ANY
+    // sparse trailing-7d response (e.g., ad delivered on 3 of the 7
+    // days) goes through the restore path. The legacy semantic —
+    // last7(toDaily(rows30)) — fills the missing days from the older
+    // history. daily7 ends up with 7 rows when 7 or more 30d-aggregate
+    // rows exist, mirroring what the OLD code would have produced.
+    //
     // Fixture: the trailing 7 calendar days are isoDate(1..7). Only
     // isoDate(5, 6, 7) have rows (the ad was silent on days 1-4). Meta's
-    // last_7d query returns 3 rows; daily7 must contain exactly those 3
-    // rows. The OLD code's last7(toDaily(rows30)) would yield a
-    // DIFFERENT set (7 rows including days 8-10 which are OUTSIDE the
-    // last_7d window) — the byte-identity claim holds only when Meta
-    // returns the same row set for both queries, which it does NOT when
-    // the trailing 30-day array has a gap at the end. This is a
-    // documented behavior of the sparse-delivery edge case (see
-    // refresh-fix-report.txt §3a).
+    // last_7d query returns 3 rows. The restore targets this ad
+    // (last_7d.length < 7) and feeds legacy `last7(toDaily(rows30))` —
+    // which is 7 sorted-ascending rows (slice the trailing 7 of the
+    // 25-row 30d set, oldest-first).
     const sparseRows: any[] = [];
     for (let i = 29; i >= 0; i--) {
       // Skip days 1..4 in the trailing window (no delivery); keep day 0
@@ -380,13 +417,11 @@ describe("refresh-bottleneck fix — endTo-end daily7 contract via mocked Meta",
       if (i >= 1 && i <= 4) continue;
       sparseRows.push(adInsightsRow("(ad)", i));
     }
-    const last7Dates = new Set(
-      Array.from({ length: 7 }, (_, i) => isoDate(i + 1)),
-    );
-    const expectedSparseInLast7 = sparseRows
-      .filter(r => last7Dates.has(r.date_start))
-      .map(r => ({ ...parseInsightsRow(r), date: r.date_start as string }))
-      .sort((a, b) => a.date.localeCompare(b.date));
+    // Expected: the legacy last7(toDaily(rows30)) — 7 rows from the
+    // sorted 25-row 30-day fixture (positions 18..24 = oldest 7: days 23
+    // through 29 ago in chronological order).
+    const expectedDaily7 = last7(toDaily(sparseRows));
+    expect(expectedDaily7.length).toBe(7);
 
     const ads = [{ id: "ad_sparse", daily30Rows: sparseRows, in30d: true }];
     globalThis.fetch = mockFetchForContract({ ads }) as unknown as typeof fetch;
@@ -394,10 +429,9 @@ describe("refresh-bottleneck fix — endTo-end daily7 contract via mocked Meta",
     const ad = snap.objects.find(o => o.id === "ad_sparse");
     expect(ad).toBeDefined();
 
-    // Round-6 CodeRabbit: assert full DailyMetrics byte-identity (against
-    // the rows Meta would actually return for the last_7d window), not
-    // just dates + spend > 0.
-    expect(ad!.daily7).toEqual(expectedSparseInLast7);
+    // Round-9: assert full DailyMetrics byte-identity against the legacy
+    // restored daily7 (not just dates + spend > 0).
+    expect(ad!.daily7).toEqual(expectedDaily7);
   });
 
   it("an ad with NO 30d delivery is still kept (presence: ACTIVE/PAUSED irrelevance) — proves the relevance filter's new adPresence30d path still works", async () => {

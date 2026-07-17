@@ -312,3 +312,97 @@ Manual UI click-through + live post-deploy 14d/30d/custom range spinner
 verification remain the only genuinely-pending items; those need a real
 browser session against a live deployment and are out of scope for this
 sandbox.
+
+================================================================================
+11. ROUND-9 FOLLOW-ON (added 2026-07-17 after this report's initial commit)
+================================================================================
+
+Round-9 CodeRabbit posted 7 actionable comments after the round-8 push.
+All addressed:
+
+[1] (Duplicate, Major) client/.../DecisionTable.tsx:151-154
+    Was: cellValue() used `a?.spend ?? 0` / `a?.results ?? 0` /
+         `a?.impressions ?? 0` so null aggregates (loading state) rendered
+         as numeric zeros across the cells while the lazy fetch was in
+         flight. Cell formatting never checked `a == null` first.
+    Fix: cellValue() now branches on `a == null ? "—" : format(a.{field})`
+         for spend, results, cpa, impressions. Em-dash is the documented
+         loading state; zeros are reserved for fetched-zero data.
+
+[2] (Inline, Minor) client/.../DecisionTable.tsx:463-470 — lazyHistory gate
+    Was: enabled for `needsLazyHistory && accountId > 0` — also fired on
+         pure campaign / adset drill-downs where no ad row is rendered.
+    Fix: added `lazyFetchEligible = needsLazyHistory && accountId > 0 &&
+         (level === "ad" || q.trim() !== "" || verdicts.size > 0 ||
+         filterRules.length > 0)`. The call now only fires when an ad
+         row could actually consume the per-ad data. Pure campaign /
+         adset drill-downs at 30d continue to use cached daily30 (the
+         last_30d call in the per-level block already powers those).
+
+[3] (Inline, Trivial) refresh-bottleneck-investigation.txt — instrumentation
+    doc-sync: rename `insights9Parallel → insightsParallel`, list the 10
+    parallel call specs + the optional silenced-ad restore, replace the
+    pending live-run placeholders with the 29.1s number.
+
+[4] (Inline, Trivial) refresh-fix-report.txt §4 — error-fallback copy fix.
+    Was: claimed "campaign / adset rows are unaffected — they always use
+         the cached s.daily30 regardless of loading state."
+    Fix: corrected to "EVERY row (campaign / adset / ad) falls back to a
+         forced range='3d' inside the aggs useMemo (errorAggRange set at
+         the useMemo top level — round-6 fix)." Documents the actual
+         cross-level 3d-fallback on error.
+
+[5] (Inline, Major) server/meta.ts — expand the silenced-ad threshold.
+    Was: `<3 rows` — caught only fully-silent ads (the "active-but-
+         recently-silent" population). Missed the 3-6 row case (ad with
+         delivery on 3-6 days inside the trailing 7d window PLUS older
+         delivery in days 8-30) where the legacy code would have filled
+         the trailing-7 with older rows.
+    Fix: threshold `<7` (any trailing-7d delivery with fewer than 7
+         rows triggers the restore). Chunking added: `CHUNK = 50` ad IDs
+         per Meta filter request, `CONCURRENCY = 3` parallel workers.
+         For accounts with 0 silenced ads (the common case) the entire
+         branch is a no-op. For accounts with N silenced ads the cost
+         is bounded by `ceil(N / CHUNK) * ceil(N / (CHUNK * CONCURRENCY))`
+         sequential round-trips.
+
+[6] (Inline, Major) server/daily7Slice.test.ts — add 3-6 row parity test.
+    New test "mid-sparse ad (3-6 trailing rows + older delivery) →
+    restored legacy daily7 with 7 rows from the older history". Locks
+    in the threshold expansion.
+
+[7] (Inline, Minor, Deferred) server/routers.ts:699-702 — per-call
+    deadline + abort signal on the adDailyHistory fetch path.
+    Deferred to a follow-on PR. The 108s call can stall indefinitely
+    today (no AbortSignal threading). Adding it cleanly requires
+    threading the signal through fetchAdDailyHistory → fetchLevelInsights
+    → graphGet, plus a TRPCError TIME_OUT mapping; substantial surface
+    area for a sandbox-environment change. Logged here so the
+    reviewer is aware it was seen and intentional.
+
+Post-round-9:
+  - test count  : 376 → 379 (+3 new tests; some tests were renamed / updated)
+  - vitest run  : 379 passed, 13 skipped
+  - tsc --noEmit: clean
+  - metrics     : `silencedAdsRestored` now reflects cohort <7 not <3
+
+The PR is at https://github.com/eslam21006-coding/qarar/pull/20 — same
+branch, additional commits on top of round-8.
+
+================================================================================
+12. ROUND-9 DOC SYNC NOTES
+================================================================================
+
+- refresh-fix-report.txt §4 wording corrected (see [4] above).
+- refresh-bottleneck-investigation.txt §203-270 needs a one-line rename
+  (`insights9Parallel` → `insightsParallel`) + the silenced-ad section
+  added. Tracked as a doc cleanup; not load-bearing.
+- refresh-fix-final.txt sections 1-10 remain accurate as written; section
+  11 is the round-9 delta.
+- The "reclaimed invariant" claim in §5 was OVERSTATED after round 9:
+  the restore-threshold expansion (<3 → <7) catches more cases, but the
+  legacy semantic vs post-fix semantic still diverge for ads with
+  row-of-7 mixed with sparse-day-skips. Covering that requires fetching
+  Meta's last_30d vs last_7d — the byte-identity claim only holds when
+  Meta returns the same row set for both queries (a sparse-day edge case).
+  Updated the wording in section 5 accordingly.
