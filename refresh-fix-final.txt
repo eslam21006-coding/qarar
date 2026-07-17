@@ -1,7 +1,12 @@
 ================================================================================
-refresh-fix-final.txt — round-8 final report, PR #20 (fix/refresh-actual-bottleneck)
-Audited 2026-07-17, after the legacy-semantics restoration for the silenced-ad
-population and the refreshMetrics.run() scope fix.
+refresh-fix-final.txt — ALL-ROUND FINAL REPORT (round-8 + round-9 + round-10),
+PR #20 (fix/refresh-actual-bottleneck)
+Audited 2026-07-17; the original commit was the round-8 delivery and the
+report was extended twice (round-9: rendering/threshold/chunking;
+round-10: doc-sync to match the shipped threshold + chunking + invariant
+qualification). Use this file as the canonical reference; section §11
+documents the round-9 follow-on, §13 (added below) documents the round-10
+doc-sync.
 ================================================================================
 
 VERDICT
@@ -128,12 +133,16 @@ Three ad-level daily-call shapes coexist after round 8:
       - Source for hadDelivery() (relevance filter)
       - ~1.2s for 875 ads (875 rows max — 1 per ad)
 
-  (c) Laziness + selective legacy-restore (round 8)
+  (c) Laziness + selective legacy-restore (round 8 — chunking in round 9)
       - level=ad, date_preset=last_30d, time_increment=1
       - Source for ad.daily7 ONLY for the silenced-ad population
-        (filtered to those ad IDs only)
-      - For accounts with silencedAdIds.length === 0: zero calls
-      - For accounts with N silenced ads: ONE call, cost ∝ N rows
+        (filtered to those ad IDs only via the cohort filter)
+      - For accounts with silencedAdIds.length === 0: zero calls.
+      - For accounts with N silenced ads: total requests = ceil(N/50)
+        (chunk size 50), run by up to CONCURRENCY=3 workers in parallel;
+        sequential waves = ceil(ceil(N/50)/3). Total cost bounded by
+        the silenced population (NOT the full account), not by a
+        single 108s wait.
 
   (d) Lazy fetch on demand (already in PR)
       - Same shape as (c) but unbounded — full 875 ads × 30d
@@ -166,9 +175,17 @@ act_1163959057640939):
 5. ENGINE INVARIANT — RECLAIMED
 ================================================================================
 
-The round-7/8 legacy-restore returns the invariant to: "all four invariant
-properties hold under the new contract, except for the silenced population
-WHERE we now deliberately match the legacy pre-fix behavior."
+The round-7/8/9 legacy-restore returns the invariant to: "three invariant
+properties hold under the new contract for every ad that delivered within
+the trailing 7 calendar days, and the legacy pre-fix behavior is now
+deliberately preserved for the silenced population (last_7d.length < 7).
+The fourth invariant — sparse-day-skip parity — remains conditional: it
+holds when Meta returns the SAME row set for the last_30d and last_7d
+queries, which is the practical case (a day with zero spend/impressions
+is omitted from BOTH queries), but does NOT hold when the trailing 30-day
+array has a gap at the end. See §6 below for the test evidence; the
+freshly-reclaimed invariant covers all four properties only for the
+dense case."
 
 (a) ad.daily7 byte-identity between OLD last_30d slice and NEW direct
     last_7d fetch — when Meta returns the same row set for both queries
@@ -363,8 +380,13 @@ All addressed:
          per Meta filter request, `CONCURRENCY = 3` parallel workers.
          For accounts with 0 silenced ads (the common case) the entire
          branch is a no-op. For accounts with N silenced ads the cost
-         is bounded by `ceil(N / CHUNK) * ceil(N / (CHUNK * CONCURRENCY))`
-         sequential round-trips.
+         is bounded by:
+           total requests  = ceil(N / CHUNK) = ceil(N / 50)
+           sequential waves = ceil(total requests / CONCURRENCY)
+                            = ceil(ceil(N / 50) / 3)
+         (the inner concurrency doesn't multiply total requests — each
+         worker pulls one chunk at a time and there are up to 3 workers
+         running in parallel.)
 
 [6] (Inline, Major) server/daily7Slice.test.ts — add 3-6 row parity test.
     New test "mid-sparse ad (3-6 trailing rows + older delivery) →
@@ -394,15 +416,54 @@ branch, additional commits on top of round-8.
 ================================================================================
 
 - refresh-fix-report.txt §4 wording corrected (see [4] above).
+- refresh-fix-report.txt §3a threshold doc + §4 trailing "numbers.)"
+  deduped in this round.
 - refresh-bottleneck-investigation.txt §203-270 needs a one-line rename
   (`insights9Parallel` → `insightsParallel`) + the silenced-ad section
   added. Tracked as a doc cleanup; not load-bearing.
 - refresh-fix-final.txt sections 1-10 remain accurate as written; section
-  11 is the round-9 delta.
+  11 is the round-9 delta; section 13 (added now) is the round-10 delta.
 - The "reclaimed invariant" claim in §5 was OVERSTATED after round 9:
   the restore-threshold expansion (<3 → <7) catches more cases, but the
   legacy semantic vs post-fix semantic still diverge for ads with
   row-of-7 mixed with sparse-day-skips. Covering that requires fetching
   Meta's last_30d vs last_7d — the byte-identity claim only holds when
   Meta returns the same row set for both queries (a sparse-day edge case).
-  Updated the wording in section 5 accordingly.
+  Updated the §5 opening sentence in this round (round-10 [4]) to make
+  the exception explicit instead of relying on the later parenthetical.
+- refresh-fix-final.txt architecture §3c documented the path as "ONE
+  call" before round 9. Updated to the chunked concurrent form
+  (ceil(N/50) total requests, ceil(ceil(N/50)/3) sequential waves,
+  CONCURRENCY=3) — round-10 [2].
+- refresh-fix-final.txt header (line 1-4): now reads "ALL-ROUND FINAL
+  REPORT (round-8 + round-9 + round-10)" — round-10 [1].
+
+================================================================================
+13. ROUND-10 DOC-SYNC DELTA (added 2026-07-17)
+================================================================================
+
+Round-10 CodeRabbit posted 7 actionable items; all 7 address docs drift
+introduced by the round-9 chunking + threshold change:
+
+[1] refresh-fix-final.txt:1-4 — rename "round-8 final report" →
+    "ALL-ROUND FINAL REPORT (round-8 + round-9 + round-10)" + added
+    §13 with the round-10 delta.
+[2] refresh-fix-final.txt:39-46 — "ONE call" wording updated to chunked
+    concurrent form (see above).
+[3] refresh-fix-final.txt:169-176 — §5 opening claim narrowed (see
+    above).
+[4] refresh-fix-report.txt:138-142 — `<3 rows` threshold doc updated to
+    `<7 rows` (matches round-9 implementation).
+[5] refresh-fix-final.txt:342-345 — contradicted sync status between
+    §11's "addressed" claim and §12's "still pending" note resolved;
+    both now report the same threshold doc + chunking wording as current.
+[6] refresh-fix-final.txt:361-367 — chunking cost formula corrected from
+    `ceil(N/CHUNK) * ceil(N/(CHUNK*CONCURRENCY))` (product) to
+    `totalRequests = ceil(N/50), waves = ceil(totalRequests/3)` — the
+    concurrency controls waves, not multiplies total requests.
+[7] refresh-fix-report.txt:191-203 — duplicated trailing "numbers.)"
+    removed.
+
+TypeScript clean, vitest 376 passed + 13 skipped (no test changes in
+round 10 — pure doc-sync). Mock simulator regression-guard invariant
+preserved.
