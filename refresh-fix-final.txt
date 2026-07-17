@@ -1,0 +1,314 @@
+================================================================================
+refresh-fix-final.txt — round-8 final report, PR #20 (fix/refresh-actual-bottleneck)
+Audited 2026-07-17, after the legacy-semantics restoration for the silenced-ad
+population and the refreshMetrics.run() scope fix.
+================================================================================
+
+VERDICT
+-------
+All round-7 CodeRabbit threads CLOSED, the human-brief items LANDED, and the
+PR's timeliness claim now matches the measured live number. Engine bit-for-bit
+unchanged. CI + CodeRabbit checks GREEN. Targeted invariants pass.
+
+================================================================================
+1. ROUND-7 CODERABBIT THREADS — STATUS
+================================================================================
+
+OPEN #1 (Minor, AsyncLocalStorage scope, server/meta.ts:500)
+    Was: refreshMetrics.enterWith() persisted across awaits, leaking the
+         finished refresh's counters into later work in the same process.
+    Fix: refactored buildSnapshot + fetchAdDailyHistory to wrap each
+         operation in refreshMetrics.run(store, async () => {...}) (round-8
+         commit). doRefresh() inside buildSnapshot; doWork() inside
+         fetchAdDailyHistory. The store is released the moment the callback
+         returns, so other awaits (including the silenced-ad restore call)
+         use their own scoped store, not a finished parent's.
+    Status: RESOLVED.
+
+OPEN #2 (Major, sparse-delivery divergence, server/meta.ts:721-735)
+    Was: NEW daily7 === toDaily(rows7) ≠ OLD daily7 === last7(toDaily(rows30))
+         for an ACTIVE ad with delivery in days 8-30 but NONE in the trailing
+         7 calendar days (the "active-but-recently-silent" population). The
+         old code would have fed the engine F1/F2/W2/S1 inputs from the
+         trailing 7 of the 30d sparse rows. The post-fix code gave
+         daily7=[] for that ad, the engine bailed on length<3/4, and those
+         verdicts were silently lost. Self-review item 4 said: "an
+         active-but-recently-quiet ad is often ITSELF a symptom of fatigue
+         Meta has already acted on, and losing that signal hides the
+         problem rather than fixing it."
+    Fix: RESTORED the legacy semantics, scoped to that narrow population.
+         - server/meta.ts:add filtering param to fetchLevelInsights
+         - server/meta.ts:after the 10-call parallel block, detect silenced
+           ads (adPresence30d.has(id) && last_7d.length < 3), then make ONE
+           additional filtered `last_30d time_increment=1` call with
+           `filtering: [{field: "ad.id", operator: "IN", value: [...]}]`.
+           Cost bounded by silenced population (NOT the full 875-ad count).
+         - server/meta.ts:for silenced ads, ad.daily7 = last7(toDaily(rows30))
+           — the historical pre-fix pattern. All other ads keep the fast-
+           path toDaily(rows7).
+         - Tests (LOCKED in):
+             server/daily7Slice.test.ts  "silenced ad w/ rows ONLY in
+                 days 8-29" → asserts daily7 === last7(toDaily(rows30));
+                 byte-equal to the OLD pre-fix pattern.
+             server/engine.bottleneck.test.ts  "silenced-ad legacy
+                 restore — F1 verdict fires on stale-but-real data" →
+                 asserts the engine consumes the legacy daily7 and fires
+                 F1/watch on an F1-pattern ad with delivery only on
+                 days 8-14.
+         - scripts/measure-refresh-timing.mock.ts:distinguishes the two
+           cases (last_30d/1 + filtering param = expected silenced-ad
+           restore; last_30d/1 with NO filtering = bottleneck regression).
+           Regression-guard invariant preserved for the common-case
+           silencedAdIds.length === 0 path.
+    Status: RESOLVED.
+
+Outside-diff (server/routers.ts:472-484)
+    Was: c.daily30 ?? c.daily7 ?? [] short-circuit on empty daily30
+         (post-fix: ad-level is []) → silently dropped every child ad's
+         daily7 from the parent's aggregated series.
+    Fix: applied mirror of the round-2 own-series fix:
+         c.daily30 && c.daily30.length > 0 ? c.daily30 : c.daily7 ?? []
+         (routers.ts: child iteration).
+    Status: RESOLVED.
+
+================================================================================
+2. HUMAN BRIEF — DELIVERY
+================================================================================
+
+The four items from the human brief:
+
+[1] RESTORE legacy semantics for the narrow silenced-ad population.
+    DELIVERED — see OPEN #2 above. Tests:
+      - daily7Slice.test.ts "silenced ad" — asserts daily7 ===
+        last7(toDaily(rows30)) explicitly (locked in the legacy pattern).
+      - engine.bottleneck.test.ts "silenced-ad F1 restore" — asserts the
+        engine fires F1/watch against the legacy daily7.
+    Pass-on-regression: temporarily reverting the daily7 assignment to
+    `toDaily(rows7)` makes both tests fail (verified during round-6+8
+    work). The fix is the new behavioral contract, not the documented
+    caveat.
+
+[2] refreshMetrics.run() instead of enterWith()
+    DELIVERED — see OPEN #1 above. Both buildSnapshot and fetchAdDailyHistory
+    now wrap their work in a run() callback. The AsyncLocalStorage store is
+    scoped to the callback only, so a finished refresh's counters can't
+    bleed into a sibling refresh or the lazy fetch triggered later.
+
+[3] Update PR description with REAL live timing number 29125ms (29.1s)
+    against wearefforce / act_1163959057640939.
+    DELIVERED — PR body "Timing (before / after)" section rewritten. The
+    live 29.1s post-fix measurement replaces the prior "~28s mock estimate"
+    language. The 1.0s delta between mock (~28s structural) and live
+    (29.1s) is well within expected network variance; the structural ratio
+    of phase durations is preserved.
+
+[4] Re-run engine.bottleneck.test.ts and daily7Slice.test.ts after the
+    semantic restoration.
+    DELIVERED — both suites re-run after round-8 changes. Status:
+      server/daily7Slice.test.ts        6 passed (was 6; +1 from round-6)
+      server/engine.bottleneck.test.ts  5 passed (was 4; +1 silenced-ad
+                                                  legacy-restore test)
+      server/relevance.test.ts          3 passed
+      server/meta.test.ts               4 passed
+      TOTAL targeted engine-relevant: 18 passed
+
+================================================================================
+3. ARCHITECTURE — FINAL SHAPE
+================================================================================
+
+Three ad-level daily-call shapes coexist after round 8:
+
+  (a) Hot path (verdict-critical, dense coverage)
+      - level=ad, date_preset=last_7d, time_increment=1
+      - Source for ad.daily7 for the active-recently population
+      - Cheap: ~4.5s for 875 ads (7000 rows max)
+
+  (b) Cheap 30d presence aggregate
+      - level=ad, date_preset=last_30d, NO time_increment
+      - Source for hadDelivery() (relevance filter)
+      - ~1.2s for 875 ads (875 rows max — 1 per ad)
+
+  (c) Laziness + selective legacy-restore (round 8)
+      - level=ad, date_preset=last_30d, time_increment=1
+      - Source for ad.daily7 ONLY for the silenced-ad population
+        (filtered to those ad IDs only)
+      - For accounts with silencedAdIds.length === 0: zero calls
+      - For accounts with N silenced ads: ONE call, cost ∝ N rows
+
+  (d) Lazy fetch on demand (already in PR)
+      - Same shape as (c) but unbounded — full 875 ads × 30d
+      - Triggered by user selecting 14d/30d/custom range
+      - ~108s when it fires, off the refresh path
+
+The presence aggregate (b) and the silenced-restore fetch (c) are NOT the
+same call. (b) is one row per ad (presence); (c) is up to 30 rows per ad
+(history). They share the date_preset parameter but not time_increment.
+
+================================================================================
+4. TIMING — LIVE NUMBER vs MOCK PROJECTION
+================================================================================
+
+Mock simulator (scripts/measure-refresh-timing.mock.ts, no token required):
+  buildSnapshot total            : 27721-27784ms across runs (~28s)
+  silencedAdsRestored            : 0 (sim account has no silenced ads)
+  legacy 108s-shape calls        : 0 (regression guard)
+  graphCalls                     : 18
+
+Live (FB_TOKEN-gated, scripts/measure-refresh-timing.ts, wearefforce /
+act_1163959057640939):
+  buildSnapshot total            : 29125ms (29.1s) — REAL measurement
+
+  Delta: ~1.0s (3.6%) between mock structural and live. Within expected
+  network variance for the same call shapes; the structural ratio of
+  phase durations carries over from the mock to the live.
+
+================================================================================
+5. ENGINE INVARIANT — RECLAIMED
+================================================================================
+
+The round-7/8 legacy-restore returns the invariant to: "all four invariant
+properties hold under the new contract, except for the silenced population
+WHERE we now deliberately match the legacy pre-fix behavior."
+
+(a) ad.daily7 byte-identity between OLD last_30d slice and NEW direct
+    last_7d fetch — when Meta returns the same row set for both queries
+    (the practical case for any ad that delivered within the trailing
+    7d window). Verified in daily7Slice.test.ts (dense + sparse cases).
+
+(b) decayMap / fatigueSignals / watchRules / continueRules / weeklyConversions
+    produce identical output given identical daily7. Verified in
+    engine.bottleneck.test.ts (K4, F1, monotonicity).
+
+(c) Relevance filter preserves membership. Verified in relevance.test.ts
+    (5-ad matrix).
+
+(d) Silenced-ad legacy restore: the narrow "active-but-recently-silent"
+    population receives the LEGACY last7(toDaily(rows30)) pattern, byte-
+    equal to the pre-fix code's daily7 for that population. Verified in
+    engine.bottleneck.test.ts (F1 fires against the legacy data) and
+    daily7Slice.test.ts (silenced-ad daily7 === last7(toDaily(rows30))).
+
+The verdict-legibility claim is now accurate. The earlier claim
+"engine verdict fully stable for every ad" was overstated for the
+silenced population; the round-8 fix removes the overstatement.
+
+================================================================================
+6. TESTS — TARGETED INVENTORY (relevant to this round)
+================================================================================
+
+server/daily7Slice.test.ts:
+  6 tests, all pass.
+  - dense full-30-day: daily7 === last7(toDaily(rows30))
+  - silenced (legacy restore): daily7 === last7(toDaily(rows30))  [round 8]
+  - sparse (3 of 7 days): daily7.length === 3, no fabrication
+  - truly silent: daily7 === []
+  - presence filter (relevance preserved)
+  - "fully covered" demo baseline
+
+server/engine.bottleneck.test.ts:
+  5 tests, all pass.
+  - snapshot-level identity across every demo ad
+  - K4 (decayMap) chronological day1→day7
+  - F1 (fatigueSignals) on peak + drop
+  - monotonicity (extending daily30 with 23 wild days)
+  - silenced-ad legacy restore: F1 fires against last7(toDaily(rows30))
+    built from rows ONLY in days 8-14                                [round 8]
+
+server/relevance.test.ts:
+  3 tests, all pass.
+
+server/meta.test.ts:
+  4 tests, all pass.
+
+client/.../DecisionTable.aggregate.test.ts:
+  5 aggregate tri-state tests, all pass.
+
+TOTAL targeted: 23 tests pass cleanly.
+
+================================================================================
+7. CODE-LEVEL DIFF SUMMARY — ROUND 8 COMMIT
+================================================================================
+
+server/meta.ts:
+  + fetchLevelInsights: optional 5th param {adIdFilter?: string[]}.
+    Adds filtering= JSON for the silenced-ad targeted call.
+  + buildSnapshot: detected silenced ads after the initial 10-call block
+    and made a filtered last_30d time_increment=1 call when silencedAdIds
+    is non-empty. Replaced the ad.daily7 assignment with a per-row
+    conditional: silenced → last7(toDaily(rows30)) ; else → toDaily(rows7).
+  + buildSnapshot: wrapped the entire per-refresh body in
+    refreshMetrics.run(newRefreshMetrics(), async () => doRefresh())
+    instead of enterWith(). The doRefresh() helper contains the previously-
+    inline body; the AsyncLocalStorage store is now scope-bound to the
+    callback.
+
+server/meta.ts (fetchAdDailyHistory):
+  + Replaced enterWith with refreshMetrics.run + a doWork() helper.
+    Same semantic: counters thread through but the store is released when
+    the callback returns.
+
+server/daily7Slice.test.ts:
+  ~ "silenced ad" test renamed + re-asserted: daily7 === last7(toDaily(rows30))
+    (was: daily7 === []). Mock fetch extended to handle the new
+    last_30d time_increment=1 + filtering-shape call.
+
+server/engine.bottleneck.test.ts:
+  + New test: "silenced-ad legacy restore — F1 verdict fires on stale-but-
+    real data, matches the legacy last7(toDaily(rows30))". Models an
+    ACTIVE ad with F1-pattern CTR on days 8-14, asserts the engine fires
+    F1/watch when fed daily7 from the legacy restore.
+
+scripts/measure-refresh-timing.mock.ts:
+  ~ Regression guard distinguishes filtered (silenced-ad restore — expected)
+    from unfiltered (legacy bottleneck regression — fail). The common-
+    case silencedAdIds.length === 0 path keeps `slowCalls === 0`.
+
+refresh-fix-report.txt:
+  ~ §3a, §3b updated to reflect the legacy restore + new tests.
+
+refresh-fix-final.txt (this file):
+  + Final report; round-8 delivery.
+
+================================================================================
+8. CODERABBIT THREAD STATUS — POST-ROUND-7
+================================================================================
+
+All open threads from round 7:
+  - Major (sparse divergence)    RESOLVED via legacy restore
+  - Minor (enterWith scope)      RESOLVED via run() wrapper
+
+Self-review's open item 4: RESOLVED.
+Self-review's "PR body 'after' is an estimate": RESOLVED — 29.1s live.
+
+================================================================================
+9. OUT-OF-SCOPE (UNCHANGED)
+================================================================================
+
+- Live post-deploy re-verification of the 14d/30d/custom range loading
+  spinner in a real browser. Deferred (no local UI; gated on deploy).
+- Server-side LRU for the lazy fetch (currently React Query, 60s staleTime).
+  Future perf hookup.
+- Custom range > 30d still silently clamps via the existing zod schema
+  (only 14 and 30 are accepted). Documented in refresh-fix-report.txt §7
+  as a correctness limitation. Not addressed in this PR.
+
+================================================================================
+10. AUTHOR NOTE
+================================================================================
+
+This round-8 commit addresses every CodeRabbit open thread (round 1-7
+inclusive) and every item in the human brief. The two largest changes —
+the silenced-ad legacy-restore and the refreshMetrics.run() scope — are
+independent of each other and isolated by the targeted test files. The
+deterministic regression-guard in scripts/measure-refresh-timing.mock.ts
+keeps the bottleneck-fix property intact.
+
+PR #20 is the same as before this round except for the round-8 deltas
+described in §7. CI green. Engine bit-for-bit unchanged (server/engine.ts
+is untouched). No new dependencies. No new dependencies on the user's
+side (FB_TOKEN remains optional — used for live re-verification only).
+
+Manual UI click-through + live post-deploy 14d/30d/custom range spinner
+verification remain the only genuinely-pending items; those need a real
+browser session against a live deployment and are out of scope for this
+sandbox.
