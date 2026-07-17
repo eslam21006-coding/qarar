@@ -498,28 +498,31 @@ export function DecisionTable({
     // use s.daily30 transparently.
     const lazyById = (lazyHistory.data?.byId ?? null) as Record<string, DailyMetrics[]> | null;
     const m = new Map<string, FilterAgg | null>();
+    // Round-7 CodeRabbit: on lazy-fetch ERROR, the 3d fallback must
+    // apply to EVERY row (not just ad rows). Otherwise the search/filter
+    // view (which shows all levels) has campaign rows on 30d while ad
+    // rows are on 3d — the footer `aggregateTotals` then sums mixed
+    // windows. Forcing aggRange='3d' here makes the footer consistent
+    // across the whole table.
+    const errorAggRange: RangeKey | null =
+      needsLazyHistory && lazyHistory.error ? "3d" : null;
     for (const r of rows) {
-      // Round-6 CodeRabbit: a single needsLazyHistory gate was passing
-      // null to campaign/ad-set rows during loading/error and hiding
-      // their cached 3d/14d/30d numbers. Resolve the lazy slice FIRST
-      // for each row's level so non-ad rows never see null:
-      //   - non-ad rows → always `undefined` (cached s.daily30)
-      //   - ad rows     → tri-state: undefined (error, fall back to 3d
-      //     range below), null (loading, em-dash), or the slice.
+      // Per-row lazy slice resolution:
+      //   - non-ad rows → always `undefined` (cached s.daily30); the
+      //     aggregate range follows errorAggRange (3d on error, the
+      //     original range otherwise). The cached s.daily30 is dense at
+      //     those levels, so 3d gives 3 days of campaign/adset totals.
+      //   - ad rows     → tri-state: null (loading, em-dash), undefined
+      //     (error, fall back to 3d via errorAggRange), or the slice.
       let lazySlice: DailyMetrics[] | null | undefined;
-      let aggRange: RangeKey = range;
+      let aggRange: RangeKey = errorAggRange ?? range;
       if (r.level !== "ad" || !needsLazyHistory) {
         // CAMPAIGN / ADSET ROWS — always cached s.daily30. The lazy
         // data is per-ad and doesn't apply to these levels.
         lazySlice = undefined;
       } else if (lazyHistory.error) {
-        // AD ROWS, ERROR: switch to "3d" so aggregate() triggers its
-        // w3d fallback (range === "3d" && dailyForAgg.length === 0 ⇒
-        // aggFromWindow(s.w3d)). Without this, ad rows on a 30d chip
-        // would show zeros after a failed lazy fetch. The toolbar shows
-        // an Arabic warning so the user knows they're seeing the 3d
-        // fallback, not real 30d numbers.
-        aggRange = "3d";
+        // AD ROWS, ERROR — fall through to the same 3d fallback as
+        // non-ad rows; the aggRange above is already "3d".
         lazySlice = undefined;
       } else if (!lazyById) {
         // AD ROWS, LOADING: pass null so aggregate() returns null and

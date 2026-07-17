@@ -481,7 +481,16 @@ export const appRouter = router({
           );
           const byDate = new Map<string, (typeof payload.objects)[number]["daily7"][number]>();
           for (const c of children) {
-            for (const d of c.daily30 ?? c.daily7 ?? []) {
+            // Round-7 CodeRabbit: an empty `daily30` (post-fix: ad-level
+            // is []) would short-circuit `??` and discard `daily7`. Mirror
+            // the own-series selection: prefer non-empty daily30, else
+            // fall back to daily7. Without this fix a parent that sums
+            // its children would silently drop every child ad's data.
+            const childDaily =
+              c.daily30 && c.daily30.length > 0
+                ? c.daily30
+                : c.daily7 ?? [];
+            for (const d of childDaily) {
               const cur = byDate.get(d.date);
               if (!cur) byDate.set(d.date, { ...d });
               else {
