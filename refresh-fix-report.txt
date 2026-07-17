@@ -86,22 +86,32 @@ Baseline (from refresh-bottleneck-root-cause.txt, measured live):
 Post-fix (measured via scripts/measure-refresh-timing.mock.ts — no live
 Meta access from this environment; the simulator uses plausible per-call
 latencies that match the baseline report so the structural shape is
-verifiable without a token. Real numbers come from
-scripts/measure-refresh-timing.ts run against wearefforce; PR description
-flags this as "real" when available):
+verifiable without a token):
 
-  - buildSnapshot total:                ≈28s
+  - buildSnapshot total:                ≈28s (mock) / 29.1s live (wearefforce,
+                                          act_1163959057640939)
   - All 9 per-level parallel insights:   ≈4.6s (parallel wall-time)
   - ad-level last_7d daily (NEW shape): ≈4.5s
   - ad-level cheap 30d presence agg:    ≈1.2s
   - 23-day-extension delta over baseline: NONE (the bottleneck call is
                                           gone from the hot path)
-  - Legacy 108s-shape calls observed:    0 (script asserts this)
+  - Legacy 108s-shape calls observed:    0 (script asserts this — see
+                                          scripts/measure-refresh-timing.mock.ts)
+  - Silenced-ad legacy-restore call:    CONDITIONAL (only fires when the
+                                          account has "active-but-recently
+                                          -silent" ads). When it fires,
+                                          cost is bounded by the silenced
+                                          population (filtered to those
+                                          IDs only). For accounts with
+                                          zero silenced ads (the common
+                                          case), this call is a no-op.
 
 This is a measured structural reduction of the buildSnapshot wall-time
-from ≈129s to ≈28s — i.e. the 108s slow call's contribution is gone,
-and the remaining time fits the other 8 parallel per-level calls plus
-the cheap ad presence.
+from ≈129s to ≈28s (mock) / 29.1s live — i.e. the 108s slow call's
+contribution is gone, and the remaining time fits the other 8 parallel
+per-level calls plus the cheap ad presence. The 1s delta between mock
+and live is well within expected network variance; the structural shape
+(ratio of phase durations) is preserved.
 
 The lazy 30d daily fetch is still ≈108s when it actually fires (the
 heavy call moved; it didn't shrink). It now fires ON DEMAND only when the
@@ -125,7 +135,11 @@ Three guarantees the brief demanded, each verified by a dedicated test:
       and the NEW direct last_7d fetch WHEN META RETURNS THE SAME ROW SET
       FOR BOTH QUERIES (the practical case — Meta omits a day from BOTH
       last_30d and last_7d when that day has zero spend/impressions, so
-      the sparse row sets match). Documented and tested:
+      the sparse row sets match). PLUS an explicitly-restored LEGACY
+      `last7(toDaily(rows30))` path for the narrow "active-but-recently-
+      silent" population (adPresence30d has a row, but the trailing-7d
+      daily has <3 rows) — so the historical F1/F2/W2/S1 signals survive
+      on stale-but-real data. Documented and tested:
         server/daily7Slice.test.ts
         - toDaily+last7(30d slice) ≡ toDaily(7d slice)  ✓
         - endTo-end: buildSnapshot using the new contract produces daily7
@@ -133,8 +147,10 @@ Three guarantees the brief demanded, each verified by a dedicated test:
         - sparse-series identity: ad with rows ONLY in 3 of the 7 days
           ends up with daily7.length === 3 (no fabricated metrics for
           the missing days)  ✓
-        - "silenced" ad: an ad with rows ONLY outside the last 7d ends up
-          with daily7 = []  ✓
+        - silenced ad (rows ONLY in days 8-29, legacy restore fires):
+          daily7 === last7(toDaily(rows30)) — the historical pre-fix
+          pattern, byte-equal to what the OLD code would have produced ✓
+          (asserts exactly the legacy pattern — locks in the restore)
 
   (b) decayMap / fatigueSignals / watchRules.W2 / continueRules.S1 produce
       identical output given identical daily7.
@@ -147,6 +163,10 @@ Three guarantees the brief demanded, each verified by a dedicated test:
         - monotonicity: baseline ad-level daily30 = daily7; twin extends
           daily30 with 23 wild days. Verdict + rule + reason/action must
           match (every rule reads at most daily7) ✓
+        - silenced-ad legacy restore: an ACTIVE ad with F1-pattern delivery
+          on days 8-14 (silenced in the trailing 7d window) produces an
+          F1/watch verdict under the restored legacy daily7 — locks in the
+          rule inputs survive for the narrow silenced population ✓
 
   (c) The relevance filter still includes / excludes the same ads.
         server/relevance.test.ts

@@ -248,7 +248,7 @@ describe("refresh-bottleneck fix — engine verdict stability across daily30 siz
   });
 
   it("monotonicity — adding more days beyond 7 to daily30 never changes a verdict", () => {
-    // For every ad in the demo, run the engine with daily30 truncated to
+    // For every ad in the demo, run the engine with daily7 truncated to
     // 7 days (= only daily7), then again with daily30 extended to 30 days
     // of wild values. Verdict + rule + reason/action strings must match
     // because every rule reads at most daily7.
@@ -290,5 +290,62 @@ describe("refresh-bottleneck fix — engine verdict stability across daily30 siz
       }
     }
     expect(drifts, "no verdict may shift when extending daily30 with wild rows").toEqual([]);
+  });
+
+  it("silenced-ad legacy restore — F1 verdict fires on stale-but-real data, matches the legacy last7(toDaily(rows30))", () => {
+    // Round-7 (CodeRabbit Major + human brief): the narrow population
+    //   "ACTIVE ad, ageDays > 4, delivered 8-30 days ago, zero delivery in
+    //   the last 7 calendar days"
+    // would, post-fix WITHOUT the restore, get daily7=[] and the engine
+    // would bail on length < 4 — silently dropping F1/F2/W2/S1. The
+    // restore feeds the engine the LEGACY pattern: last7(toDaily(rows30)),
+    // which still has ≥4 of the most-recent delivery days (8-14 days ago).
+    // That data SHOULD fire F1 (fatigueSignals: peak in first 3 ≥ median,
+    // drop from peak ≥ 25%, CPM stable). Without the restore, the engine
+    // would produce no verdict at all.
+    //
+    // Build a fixture like the F1 test above, but anchored on days 8-14
+    // instead of days 1-7. The engine should fire F1 against the legacy
+    // last7(toDaily(rows30)).
+    const fatigueDailyStale: DailyMetrics[] = [
+      // days 14..12 ago: peak ctrLink=2.3 (first 3 entries of legacy slice)
+      { spend: 75, impressions: 5600, reach: 5000, frequency: 1.1, clicks: 130, linkClicks: 130, ctrLink: 2.3, ctrAll: 2.3, cpm: 18, cpc: 0.58, conversions: 2, conversionValue: 86, lpViews: 110, cpa: 37.5, date: new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10) },
+      { spend: 75, impressions: 5500, reach: 5000, frequency: 1.1, clicks: 126, linkClicks: 126, ctrLink: 2.3, ctrAll: 2.3, cpm: 18.5, cpc: 0.6, conversions: 2, conversionValue: 86, lpViews: 100, cpa: 37.5, date: new Date(Date.now() - 13 * 86400000).toISOString().slice(0, 10) },
+      { spend: 76, impressions: 5400, reach: 4900, frequency: 1.1, clicks: 124, linkClicks: 124, ctrLink: 2.3, ctrAll: 2.3, cpm: 19, cpc: 0.61, conversions: 1, conversionValue: 43, lpViews: 95, cpa: 76, date: new Date(Date.now() - 12 * 86400000).toISOString().slice(0, 10) },
+      // days 11..9 ago: middle CTR ~1.5-1.8
+      { spend: 76, impressions: 5000, reach: 4500, frequency: 1.1, clicks: 92, linkClicks: 92, ctrLink: 1.8, ctrAll: 1.8, cpm: 19.2, cpc: 0.83, conversions: 1, conversionValue: 43, lpViews: 80, cpa: 76, date: new Date(Date.now() - 11 * 86400000).toISOString().slice(0, 10) },
+      { spend: 77, impressions: 4500, reach: 4000, frequency: 1.1, clicks: 81, linkClicks: 81, ctrLink: 1.6, ctrAll: 1.6, cpm: 19.5, cpc: 0.95, conversions: 1, conversionValue: 43, lpViews: 70, cpa: 77, date: new Date(Date.now() - 10 * 86400000).toISOString().slice(0, 10) },
+      { spend: 77, impressions: 4000, reach: 3600, frequency: 1.1, clicks: 69, linkClicks: 69, ctrLink: 1.5, ctrAll: 1.5, cpm: 19.8, cpc: 1.12, conversions: 1, conversionValue: 43, lpViews: 60, cpa: 77, date: new Date(Date.now() - 9 * 86400000).toISOString().slice(0, 10) },
+      // 8 days ago (legacy slice's "last" entry): most-recent, ctrLink=1.45
+      { spend: 76, impressions: 3800, reach: 3500, frequency: 1.1, clicks: 55, linkClicks: 55, ctrLink: 1.45, ctrAll: 1.45, cpm: 20, cpc: 1.38, conversions: 1, conversionValue: 43, lpViews: 50, cpa: 76, date: new Date(Date.now() - 8 * 86400000).toISOString().slice(0, 10) },
+    ];
+
+    // What the legacy last7(toDaily(rows30)) would produce for this ad —
+    // 7 sorted-ascending rows from the trailing 7 of the 7-day series
+    // (since the whole data is sparse and outside the trailing 7d window,
+    // and the legacy slice takes the last 7 elements of the sorted
+    // 7-element series). The data is exactly the 7 stale daily rows above.
+    const expectedDaily7 = fatigueDailyStale;
+    expect(expectedDaily7.length).toBe(7);
+
+    // Without the legacy restore, the post-fix code would feed the engine
+    // daily7 = [] (Meta's last_7d returns nothing for this ad) and the
+    // engine bails on length < 4 — NO verdict. With the restore, daily7
+    // matches `expectedDaily7`, F1 fires. This is the load-bearing test
+    // for the restore.
+    const baseSnap = buildDemoSnapshot();
+    const baseFatigue = baseSnap.objects.find(o => o.id === "ad_fatigue")!;
+    baseFatigue.ageDays = 8;
+    baseFatigue.status = "ACTIVE";
+    baseFatigue.effectiveStatus = "ACTIVE";
+    baseFatigue.daily7 = expectedDaily7;
+
+    const baselineResult = runEngine(baseSnap, funnel);
+    const baselineRow = baselineResult.rows.find(r => r.id === "ad_fatigue")!;
+
+    // F1 should fire on the legacy data — this is the verdict the OLD
+    // pre-fix code would have given for this exact ad.
+    expect(baselineRow.rule).toBe("F1");
+    expect(baselineRow.verdict).toBe("watch");
   });
 });

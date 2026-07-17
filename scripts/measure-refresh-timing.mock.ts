@@ -85,16 +85,30 @@ async function buildSimulatedRefresh(): Promise<{ objects: any[] }> {
     if (url.pathname.endsWith("/campaigns") || url.pathname.endsWith("/adsets") || url.pathname.endsWith("/ads")) {
       delay = BASE_LATENCY_MS.hierarchy;
     } else if (url.pathname.endsWith("/insights")) {
-      // Legacy bottleneck shape — MUST NEVER fire under the post-fix code.
-      // Round-3: tagged with the 108s latency so the slowCalls guard
-      // catches any regression that re-introduces this call.
-      if (
-        qs.get("level") === "ad" &&
-        qs.get("date_preset") === "last_30d" &&
-        qs.get("time_increment") === "1"
-      ) {
-        delay = AD_LEVEL_LATENCY_MS;
-      }
+      // Legacy bottleneck shape — MUST NEVER fire under the post-fix code,
+    // EXCEPT for the targeted silenced-ad legacy-restore path (round-7 +
+    // human brief). The restore fires a filtered last_30d time_increment=1
+    // call (ad.id IN [...]) when the account has "active-but-recently-
+    // silent" ads; the call is expected to pay the 108s cost. The mock
+    // distinguishes the two cases:
+    //
+    //   unfiltered  : last_30d/1 + no filtering param  ⇒  BUG (regression)
+    //   filtered    : last_30d/1 + adIdFilter=JSON    ⇒  silenced-ad restore
+    //
+    // For the silent mock account (AD_COUNT=875, all ads "recently
+    // active"), silencedAdIds=[] so the filtered branch never fires —
+    // slowCalls remains 0 and the assertion passes. If a future regression
+    // re-introduces the unfiltered call, slowCalls becomes 1 and the
+    // assertion fails with the same hard error as before.
+    const filtering = qs.get("filtering");
+    if (
+      qs.get("level") === "ad" &&
+      qs.get("date_preset") === "last_30d" &&
+      qs.get("time_increment") === "1" &&
+      !filtering
+    ) {
+      delay = AD_LEVEL_LATENCY_MS;
+    }
       // presence30d (no time_increment, level=ad, last_30d) → cheap
       else if (qs.get("level") === "ad" && qs.get("date_preset") === "last_30d" && qs.get("time_increment") === null) {
         delay = BASE_LATENCY_MS.presence_aggregate;

@@ -219,6 +219,40 @@ function mockFetchForContract(opts: {
         }
         return new Response(JSON.stringify({ data }), { status: 200 });
       }
+      // Ad-level last_30d daily (time_increment=1). NEW after the
+      // silenced-ad legacy-restore fix: only fires for the narrow
+      // "active-but-recently-silent" population, with an ad.id IN(...)
+      // filter. Returns the trailing 30 days of rows for those specific
+      // ad IDs. Without this mock branch the silenced-ad tests would
+      // silently degrade to empty data and the restore would look like
+      // a no-op.
+      if (level === "ad" && date_preset === "last_30d" && time_increment === "1") {
+        const filtering = qs.get("filtering");
+        let ids: Set<string> | null = null;
+        if (filtering) {
+          try {
+            const parsed = JSON.parse(filtering) as Array<{ field: string; operator: string; value: string[] }>;
+            const f = parsed[0];
+            if (f?.field === "ad.id" && f?.operator === "IN" && Array.isArray(f.value)) {
+              ids = new Set(f.value);
+            }
+          } catch {
+            /* ignore malformed filtering; treat as unfiltered */
+          }
+        }
+        const data: any[] = [];
+        for (const a of opts.ads) {
+          // Mock Meta's real behavior: an ad that delivered any time in
+          // the last 30d is included in the response (with its full
+          // daily series). For ad-id filtering, Meta narrows to the
+          // requested IDs only.
+          if (ids && !ids.has(a.id)) continue;
+          for (const r of a.daily30Rows) {
+            data.push({ ...r, ad_id: a.id });
+          }
+        }
+        return new Response(JSON.stringify({ data }), { status: 200 });
+      }
       return new Response(JSON.stringify({ data: [] }), { status: 200 });
     }
     if (/timezone_name/.test(fields)) {
@@ -283,18 +317,34 @@ describe("refresh-bottleneck fix — endTo-end daily7 contract via mocked Meta",
     expect(ad!.daily7).toEqual(expectedDaily7);
   });
 
-  it("an ad with rows ONLY in days 8-29 (silenced for the last 7d) ends up with empty daily7 — proves the slice is meaningful", async () => {
+  it("an ad with rows ONLY in days 8-29 (silenced for the last 7d) gets the LEGACY last7(toDaily(rows30)) — preserves F1/F2/W2/S1 verdict inputs", async () => {
+    // Round-7 (human brief) + CodeRabbit Major: the post-fix code without
+    // the silenced-ad legacy-restore made daily7=[] for this population,
+    // which silently dropped F1/F2/W2/S1 verdicts and weeklyConversions
+    // fell back to w3d. That's a real signal-loss for an ad that Meta
+    // burned out — going silent can itself be the symptom. The fix is
+    // RESTORED legacy semantics: a single targeted last_30d daily call
+    // (filtered to just the silenced ad IDs) supplies daily7 via
+    // last7(toDaily(rows30)) — the pre-fix pattern. This test asserts
+    // that resulting daily7 explicitly, so the legacy semantic is locked.
     const silent30Days: any[] = [];
     for (let i = 29; i >= 0; i--) silent30Days.push(adInsightsRow("(ad)", i));
     // Drop every row whose date is in the trailing 7 calendar days,
     // isoDate(1..7). Under Meta's last_7d preset (and matching the mock
     // filter), those dates are the ONLY ones the new daily call returns;
-    // keeping nothing else means daily7 must be [].
+    // so the fast path gives the ad empty daily7. The legacy-restore
+    // branch then fires a targeted last_30d daily call, which DOES
+    // include these rows (days 8-29), and feeds the engine
+    // last7(toDaily(rows30)) — the historical pattern.
     const last7Dates = new Set(
       Array.from({ length: 7 }, (_, i) => isoDate(i + 1)),
     );
     const rowsOutsideLast7 = silent30Days.filter(r => !last7Dates.has(r.date_start));
     expect(rowsOutsideLast7.length).toBeGreaterThan(0);
+    // Expect 7 rows in the final daily7 (slice(-7) of the 22 outside-last7
+    // sorted-ascending rows).
+    const expectedDaily7 = last7(toDaily(rowsOutsideLast7));
+    expect(expectedDaily7.length).toBe(7);
 
     const ads = [{ id: "ad_quiet", daily30Rows: rowsOutsideLast7, in30d: true }];
 
@@ -302,7 +352,9 @@ describe("refresh-bottleneck fix — endTo-end daily7 contract via mocked Meta",
     const newSnap = await buildSnapshot("t", "act_x", "USD");
     const quiet = newSnap.objects.find(o => o.id === "ad_quiet");
     expect(quiet).toBeDefined();
-    expect(quiet!.daily7).toEqual([]);
+    // Restored legacy semantic — NOT byte-equal to the empty fast-path
+    // result; explicitly byte-equal to the historical last7(toDaily(rows30)).
+    expect(quiet!.daily7).toEqual(expectedDaily7);
   });
 
   it("sparse-series delivery — daily7 reflects Meta's exact sparse response for the last_7d window", async () => {

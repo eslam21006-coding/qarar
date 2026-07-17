@@ -291,7 +291,8 @@ async function fetchLevelInsights(
   token: string,
   accountId: string,
   level: "campaign" | "adset" | "ad",
-  timeParams: Record<string, string>
+  timeParams: Record<string, string>,
+  options?: { adIdFilter?: string[] }
 ): Promise<Map<string, any[]>> {
   const idField = level === "campaign" ? "campaign_id" : level === "adset" ? "adset_id" : "ad_id";
   const byId = new Map<string, any[]>();
@@ -304,6 +305,18 @@ async function fetchLevelInsights(
     access_token: token,
     ...timeParams,
   };
+  // Targeted ad-id filter for the silenced-ad legacy-semantics path
+  // (restored after the refresh-bottleneck fix per human/CodeRabbit review
+  // — see refresh-fix-final.txt §3). Without this, an ACTIVE ad that
+  // delivered 8-30 days ago but is silent in the trailing 7d window goes
+  // dark in the engine: daily7 === [], engine bails on length < 3, F1/F2
+  // verdicts are lost. With the targeted call, only the small "silenced"
+  // population pays the ~30d-daily cost.
+  if (options?.adIdFilter && options.adIdFilter.length > 0 && level === "ad") {
+    params.filtering = JSON.stringify([
+      { field: "ad.id", operator: "IN", value: options.adIdFilter },
+    ]);
+  }
   let rows: any[];
   try {
     rows = await graphGetAll(`/${accountId}/insights`, params, 20);
@@ -468,6 +481,16 @@ function ageDaysFrom(createdTime: string | undefined | null): number {
  *                               → 1 row per ad, ~30× lighter than the daily
  *                               30d call) — keeps the relevance filter's
  *                               membership identical to before.
+ *   legacy-semantics restore   : for the narrow "active-but-recently-silent"
+ *                               population (adPresence30d has a row but the
+ *                               trailing-7d daily has <3 rows) we ALSO make
+ *                               a TARGETED last_30d daily call, filtered to
+ *                               just those ad IDs, and feed the engine the
+ *                               legacy last7(toDaily(rows30)) pattern so the
+ *                               F1/F2/W2/S1 signals survive. See refresh-fix-
+ *                               final.txt §3. The targeted call only fires
+ *                               when silencedAdIds.length > 0 — most accounts
+ *                               never pay for it.
  */
 export async function buildSnapshot(
   token: string,
@@ -493,13 +516,22 @@ export async function buildSnapshot(
   // the daily per-row volume at these levels doesn't dominate refresh time).
   const last30daily = { date_preset: "last_30d", time_increment: "1" };
 
+  // Per-refresh AsyncLocalStorage scope. Use refreshMetrics.run() instead of
+  // enterWith() (round-7 CodeRabbit Minor): the store is released the moment
+  // buildSnapshot's callback returns, so later awaits in the same process
+  // never inherit a finished refresh's counters.
+  // The whole body of the per-refresh work is wrapped in doRefresh() below;
+  // it runs inside refreshMetrics.run(...) so the store is scoped to its
+  // own callback.
+  return await refreshMetrics.run(newRefreshMetrics(), async () => doRefresh());
+
+  async function doRefresh(): Promise<AccountSnapshotPayload> {
   // Instrumentation: establish per-refresh counters for every graphGet spawned
-  // below (enterWith propagates the store across all following awaits without
-  // wrapping the whole body). t0 anchors every phase offset.
-  const metrics = newRefreshMetrics();
-  refreshMetrics.enterWith(metrics);
-  const t0 = performance.now();
-  const phase: Record<string, number> = {};
+  // below (run() propagates the store across all following awaits without
+  // wrapping every call site). t0 anchors every phase offset.
+    const metrics = refreshMetrics.getStore()!;
+    const t0 = performance.now();
+    const phase: Record<string, number> = {};
 
   const tHier = performance.now();
   const { campaigns, adsets, ads } = await fetchHierarchy(token, accountId);
@@ -597,6 +629,51 @@ export async function buildSnapshot(
   if (timingVerbose()) {
     (phase as Record<string, unknown>).insightsCallTrace = callTrace;
   }
+
+  // ===== Legacy-semantics restoration for the "active-but-recently-silent"
+  // population =====
+  //
+  // An ad is "silenced" when adPresence30d has a row (it delivered within
+  // the last 30d) but the trailing-7d daily call returned <3 rows. The
+  // historical code path populated ad.daily7 with last7(toDaily(rows30)),
+  // which could reach back into days 8-30 — so F1/F2/W2/S1 still fired on
+  // stale-but-real data for those ads. The post-fix code without this
+  // restore gives the engine daily7=[] for those ads, bails on length<3,
+  // and silently loses those verdicts — hiding a real fatigue signal
+  // (an ad that went dark because Meta burned it out).
+  //
+  // We pay a SINGLE targeted last_30d daily call ONLY when there are
+  // silenced ads (filtered to just those IDs). For healthy accounts this
+  // branch is a no-op (silencedAdIds.length === 0) and the bottleneck
+  // fix is preserved. For accounts with a few silenced ads, the targeted
+  // call is bounded by the silenced population (not the full account).
+  const silencedAdIds: string[] = [];
+  for (const a of ads) {
+    if (!adPresence30d.has(a.id)) continue;
+    if ((dailyMaps.get("ad")!.get(a.id)?.length ?? 0) < 3) {
+      silencedAdIds.push(a.id);
+    }
+  }
+  const adDaily30ForSilenced = new Map<string, any[]>();
+  const tSilenced = performance.now();
+  if (silencedAdIds.length > 0) {
+    if (timingVerbose()) {
+      console.log(
+        `[refresh-timing] silenced-ad restore: ${silencedAdIds.length} of ${ads.length} ads, fetching filtered last_30d daily`,
+      );
+    }
+    const silencedMap = await fetchLevelInsights(
+      token,
+      accountId,
+      "ad",
+      { date_preset: "last_30d", time_increment: "1" },
+      { adIdFilter: silencedAdIds },
+    );
+    for (const [id, rows] of Array.from(silencedMap.entries())) {
+      adDaily30ForSilenced.set(id, rows);
+    }
+  }
+  phase.silencedAdRestore = Math.round(performance.now() - tSilenced);
 
   // Baselines
   const tBaselines = performance.now();
@@ -706,6 +783,16 @@ export async function buildSnapshot(
   }
 
   for (const a of filteredAds) {
+    // Legacy-semantics restore for silenced ads (see header + silenced-ad
+    // block above). For an ACTIVE ad that's silent in the last 7 calendar
+    // days but delivered 8-30 days ago, the historical pattern was
+    // last7(toDaily(rows30)) — up to 7 of the most-recent delivery rows,
+    // possibly reaching back into days 8-30. Without this restore, the
+    // post-fix code gives daily7=[] and the engine drops F1/F2/W2/S1.
+    const rows30Silenced = adDaily30ForSilenced.get(a.id);
+    const daily7ForAd: DailyMetrics[] = rows30Silenced
+      ? last7(toDaily(rows30Silenced))
+      : toDaily(dailyMaps.get("ad")!.get(a.id));
     objects.push({
       id: a.id,
       name: a.name,
@@ -718,21 +805,20 @@ export async function buildSnapshot(
       ageDays: ageDaysFrom(a.created_time),
       w3d: parseInsightsRow(firstRow(w3dMaps.get("ad")!.get(a.id))),
       today: parseInsightsRow(firstRow(todayMaps.get("ad")!.get(a.id))),
-      // Verdict path: the ad-level daily call is now last_7d (was last_30d).
-      // The verdict rulebook only ever reads ad.daily7 here. Daily7 =
-      // toDaily(dailyMaps.get("ad").get(a.id)) — whatever rows Meta returns
-      // for the last_7d window. When Meta returns a row for every calendar
-      // day in the window, daily7 ends up with 7 entries; on a sparse day
-      // (zero spend / impressions that day), Meta omits the row and daily7
-      // has fewer entries. The engine rules treat a missing day as a
-      // "no-impressions" day (daily7.length < 3 ⇒ bail, filter d.impressions
-      // > 100 ⇒ skip missing days). The OLD last_30d + last7() path had the
-      // SAME behavior on sparse delivery. So daily7 is byte-identical to
-      // the historical last-7-slice whenever Meta returns the same row set
-      // for both queries — which it does for any day that had delivery.
-      // See server/daily7Slice.test.ts for the explicit byte-identity
-      // coverage + the sparse-day explicit test.
-      daily7: toDaily(dailyMaps.get("ad")!.get(a.id)),
+      // Verdict path: ad-level daily7 has two distinct cases (both date-
+      // ascending):
+      //   - silenced ad (adPresence30d has row, last_7d has <3 rows):
+      //       legacy last7(toDaily(rows30)) — preserves F1/F2/W2/S1
+      //       verdicts on stale-but-real data from the legacy semantic.
+      //   - everyone else (active-recently):
+      //       toDaily(rows7) — direct last_7d response, fast path.
+      // The legacy pattern and the fast path are byte-equal whenever Meta
+      // returns the same row set for both queries (true for any ad that
+      // delivered within the trailing 7 calendar days). They diverge for
+      // the silenced population — explicitly covered in
+      // server/daily7Slice.test.ts and exercised in
+      // server/engine.bottleneck.test.ts.
+      daily7: daily7ForAd,
       // Display path: only the campaign/adset levels still hold a daily30
       // series on the snapshot. Ad-level `daily30` is now populated lazily
       // via routers.ts#dashboard.adDailyHistory when the user picks a
@@ -783,6 +869,7 @@ export async function buildSnapshot(
       adsets: adsets.length,
       ads: ads.length,
       keptObjects: objects.length,
+      silencedAdsRestored: silencedAdIds.length,
     },
     phaseMs: phase,
     metaRoundTrips: metrics.graphCalls,
@@ -805,6 +892,7 @@ export async function buildSnapshot(
     baselines,
     attributionStraddle: daysAgo(90) < ATTRIBUTION_CHANGE_DATE,
   };
+  } // end doRefresh()
 }
 
 /**
@@ -820,69 +908,69 @@ export async function buildSnapshot(
  * separate, on-demand fetch. Per-call timed via the AsyncLocalStorage counter
  * — every graphGet round-trip increments `metrics.graphCalls`. Concurrent
  * calls (refresh ticking while user opens a 30d chip) are safe; the metric
- * store is per-request via enterWith().
+ * store is per-request via refreshMetrics.run() (round-7 CodeRabbit Minor:
+ * `enterWith()` previously leaked the finished refresh's store into later
+ * awaits in the same context — `run()` scopes it to the callback).
  */
 export async function fetchAdDailyHistory(
   token: string,
   accountId: string,
   days: 14 | 30 = 30
 ): Promise<Map<string, DailyMetrics[]>> {
-  // Lazy fetch — opt into the same instrumentation store that buildSnapshot
-  // uses, so [refresh-timing] counters still credit every round-trip. If we
-  // are called outside a previously-entered store (e.g. the standalone
-  // measure-refresh-timing harness), establish a fresh one in this async
-  // context so counters still increment. We also emit a [refresh-timing]
-  // summary at the end (round-3 CodeRabbit: lazy-fetch round-trips were
-  // previously invisible in timing output).
-  const ownStore = !refreshMetrics.getStore();
-  if (ownStore) {
-    refreshMetrics.enterWith(newRefreshMetrics());
-  }
-  const t0 = performance.now();
-  const preset = days === 14 ? "last_14d" : "last_30d";
-  const map = await fetchLevelInsights(token, accountId, "ad", {
-    date_preset: preset,
-    time_increment: "1",
-  });
-  // Build a per-AD keyed map (rowId → date-sorted DailyMetrics). The
-  // DecisionTable picks the slice matching the row being aggregated —
-  // without row identity, every row's range totals would include every
-  // other ad's spend (each row sees the union). See aggregate() in
-  // client/src/components/DecisionTable.tsx for the consumer side.
-  const byId = new Map<string, DailyMetrics[]>();
-  for (const [adId, rows] of Array.from(map.entries())) {
-    const series: DailyMetrics[] = rows
-      .map(r => ({ ...parseInsightsRow(r), date: r.date_start as string }))
-      .sort((a, b) => a.date.localeCompare(b.date));
-    byId.set(adId, series);
-  }
-  // Emit the [refresh-timing] summary when we OWN the store — otherwise
-  // we're nested inside a refresh whose own summary already covers us, and
-  // a second emit would double-count the parent refresh's totals.
-  if (ownStore) {
-    const m = refreshMetrics.getStore();
-    if (m) {
-      // Round-6 CodeRabbit: `byId.size` is the number of ADS in the
-      // keyed map, not the number of daily-history rows returned.
-      // Sum the per-ad series lengths to report actual rows.
-      let totalRows = 0;
-      for (const series of Array.from(byId.values())) totalRows += series.length;
-      console.log(
-        `[refresh-timing] adDailyHistory ${JSON.stringify({
-          accountId,
-          days,
-          wallMs: Math.round(performance.now() - t0),
-          metaRoundTrips: m.graphCalls,
-          metaRetries: m.graphRetries,
-          asyncFallbacks: m.asyncFallbacks,
-          metaMsSerialSum: Math.round(m.metaMs),
-          adsReturned: byId.size,
-          rowsReturned: totalRows,
-        })}`
-      );
+  // When called outside an already-entered refresh (e.g. the standalone
+  // measure-refresh-timing harness), establish a fresh scope so every
+  // graphGet round-trip increments counters (and emits at the end). When
+  // called inside a parent's run() the store is reused and we skip the
+  // emit (the parent's own summary already credits us).
+  const outsideExisting = !refreshMetrics.getStore();
+  const doWork = async () => {
+    const t0 = performance.now();
+    const preset = days === 14 ? "last_14d" : "last_30d";
+    const map = await fetchLevelInsights(token, accountId, "ad", {
+      date_preset: preset,
+      time_increment: "1",
+    });
+    // Build a per-AD keyed map (rowId → date-sorted DailyMetrics). The
+    // DecisionTable picks the slice matching the row being aggregated —
+    // without row identity, every row's range totals would include every
+    // other ad's spend (each row sees the union). See aggregate() in
+    // client/src/components/DecisionTable.tsx for the consumer side.
+    const byId = new Map<string, DailyMetrics[]>();
+    for (const [adId, rows] of Array.from(map.entries())) {
+      const series: DailyMetrics[] = rows
+        .map(r => ({ ...parseInsightsRow(r), date: r.date_start as string }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+      byId.set(adId, series);
     }
+    if (outsideExisting && timingVerbose()) {
+      const m = refreshMetrics.getStore();
+      if (m) {
+        // Round-6 CodeRabbit: `byId.size` is the number of ADS in the
+        // keyed map, not the number of daily-history rows returned. Sum
+        // the per-ad series lengths to report actual rows.
+        let totalRows = 0;
+        for (const series of Array.from(byId.values())) totalRows += series.length;
+        console.log(
+          `[refresh-timing] adDailyHistory ${JSON.stringify({
+            accountId,
+            days,
+            wallMs: Math.round(performance.now() - t0),
+            metaRoundTrips: m.graphCalls,
+            metaRetries: m.graphRetries,
+            asyncFallbacks: m.asyncFallbacks,
+            metaMsSerialSum: Math.round(m.metaMs),
+            adsReturned: byId.size,
+            rowsReturned: totalRows,
+          })}`
+        );
+      }
+    }
+    return byId;
+  };
+  if (outsideExisting) {
+    return await refreshMetrics.run(newRefreshMetrics(), doWork);
   }
-  return byId;
+  return await doWork();
 }
 
 /** Spend share within ad set — required for rule K5 (computed client-side per spec A3.6). */
