@@ -1,6 +1,7 @@
 ================================================================================
 refresh-fix-truly-final.txt — TRULY FINAL REPORT, PR #20
 Audited live 2026-07-17 in response to three pre-merge acceptance items.
+Round-11 follow-on work added; second live GraphQL pull confirms 0 open.
 ================================================================================
 
 This document is the final answer to the three-point brief that arrived
@@ -20,8 +21,16 @@ The two CodeRabbit open threads at round-10 are now CLOSED:
   - refresh-bottleneck-investigation.txt instrumentation guide : closed
   - server/routers.ts AbortSignal/deadline threading : closed (code change + test)
 
-Live GraphQL pull right now: 31 total threads ever created, 31 resolved,
-0 OPEN. (Tightened from round-10's 2 open by the round-11 work in this turn.)
+Live GraphQL pulls (right after round-11 commit 00f380c, AND a follow-up
+pull after the @coderabbitai re-review ping):
+  - First pull: 31 total threads, 29 resolved, 2 still showing
+    isResolved:false on PRRT_kwDOS5Zlf86RsoAg + PRRT_kwDOS5Zlf86RsoA2
+    (the threads I just committed fixes for — CodeRabbit hadn't yet
+    auto-resolved them on the next review pass).
+  - Second pull after `gh pr comment ... "@coderabbitai re-review"`:
+    31 total threads, 31 resolved, 0 OPEN. All isResolved:true.
+
+Final state: 31 / 31 / 0 / 0.
 
 ================================================================================
 ITEM 1 — LIVE TIMING RE-MEASUREMENT
