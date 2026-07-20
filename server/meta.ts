@@ -569,9 +569,175 @@ export async function buildSnapshot(
     const t0 = performance.now();
     const phase: Record<string, number> = {};
 
-    const tHier = performance.now();
-    const { campaigns, adsets, ads } = await fetchHierarchy(token, accountId, signal);
-  phase.fetchHierarchy = Math.round(performance.now() - tHier);
+    // ======================================================================
+    // Phase 1: kick off every independent top-level fetch in parallel.
+    //
+    // Dependency graph (verified by inspection — see refresh-bottleneck
+    // root-cause §5 for the full audit):
+    //   fetchHierarchy    — needs nothing, runs first.
+    //   insightsParallel  — needs nothing, runs alongside.
+    //   fetchBaselines    — needs ONLY (token, accountId), runs alongside.
+    //   accountTimezone   — needs ONLY (accountId), runs alongside.
+    //
+    // The next phase (silencedAdRestore detection + chunked fetch) needs
+    // the result of fetchHierarchy (for ad IDs) AND insightsParallel
+    // (for dailyMaps / adPresence30d). It cannot start until both
+    // Phase 1 promises resolve.
+    //
+    // Pre-round-12 buildSnapshot serialized all four — adding
+    // max(phase) to the wall-time instead of the longest single phase.
+    // Round-12 (refresh-instant-feel) parallelizes them. The expected
+    // wall-time drops from ~30.7 s (sum of serial phases) to ~10.1 s
+    // (longest single phase on a real wearefforce account).
+    // ======================================================================
+    const tPhase1 = performance.now();
+    const hierarchyP = (async () => {
+      const t = performance.now();
+      const r = await fetchHierarchy(token, accountId, signal);
+      phase.fetchHierarchy = Math.round(performance.now() - t);
+      return r;
+    })();
+    const insightsP = (async () => {
+      const t = performance.now();
+      const r = await runInsightsParallel();
+      phase.insightsParallel = Math.round(performance.now() - t);
+      return r;
+    })();
+    const baselinesP = (async () => {
+      const t = performance.now();
+      const r = await fetchBaselines(token, accountId);
+      phase.fetchBaselines = Math.round(performance.now() - t);
+      return r;
+    })();
+    const tzP = (async () => {
+      const t = performance.now();
+      const r = await fetchAccountTimezone();
+      phase.accountTimezone = Math.round(performance.now() - t);
+      return r;
+    })();
+
+    // ======================================================================
+    // Inner helper: run the 10-call insights block (3 levels × 3 windows
+    // + 1 ad-level presence aggregate). All truly independent of fetchHierarchy
+    // and fetchBaselines, so it runs alongside them in Phase 1.
+    // ======================================================================
+    async function runInsightsParallel(): Promise<{
+      w3dMaps: Map<string, Map<string, any[]>>;
+      todayMaps: Map<string, Map<string, any[]>>;
+      dailyMaps: Map<string, Map<string, any[]>>;
+      adPresence30d: Map<string, boolean>;
+      callTrace: Array<{ label: string; startOffMs: number; durMs: number; rows: number }>;
+    }> {
+      const w3dMaps = new Map<string, Map<string, any[]>>();
+      const todayMaps = new Map<string, Map<string, any[]>>();
+      const dailyMaps = new Map<string, Map<string, any[]>>();
+      const adPresence30d = new Map<string, boolean>();
+      const tInsights = performance.now();
+      const callTrace: Array<{ label: string; startOffMs: number; durMs: number; rows: number }> = [];
+      type CallSpec =
+        | { kind: "level"; level: "campaign" | "adset" | "ad"; bucket: "w3dMaps" | "todayMaps" | "dailyMaps"; params: Record<string, string> }
+        | { kind: "adPresence"; params: Record<string, string> };
+      const calls: CallSpec[] = [
+        ...(["campaign", "adset", "ad"] as const).flatMap(level =>
+          (["w3dMaps", "todayMaps", "dailyMaps"] as const).map(bucket => {
+            let params: Record<string, string>;
+            if (bucket === "w3dMaps") params = threeDay;
+            else if (bucket === "todayMaps") params = today;
+            else params = level === "ad" ? last7daily : last30daily;
+            return { kind: "level" as const, level, bucket, params };
+          })
+        ),
+        { kind: "adPresence", params: last30aggregate },
+      ];
+      await Promise.all(
+        calls.map(c => {
+          const startOff = performance.now() - tInsights;
+          const callStart = performance.now();
+          if (c.kind === "level") {
+            return fetchLevelInsights(token, accountId, c.level, c.params, { signal }).then(map => {
+              if (timingVerbose()) {
+                let rows = 0;
+                for (const arr of Array.from(map.values())) rows += arr.length;
+                callTrace.push({
+                  label: `${c.level}/${c.bucket}`,
+                  startOffMs: Math.round(startOff),
+                  durMs: Math.round(performance.now() - callStart),
+                  rows,
+                });
+              }
+              if (c.bucket === "w3dMaps") w3dMaps.set(c.level, map);
+              else if (c.bucket === "todayMaps") todayMaps.set(c.level, map);
+              else dailyMaps.set(c.level, map);
+            });
+          }
+          return fetchLevelInsights(token, accountId, "ad", c.params, { signal }).then(map => {
+            if (timingVerbose()) {
+              let rows = 0;
+              for (const arr of Array.from(map.values())) rows += arr.length;
+              callTrace.push({
+                label: "ad/presence30d",
+                startOffMs: Math.round(startOff),
+                durMs: Math.round(performance.now() - callStart),
+                rows,
+              });
+            }
+            for (const id of Array.from(map.keys())) adPresence30d.set(id, true);
+          });
+        })
+      );
+      if (timingVerbose()) {
+        // Stash the callTrace on the outer phase object via a small side-channel
+        // (the phase is mutated in the IIFE above; this keeps the timer side
+        // observable in the [refresh-timing] log). See runInsightsParallel
+        // caller — the caller adds it to the phase map.
+        (runInsightsParallel as any).__lastCallTrace = callTrace;
+      }
+      return { w3dMaps, todayMaps, dailyMaps, adPresence30d, callTrace };
+    }
+
+    // ======================================================================
+    // Inner helper: fetch the account's timezone_name + compute the
+    // account-tz "today" date (YYYY-MM-DD). Trivial cost (~400ms) but
+    // running it in parallel with the big phases eliminates the
+    // previously-serial 400ms tail.
+    // ======================================================================
+    async function fetchAccountTimezone(): Promise<string> {
+      try {
+        const acct = await graphGet(`/${accountId}`, {
+          fields: "timezone_name",
+          access_token: token,
+        });
+        const tzName = acct?.timezone_name;
+        return new Intl.DateTimeFormat("en-CA", {
+          timeZone: tzName || undefined,
+        }).format(new Date());
+      } catch {
+        // Timezone lookup failure must NOT fail the whole refresh — fall
+        // back to the server's system-tz current date (intentional error
+        // path per spec note U1 — not an FR-012 violation, which governs
+        // the normal path).
+        return new Intl.DateTimeFormat("en-CA").format(new Date());
+      }
+    }
+
+    // Extract the Phase 1 results. We need the hierarchy + insights results
+    // before Phase 2 (silencedAdRestore + relevance filter + object
+    // construction). Baselines + asOfDate can wait until the end since
+    // they're only used in the return object.
+    const { campaigns, adsets, ads } = await hierarchyP;
+    const insightsPResult = await insightsP;
+    const {
+      w3dMaps,
+      todayMaps,
+      dailyMaps,
+      adPresence30d,
+      callTrace: insightsCallTrace,
+    } = insightsPResult;
+    // Preserve the callTrace on the phase object so the [refresh-timing]
+    // line carries it (matches the pre-Phase-1-parallel structure).
+    if (timingVerbose()) {
+      (phase as Record<string, unknown>).insightsCallTrace = insightsCallTrace;
+    }
 
   // Run all per-level calls in parallel. Two facts to lock in:
   //  (1) campaign + adset levels keep the historical last_30d daily call
@@ -588,83 +754,6 @@ export async function buildSnapshot(
   // presence role previously filled by `dailyMaps.get("ad").get(id).length`.
   // Net: 9 calls + 1 ad-level cheap presence aggregate = 10 calls, with
   // the dominant 30d-daily cost at the ad level removed.
-  const w3dMaps = new Map<string, Map<string, any[]>>();
-  const todayMaps = new Map<string, Map<string, any[]>>();
-  // Per-level daily maps. Campaign & adset still hold the full last_30d
-  // daily series (cheap), and power both `daily7` (engine) and `daily30`
-  // (display) at those levels. At the ad level the map now holds last_7d
-  // daily — engine reads daily7 via toDaily(...) directly with no slice.
-  const dailyMaps = new Map<string, Map<string, any[]>>();
-  // ad-level presence map (last_30d aggregate, 1 row per ad) — feeds only
-  // the relevance filter (.length > 0). Kept separate from dailyMaps so the
-  // daily maps stay a pure verdict/display artifact.
-  const adPresence30d = new Map<string, boolean>();
-
-  type CallSpec =
-    | { kind: "level"; level: "campaign" | "adset" | "ad"; bucket: "w3dMaps" | "todayMaps" | "dailyMaps"; params: Record<string, string> }
-    | { kind: "adPresence"; params: Record<string, string> };
-  const calls: CallSpec[] = [
-    ...(["campaign", "adset", "ad"] as const).flatMap(level =>
-      (["w3dMaps", "todayMaps", "dailyMaps"] as const).map(bucket => {
-        let params: Record<string, string>;
-        if (bucket === "w3dMaps") params = threeDay;
-        else if (bucket === "todayMaps") params = today;
-        else params = level === "ad" ? last7daily : last30daily;
-        return { kind: "level" as const, level, bucket, params };
-      })
-    ),
-    { kind: "adPresence", params: last30aggregate },
-  ];
-
-  // Per-call start-offset + duration proves the calls are genuinely
-  // concurrent. If they were accidentally serialized the start offsets
-  // would climb monotonically instead of all clustering near 0.
-  const tInsights = performance.now();
-  const callTrace: Array<{ label: string; startOffMs: number; durMs: number; rows: number }> = [];
-  await Promise.all(
-    calls.map(c => {
-      const startOff = performance.now() - tInsights;
-      const callStart = performance.now();
-      if (c.kind === "level") {
-        return fetchLevelInsights(token, accountId, c.level, c.params, { signal }).then(map => {
-          if (timingVerbose()) {
-            let rows = 0;
-            for (const arr of Array.from(map.values())) rows += arr.length;
-            callTrace.push({
-              label: `${c.level}/${c.bucket}`,
-              startOffMs: Math.round(startOff),
-              durMs: Math.round(performance.now() - callStart),
-              rows,
-            });
-          }
-          if (c.bucket === "w3dMaps") w3dMaps.set(c.level, map);
-          else if (c.bucket === "todayMaps") todayMaps.set(c.level, map);
-          else dailyMaps.set(c.level, map);
-        });
-      }
-      // c.kind === "adPresence" — ad-level 30d aggregate (1 row per ad).
-      // Built via fetchLevelInsights so it shares the same paging + retry +
-      // async-fallback path; params deliberately omit `time_increment` so
-      // Meta returns one row per ad that delivered anything in the window.
-      return fetchLevelInsights(token, accountId, "ad", c.params, { signal }).then(map => {
-        if (timingVerbose()) {
-          let rows = 0;
-          for (const arr of Array.from(map.values())) rows += arr.length;
-          callTrace.push({
-            label: "ad/presence30d",
-            startOffMs: Math.round(startOff),
-            durMs: Math.round(performance.now() - callStart),
-            rows,
-          });
-        }
-        for (const id of Array.from(map.keys())) adPresence30d.set(id, true);
-      });
-    })
-  );
-  phase.insightsParallel = Math.round(performance.now() - tInsights);
-  if (timingVerbose()) {
-    (phase as Record<string, unknown>).insightsCallTrace = callTrace;
-  }
 
   // ===== Legacy-semantics restoration for the "active-but-recently-silent"
   // population =====
@@ -743,10 +832,12 @@ export async function buildSnapshot(
   }
   phase.silencedAdRestore = Math.round(performance.now() - tSilenced);
 
-  // Baselines
-  const tBaselines = performance.now();
-  const baselines = await fetchBaselines(token, accountId);
-  phase.fetchBaselines = Math.round(performance.now() - tBaselines);
+  // Baselines + timezone: awaited now (they were started in parallel
+  // with fetchHierarchy + insightsParallel up at the top of doRefresh).
+  // The await cost here is bounded by their remaining time after the
+  // longest Phase 1 promise resolves; if baselines finished first the
+  // await is 0; if it's the slow one, it's the remainder of the longest.
+  const [baselines, asOfDate] = await Promise.all([baselinesP, tzP]);
 
   // Relevance filter: keep objects that are currently delivering OR had any
   // delivery in the last 30 days. Mature accounts hold thousands of long-dead
@@ -903,28 +994,6 @@ export async function buildSnapshot(
 
   computeSpendShares(objects);
 
-  // Account-timezone "today" (YYYY-MM-DD) anchors the client's preset date-range
-  // chips so they exclude today and reconcile with Meta (spec 010, FR-012). The
-  // account timezone is authoritative on the success path; a single failed field
-  // must not fail the whole refresh, so we fall back to the server's system-tz
-  // current date (intentional error path per spec note U1 — not an FR-012
-  // violation, which governs the normal path).
-  let asOfDate: string;
-  const tTz = performance.now();
-  try {
-    const acct = await graphGet(`/${accountId}`, {
-      fields: "timezone_name",
-      access_token: token,
-    });
-    const tzName = acct?.timezone_name;
-    asOfDate = new Intl.DateTimeFormat("en-CA", {
-      timeZone: tzName || undefined,
-    }).format(new Date());
-  } catch {
-    asOfDate = new Intl.DateTimeFormat("en-CA").format(new Date());
-  }
-  phase.accountTimezone = Math.round(performance.now() - tTz);
-
   // Instrumentation summary. One structured line per refresh — cheap enough to
   // leave on permanently (it measures phases that each take seconds). Note this
   // covers Meta-fetch + CPU only; it stops before the DB write, which happens in
@@ -948,7 +1017,7 @@ export async function buildSnapshot(
     // fetches ran serially. The gap is what Promise.all bought us.
     metaMsSerialSum: Math.round(metrics.metaMs),
   };
-  if (timingVerbose()) summary.insightsCallTrace = callTrace;
+  if (timingVerbose()) summary.insightsCallTrace = insightsCallTrace;
   console.log(`[refresh-timing] ${JSON.stringify(summary)}`);
 
   return {
@@ -1062,68 +1131,79 @@ export function computeSpendShares(objects: NormalizedObject[]): void {
 }
 
 async function fetchBaselines(token: string, accountId: string): Promise<Baselines> {
-  // 90-day median Link CTR across ads/days
-  let ctrValues: number[] = [];
-  try {
-    const json = await graphGet(`/${accountId}/insights`, {
-      level: "ad",
-      date_preset: "last_90d",
-      time_increment: "1",
-      fields: "inline_link_click_ctr",
-      limit: "1000",
-      access_token: token,
-    });
-    ctrValues = (json.data ?? [])
-      .map((r: any) => parseFloat(r.inline_link_click_ctr))
-      .filter((v: number) => Number.isFinite(v) && v > 0);
-  } catch {
-    /* baseline optional */
-  }
+  // Round-12 (refresh-instant-feel): the three baseline groups are
+  // independent — they touch different windows (90d / 14d+3d / 30d) and
+  // different metrics (CTR / CPM / CPA). Previously sequential; now
+  // parallelized with Promise.all so the baselines phase wall-time =
+  // slowest single call instead of sum.
+  const ctrP = (async (): Promise<number[]> => {
+    try {
+      const json = await graphGet(`/${accountId}/insights`, {
+        level: "ad",
+        date_preset: "last_90d",
+        time_increment: "1",
+        fields: "inline_link_click_ctr",
+        limit: "1000",
+        access_token: token,
+      });
+      return (json.data ?? [])
+        .map((r: any) => parseFloat(r.inline_link_click_ctr))
+        .filter((v: number) => Number.isFinite(v) && v > 0);
+    } catch {
+      return [];
+    }
+  })();
 
-  let cpmAvg14: number | null = null;
-  let cpmNow: number | null = null;
-  try {
-    const json = await graphGet(`/${accountId}/insights`, {
-      date_preset: "last_14d",
-      fields: "cpm",
-      access_token: token,
-    });
-    cpmAvg14 = parseFloat(json.data?.[0]?.cpm) || null;
-    const j2 = await graphGet(`/${accountId}/insights`, {
-      // "current" CPM over the last 3 complete days (account tz, excludes today)
-      // — matches the engine's corrected w3d window (spec 010 FR-003).
-      date_preset: "last_3d",
-      fields: "cpm",
-      access_token: token,
-    });
-    cpmNow = parseFloat(j2.data?.[0]?.cpm) || null;
-  } catch {
-    /* optional */
-  }
+  const cpmP = (async (): Promise<{ cpmAvg14: number | null; cpmNow: number | null }> => {
+    try {
+      const [j1, j2] = await Promise.all([
+        graphGet(`/${accountId}/insights`, {
+          date_preset: "last_14d",
+          fields: "cpm",
+          access_token: token,
+        }),
+        graphGet(`/${accountId}/insights`, {
+          // "current" CPM over the last 3 complete days (account tz, excludes today)
+          // — matches the engine's corrected w3d window (spec 010 FR-003).
+          date_preset: "last_3d",
+          fields: "cpm",
+          access_token: token,
+        }),
+      ]);
+      return {
+        cpmAvg14: parseFloat(j1.data?.[0]?.cpm) || null,
+        cpmNow: parseFloat(j2.data?.[0]?.cpm) || null,
+      };
+    } catch {
+      return { cpmAvg14: null, cpmNow: null };
+    }
+  })();
 
-  let cpaValues: number[] = [];
-  try {
-    const json = await graphGet(`/${accountId}/insights`, {
-      date_preset: "last_30d",
-      time_increment: "1",
-      fields: "spend,actions",
-      access_token: token,
-    });
-    cpaValues = (json.data ?? [])
-      .map((r: any) => {
-        const conv = pickAction(r.actions, CONVERSION_ACTION_TYPES);
-        const spend = parseFloat(r.spend) || 0;
-        return conv > 0 ? spend / conv : NaN;
-      })
-      .filter((v: number) => Number.isFinite(v));
-  } catch {
-    /* optional */
-  }
+  const cpaP = (async (): Promise<number[]> => {
+    try {
+      const json = await graphGet(`/${accountId}/insights`, {
+        date_preset: "last_30d",
+        time_increment: "1",
+        fields: "spend,actions",
+        access_token: token,
+      });
+      return (json.data ?? [])
+        .map((r: any) => {
+          const conv = pickAction(r.actions, CONVERSION_ACTION_TYPES);
+          const spend = parseFloat(r.spend) || 0;
+          return conv > 0 ? spend / conv : NaN;
+        })
+        .filter((v: number) => Number.isFinite(v));
+    } catch {
+      return [];
+    }
+  })();
 
+  const [ctrValues, cpm, cpaValues] = await Promise.all([ctrP, cpmP, cpaP]);
   return {
     ctrLinkMedian90: median(ctrValues),
-    cpmAvg14,
+    cpmAvg14: cpm.cpmAvg14,
     cpaMedian30: median(cpaValues),
-    cpmNow,
+    cpmNow: cpm.cpmNow,
   };
 }
