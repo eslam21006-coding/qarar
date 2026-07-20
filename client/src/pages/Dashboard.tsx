@@ -339,13 +339,31 @@ function Shell({
                 <span className="mr-1 hidden sm:inline">تحديث</span>
               </Button>
             )}
-            <Button variant="ghost" size="sm" asChild>
-              <Link href={`/settings/${accountId}`}>
-                <SettingsIcon className="h-4 w-4" />
-              </Link>
-            </Button>
+          <Button variant="ghost" size="sm" asChild>
+            <Link href={`/settings/${accountId}`}>
+              <SettingsIcon className="h-4 w-4" />
+            </Link>
+          </Button>
+        </div>
+      </div>
+      {/* Round-12 Part A: stale-while-revalidate indicator. A small, non-
+          blocking banner that makes a refresh-in-flight visible without
+          blocking the rest of the page (the old data continues to render
+          below — that's the SWR pattern, no skeleton). The banner uses
+          the same `refreshing` boolean the button uses; both stay in sync. */}
+      {refreshing && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid="refresh-in-flight-banner"
+          className="border-b border-primary/20 bg-primary/5"
+        >
+          <div className="container flex items-center gap-2 py-1.5 text-[11px] text-primary">
+            <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+            <span>جارٍ تحديث البيانات من ميتا… ستظهر الأرقام الجديدة فور وصولها.</span>
           </div>
         </div>
+      )}
       </header>
       {children}
     </div>
