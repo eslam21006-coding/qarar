@@ -15,6 +15,7 @@ import {
   buildOAuthUrl,
   buildSnapshot,
   fetchAdAccounts,
+  fetchAdDailyHistory,
   revokeToken,
   setDailyBudget,
   setObjectStatus,
@@ -24,6 +25,7 @@ import { buildDemoSnapshot, DEMO_FUNNEL } from "./demo";
 import { deriveTargets, runEngine } from "./engine";
 import {
   AccountSnapshotPayload,
+  DailyMetrics,
   FunnelInputs,
   SUPPORTED_CURRENCIES,
 } from "../shared/qarar";
@@ -457,17 +459,38 @@ export const appRouter = router({
         const checks = await db.getChecks(ctx.user.id, input.adAccountId, day);
         const needsReview =
           Date.now() - new Date(funnel.lastReviewedAt).getTime() > 30 * 86400000;
-        // light per-object series for the display-only date-range selector
+        // light per-object series for the display-only date-range selector.
+        // Refresh-bottleneck fix (round-2 CodeRabbit): the post-fix code sets
+        // ad-level `daily30 = []` (an empty array, not undefined — the lazy
+        // display history now lives behind `dashboard.adDailyHistory`). With
+        // the historical `o.daily30 ?? o.daily7` check, the empty array
+        // passed the `??` (non-nullish is truthy) but `length > 0` then
+        // failed — leaving ad rows in the table with NO daily data until the
+        // lazy fetch resolves. Using `daily30?.length ? daily30 : daily7`
+        // gives ad rows a fallback to `daily7` immediately, while leaving
+        // campaign / adset rows on the longer daily30 series.
         const dailyOf = (o: (typeof payload.objects)[number]) => {
-          const own = o.daily30 ?? o.daily7;
-          if (own && own.length > 0) return own;
+          const own =
+            o.daily30 && o.daily30.length > 0 ? o.daily30
+              : o.daily7 && o.daily7.length > 0 ? o.daily7
+              : null;
+          if (own) return own;
           // fallback: sum children's daily series by date (demo campaigns have no own series)
           const children = payload.objects.filter(c =>
             o.level === "campaign" ? c.level === "adset" && c.campaignId === o.id : c.parentId === o.id
           );
           const byDate = new Map<string, (typeof payload.objects)[number]["daily7"][number]>();
           for (const c of children) {
-            for (const d of c.daily30 ?? c.daily7 ?? []) {
+            // Round-7 CodeRabbit: an empty `daily30` (post-fix: ad-level
+            // is []) would short-circuit `??` and discard `daily7`. Mirror
+            // the own-series selection: prefer non-empty daily30, else
+            // fall back to daily7. Without this fix a parent that sums
+            // its children would silently drop every child ad's data.
+            const childDaily =
+              c.daily30 && c.daily30.length > 0
+                ? c.daily30
+                : c.daily7 ?? [];
+            for (const d of childDaily) {
               const cur = byDate.get(d.date);
               if (!cur) byDate.set(d.date, { ...d });
               else {
@@ -528,20 +551,38 @@ export const appRouter = router({
           return { success: true };
         }
         const token = await getUserToken(ctx.user.id);
+        // Instrumentation: end-to-end refresh timing. buildSnapshot logs its own
+        // internal phase breakdown; here we capture the two outer costs it can't
+        // see — the Meta build vs. the DB persist — and the true total.
+        const tRefreshStart = Date.now();
+        let tAfterBuild = tRefreshStart;
         try {
-          // Hotfix T1: race buildSnapshot against a 180s timeout. Large accounts
-          // with no cached data (initial sync) can take 60-120+ seconds to fetch all
-          // insights from Meta. Cloudflare workers have 30s limit, but Manus hosting
-          // supports longer timeouts. A clean TRPCError TIMEOUT lets the UI show a
-          // friendly message and try again.
+          // Hotfix T1 + round-10 CodeRabbit follow-on: pass an AbortSignal
+          // to buildSnapshot so a stalled Meta response aborts at the 180s
+          // deadline rather than waiting for the server's TCP timeout (which
+          // on a slow 30-day call can be minutes). We also keep the legacy
+          // Promise.race timer as a belt-and-suspenders safety net.
+          //
+          // Round-12 CodeRabbit: capture BOTH setTimeout handles and clear
+          // them in the same finally so a successful buildSnapshot that
+          // returns before the deadline doesn't leave the second
+          // setTimeout in Promise.race's reject arm firing 180s later
+          // (memory leak + spurious 180s-late rejection).
+          const refreshAbort = new AbortController();
+          refreshAbort.signal.addEventListener("abort", () => {
+            // No-op; signal passed to fetch() will cancel the request.
+          });
+          const refreshTimer = setTimeout(() => refreshAbort.abort(), 180_000);
+          let raceTimer: ReturnType<typeof setTimeout> | null = null;
           const payload = await Promise.race([
             buildSnapshot(
               token,
               account.accountId,
-              account.currency ?? "USD"
+              account.currency ?? "USD",
+              refreshAbort.signal,
             ),
-            new Promise<never>((_, reject) =>
-              setTimeout(
+            new Promise<never>((_, reject) => {
+              raceTimer = setTimeout(
                 () =>
                   reject(
                     new TRPCError({
@@ -551,10 +592,23 @@ export const appRouter = router({
                     })
                   ),
                 180_000
-              )
-            ),
-          ]);
+              );
+            }),
+          ]).finally(() => {
+            clearTimeout(refreshTimer);
+            if (raceTimer) clearTimeout(raceTimer);
+          });
+          tAfterBuild = Date.now();
           await db.saveSnapshot(ctx.user.id, account.id, payload);
+          const tAfterSave = Date.now();
+          console.log(
+            `[refresh-timing] end-to-end ${JSON.stringify({
+              adAccountId: input.adAccountId,
+              buildSnapshotMs: tAfterBuild - tRefreshStart,
+              saveSnapshotMs: tAfterSave - tAfterBuild,
+              totalMs: tAfterSave - tRefreshStart,
+            })}`
+          );
           savedPayload = payload;
         } catch (e: any) {
           if (e?.code === "TIMEOUT") {
@@ -604,6 +658,102 @@ export const appRouter = router({
         const day = new Date().toISOString().slice(0, 10);
         await db.setCheck(ctx.user.id, input.adAccountId, input.actionKey, day, input.done);
         return { success: true };
+      }),
+
+    /**
+     * Refresh-bottleneck fix (option (b) in refresh-bottleneck-root-cause.txt):
+     * lazy ad-level daily history for the DecisionTable date-range chart.
+     *
+     * Previously this data was fetched on every refresh — 875 ads × up to 30
+     * days ≈ the dominant 108s cost on a real account. It feeds no verdict
+     * rule (only the date-range selector's 14d/30d/custom chart view), so it
+     * now lives behind this on-demand procedure. The client triggers it ONLY
+     * when the user picks a range wider than 7d (or a custom range), at
+     * which point the DecisionTable shows a loading state until this returns.
+     *
+     * Returns a ROW-KEYED map (`ad_id → sorted DailyMetrics[]`) so the
+     * DecisionTable can pick the slice matching the row it is aggregating.
+     * Returning one anonymous flat list here would silently sum every ad's
+     * daily values into every row's range totals — flagged during review
+     * (CodeRabbit, fix applied).
+     *
+     * Authentication: same `activeProcedure` route as `refresh` — requires an
+     * active Meta connection. Caching: caller (React Query) keys by
+     * (adAccountId, days) so re-selecting a range doesn't re-fetch.
+     *
+     * Range bounds (round-5 CodeRabbit): only 14 or 30 days are accepted.
+     * The DecisionTable's "custom" range CAN technically go further back
+     * via its own from/to inputs; in that case the client is responsible
+     * for clamping the visible range to the returned 30d slice. This
+     * makes the undercount EXPLICIT rather than silent — the alternative
+     * of accepting larger windows would force Meta queries that exceed
+     * `last_30d` (a different API surface we don't currently use).
+     *
+     * Round-10 CodeRabbit follow-on: thread an `AbortSignal.timeout()` to
+     * graphGet so a stalled Meta response aborts at the deadline rather
+     * than waiting for the server's TCP timeout (which on a slow 30-day
+     * call can be minutes). TIMEOUT is mapped onto TRPCError so the
+     * client sees a clean retry signal instead of a transport-level
+     * failure. 130s > the worst-case mock 108s so legitimate fetches
+     * finish cleanly; a real Meta 108s-equivalent fetch still completes.
+     */
+    adDailyHistory: activeProcedure
+      .input(
+        z.object({
+          adAccountId: z.number(),
+          days: z.union([z.literal(14), z.literal(30)]).optional().default(30),
+        })
+      )
+      .query(async ({ ctx, input }) => {
+        const account = await requireAccount(ctx.user.id, input.adAccountId);
+        if (account.isDemo) {
+          // Demo account has no Meta token; serve the engine's own
+          // daily30 / daily7 from the cached snapshot, keyed by ad id.
+          const snap = await db.getLatestSnapshot(ctx.user.id, input.adAccountId);
+          const payload = snap?.payload as AccountSnapshotPayload | null;
+          if (!payload) return { byId: {} as Record<string, DailyMetrics[]> };
+          const byId: Record<string, DailyMetrics[]> = {};
+          for (const o of payload.objects) {
+            if (o.level !== "ad") continue;
+            const series = o.daily30 && o.daily30.length > 0 ? o.daily30 : o.daily7;
+            byId[o.id] = series ?? [];
+          }
+          return { byId };
+        }
+        const token = await getUserToken(ctx.user.id);
+        // 130s deadline — tight enough to convert a hung socket into a
+        // retry-worthy TIMEOUT in seconds rather than minutes; loose
+        // enough to let the worst-case mock 108s ad-level last_30d call
+        // complete without aborting.
+        const signal = AbortSignal.timeout(130_000);
+        try {
+          const byId = await fetchAdDailyHistory(token, account.accountId, input.days, signal);
+          return { byId: Object.fromEntries(byId.entries()) };
+        } catch (e: any) {
+          // AbortSignal.timeout() rejects with a DOMException named
+          // "TimeoutError" (NOT "AbortError" — that is what
+          // AbortController.abort() throws). Without catching TimeoutError
+          // the deadline path falls through to BAD_GATEWAY instead of the
+          // intended retry-worthy TIMEOUT. Catch all three shapes.
+          if (
+            e?.name === "AbortError" ||
+            e?.name === "TimeoutError" ||
+            e?.code === "ABORT_ERR"
+          ) {
+            throw new TRPCError({
+              code: "TIMEOUT",
+              message: "TIMEOUT",
+            });
+          }
+          if (e?.isAuthError) {
+            await db.markConnectionStatus(ctx.user.id, "expired");
+            throw new TRPCError({ code: "PRECONDITION_FAILED", message: "RECONNECT_REQUIRED" });
+          }
+          if (e?.isRateLimit) {
+            throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "RATE_LIMITED" });
+          }
+          throw new TRPCError({ code: "BAD_GATEWAY", message: e?.message ?? "Unknown Meta error" });
+        }
       }),
   }),
 

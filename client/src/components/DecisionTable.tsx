@@ -122,18 +122,43 @@ function aggFromWindow(w: WindowMetrics): FilterAgg {
   };
 }
 
+/**
+ * Refresh-bottleneck fix overload: lookup the row's own slice from a
+ * ROW-KEYED lazy history map (ad-id → sorted DailyMetrics). The server's
+ * `dashboard.adDailyHistory` returns the by-id map.
+ *
+ * Tri-state lazyDaily argument (round-3 CodeRabbit):
+ *   - undefined → fall back to `s.daily30` (campaign / adset rows)
+ *   - null      → loading — return `null` so the caller renders an
+ *                  em-dash per cell (not 0)
+ *   - [] or any non-empty array → AUTHORITATIVE — use as-is for the
+ *                  aggregate. An empty array here means Meta reported
+ *                  zero daily rows for this ad in the 30d window; the
+ *                  fix preserves that signal (the post-fix `s.daily30`
+ *                  is also empty at the ad level, so falling through
+ *                  would be silent — exactly what round-3 caught).
+ */
 export function aggregate(
   s: SeriesObj | undefined,
   range: RangeKey,
   from: string,
   to: string,
-  asOfDate: string
+  asOfDate: string,
+  lazyDaily?: DailyMetrics[] | null,
 ): FilterAgg | null {
   if (!s) return null;
   if (range === "today") return aggFromWindow(s.today);
-  // if the daily series is missing entirely, fall back to the engine's 3-day
-  // window (which now itself excludes today — server date_preset:"last_3d")
-  if (range === "3d" && s.daily30.length === 0) return aggFromWindow(s.w3d);
+  // Loading state — caller explicitly passed `null`. We deliberately do
+  // NOT aggregate against the empty default; the DecisionTable shows a
+  // row-level "—" with the toolbar spinner instead.
+  if (lazyDaily === null) return null;
+  // Tri-state pick:
+  //   undefined → use cached s.daily30
+  //   [] or [...items] → authoritative use the lazy slice (even if empty)
+  const dailyForAgg = lazyDaily !== undefined ? lazyDaily : s.daily30;
+  // 3d preset is the one case the historical code allowed falling back to
+  // the engine's w3d window when daily30 was absent.
+  if (range === "3d" && dailyForAgg.length === 0) return aggFromWindow(s.w3d);
   const days = range === "3d" ? 3 : range === "7d" ? 7 : range === "14d" ? 14 : 30;
   // Preset chips: window ends YESTERDAY (account-tz asOfDate − 1), never today
   // (spec 010 FR-004). custom keeps the user-picked from/to.
@@ -142,7 +167,7 @@ export function aggregate(
   const until = range === "custom" ? to : preset!.until;
   if (!since || !until) return null;
   let spend = 0, imps = 0, clicks = 0, linkClicks = 0, conv = 0, lp = 0, v3 = 0, tp = 0, value = 0;
-  for (const d of s.daily30) {
+  for (const d of dailyForAgg) {
     if (d.date < since || d.date > until) continue;
     spend += d.spend;
     imps += d.impressions;
@@ -426,15 +451,100 @@ export function DecisionTable({
     [rows]
   );
 
+  // Lazy 14d/30d/custom ad-level daily history (refresh-bottleneck fix).
+  // The cached snapshot no longer carries ad.daily30 — the verdict path is
+  // `last_7d` only, and we pay no extra Meta round-trips until a user picks
+  // a wider range. Only ENABLED for ranges wider than 7d to avoid hitting
+  // Meta on every table mount / range switch.
+  //
+  // The response is ROW-KEYED (ad_id → sorted DailyMetrics[]) so each row's
+  // aggregate() picks only its own slice — passing a single flat series
+  // would silently sum every ad into every row's range totals.
+  const needsLazyHistory = range === "14d" || range === "30d" || range === "custom";
+  // For "custom" we always pass days=30 (the lazy endpoint answers either
+  // 14 or 30 — a custom range longer than 30d is out of scope and will
+  // simply render against the available 30d slice).
+  const lazyDays: 14 | 30 = range === "14d" ? 14 : 30;
+  // Round-9 CodeRabbit: the lazy fetch is per-AD. Only fire it when an
+  // ad row is actually rendered: ad-level view OR an active cross-level
+  // search/filter (which can show ads at any depth). For pure campaign /
+  // adset drill-downs there's no ad row to thread the data into, so the
+  // call is pure Graph traffic.
+  const lazyFetchEligible =
+    needsLazyHistory &&
+    accountId > 0 &&
+    (level === "ad" || q.trim() !== "" || verdicts.size > 0 || filterRules.length > 0);
+  const lazyHistory = trpc.dashboard.adDailyHistory.useQuery(
+    { adAccountId: accountId, days: lazyDays },
+    { enabled: lazyFetchEligible, retry: false, staleTime: 60_000 }
+  );
+  // Surface a loader copy whenever the lazy fetch is running. We tolerate
+  // an empty `byId` result (e.g. the new account has no rows yet) without
+  // showing the spinner — that's a server-side empty, not a "loading" state.
+  const showLazyLoading =
+    lazyFetchEligible && (lazyHistory.isLoading || (!lazyHistory.data && !lazyHistory.error));
+  // If the lazy call errored, surface a small warning; otherwise swallow it
+  // (the aggregate() function falls back to its 3-day window on empty data
+  // and the table stays usable — better than blocking the UI).
+  const lazyError = needsLazyHistory && lazyHistory.error
+    ? lazyHistory.error.message
+    : null;
+
   // aggregate metrics per row for the selected range (all rows, for filter support)
   const aggs = useMemo(() => {
     // Anchor preset chips to the account-tz "today"; fall back to the browser
     // date only for snapshots cached before asOfDate existed (spec 010, R4).
     const asOf = asOfDate ?? dateStr(0);
+    // Row-keyed lazy map: ad_id → sorted DailyMetrics[]. While the lazy
+    // fetch is still in flight, every ad row sees `null` (loading) instead
+    // of zero-valued metrics against the empty s.daily30. Once the data
+    // resolves, each ad row picks its own slice (`byId[r.id]`); an empty
+    // array here is AUTHORITATIVE — Meta reported zero daily rows for this
+    // ad in the 30d window — and aggregate() must use it as-is (not fall
+    // back to the post-fix `s.daily30`, which is also empty for ad rows).
+    // campaign / adset rows have their own daily30 in the cached snapshot,
+    // so we leave `lazySlice = undefined` for them and aggregate() will
+    // use s.daily30 transparently.
+    const lazyById = (lazyHistory.data?.byId ?? null) as Record<string, DailyMetrics[]> | null;
     const m = new Map<string, FilterAgg | null>();
-    for (const r of rows) m.set(r.id, aggregate(seriesMap.get(r.id), range, from, to, asOf));
+    // Round-7 CodeRabbit: on lazy-fetch ERROR, the 3d fallback must
+    // apply to EVERY row (not just ad rows). Otherwise the search/filter
+    // view (which shows all levels) has campaign rows on 30d while ad
+    // rows are on 3d — the footer `aggregateTotals` then sums mixed
+    // windows. Forcing aggRange='3d' here makes the footer consistent
+    // across the whole table.
+    const errorAggRange: RangeKey | null =
+      needsLazyHistory && lazyHistory.error ? "3d" : null;
+    for (const r of rows) {
+      // Per-row lazy slice resolution:
+      //   - non-ad rows → always `undefined` (cached s.daily30); the
+      //     aggregate range follows errorAggRange (3d on error, the
+      //     original range otherwise). The cached s.daily30 is dense at
+      //     those levels, so 3d gives 3 days of campaign/adset totals.
+      //   - ad rows     → tri-state: null (loading, em-dash), undefined
+      //     (error, fall back to 3d via errorAggRange), or the slice.
+      let lazySlice: DailyMetrics[] | null | undefined;
+      let aggRange: RangeKey = errorAggRange ?? range;
+      if (r.level !== "ad" || !needsLazyHistory) {
+        // CAMPAIGN / ADSET ROWS — always cached s.daily30. The lazy
+        // data is per-ad and doesn't apply to these levels.
+        lazySlice = undefined;
+      } else if (lazyHistory.error) {
+        // AD ROWS, ERROR — fall through to the same 3d fallback as
+        // non-ad rows; the aggRange above is already "3d".
+        lazySlice = undefined;
+      } else if (!lazyById) {
+        // AD ROWS, LOADING: pass null so aggregate() returns null and
+        // the caller renders an em-dash per cell until the data arrives.
+        lazySlice = null;
+      } else {
+        // AD ROWS, FETCHED: lazy data is authoritative even when empty.
+        lazySlice = lazyById[r.id] ?? [];
+      }
+      m.set(r.id, aggregate(seriesMap.get(r.id), aggRange, from, to, asOf, lazySlice));
+    }
     return m;
-  }, [rows, seriesMap, range, from, to, asOfDate]);
+  }, [rows, seriesMap, range, from, to, asOfDate, lazyHistory.data, lazyHistory.error, needsLazyHistory]);
 
   // visible rows — when searching/filtering, search across ALL levels
   const hasFilters = filterRules.length > 0;
@@ -545,9 +655,14 @@ export function DecisionTable({
     const a = aggs.get(r.id);
     switch (key) {
       case "spend":
-        return money(a?.spend ?? 0, currencySymbol);
+        // Round-9 CodeRabbit Major: when the aggregate is null (loading
+        // state for an ad row during a lazyHistory fetch), render an em-dash
+        // rather than the default-0 value. Otherwise the table shows
+        // $0s across every cell while data is in flight — false data is
+        // worse than a missing cell.
+        return a == null ? "—" : money(a.spend, currencySymbol);
       case "results":
-        return num(a?.results ?? 0);
+        return a == null ? "—" : num(a.results);
       case "cpa":
         // Batch 2 / ISSUE-004 — in the default 3d view, the column must show
         // the engine's cpa_3d (the exact figure behind the verdict). For
@@ -561,10 +676,11 @@ export function DecisionTable({
             currency: currencySymbol,
           }).value;
         }
+        if (a == null) return "—";
         return cpaCell({
           verdict: r.verdict,
-          results: a?.results ?? 0,
-          cpa: a?.cpa ?? null,
+          results: a.results,
+          cpa: a.cpa,
           target: unitTarget,
           currency: currencySymbol,
         }).value;
@@ -589,7 +705,9 @@ export function DecisionTable({
       case "frequency":
         return r.frequency_3d ? r.frequency_3d.toFixed(2) : "—";
       case "impressions":
-        return num(a?.impressions ?? 0);
+        // Round-9 CodeRabbit Major: em-dash on null aggregate so the
+        // table doesn't show "$0 / 0 / 0" while the lazy fetch is in flight.
+        return a == null ? "—" : num(a.impressions);
     }
   };
 
@@ -941,10 +1059,40 @@ export function DecisionTable({
         )}
 
         {range !== "3d" && (
-          <p className="text-[11px] text-muted-foreground">
-            ℹ️ الأرقام معروضة لفترة «{RANGE_LABELS[range]}» — لكن <b>الحكم</b> محسوب دائمًا حسب
-            قواعد التقييم (آخر 3 أيام + اليوم) ولا يتأثر بالفترة المختارة.
-          </p>
+          <div className="space-y-1.5">
+            <p className="text-[11px] text-muted-foreground">
+              ℹ️ الأرقام معروضة لفترة «{RANGE_LABELS[range]}» — لكن <b>الحكم</b> محسوب دائمًا حسب
+              قواعد التقييم (آخر 3 أيام + اليوم) ولا يتأثر بالفترة المختارة.
+            </p>
+            {/*
+              Refresh-bottleneck fix: ad-level daily history wider than 7 days
+              is now lazy-loaded on demand (routers.ts#dashboard.adDailyHistory).
+              Without a loading state the cells would briefly show zeros / the
+              w3d fallback, which misleads the user. We surface a tiny inline
+              loader while the call is in flight and an error note if it
+              fails. Crisp Arabic copy, consistent with the rest of the app.
+            */}
+            {showLazyLoading && (
+              <p
+                className="flex items-center gap-1.5 text-[11px] text-primary"
+                role="status"
+                aria-live="polite"
+                data-testid="lazy_history_loading"
+              >
+                <Loader2 className="h-3 w-3 animate-spin" />
+                جاري تحميل بيانات الـ {RANGE_LABELS[range]}…
+              </p>
+            )}
+            {lazyError && (
+              <p
+                className="text-[11px] text-v-watch"
+                role="alert"
+                data-testid="lazy_history_error"
+              >
+                تعذّر تحميل بيانات الفترة — يتم عرض آخر 3 أيام كبديل ({lazyError}).
+              </p>
+            )}
+          </div>
         )}
       </CardHeader>
 

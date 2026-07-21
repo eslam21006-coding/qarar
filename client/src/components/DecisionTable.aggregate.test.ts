@@ -82,4 +82,101 @@ describe("aggregate() — preset chips exclude today (SC-002)", () => {
     const withoutYesterday = aggregate(seriesNoYesterday, "7d", "", "", ASOF)!.spend;
     expect(withYesterday - withoutYesterday).toBe(11);
   });
+
+  // Refresh-bottleneck fix: tri-state lazyDaily semantics. The post-fix
+  // decision table passes `[]` for ad rows that the lazy fetch reported
+  // as having zero 30d daily rows. That MUST be authoritative — the
+  // ad row should display zero metrics, NOT silently fall through to
+  // s.daily30 (which is empty post-fix for ad rows). Without this guard
+  // a 30d-silent ad row would render as a "0s" row indistinguishable
+  // from a 30d-noisy ad row whose lazy data resolved to []. Round-3
+  // CodeRabbit caught the fall-through; this test locks it down.
+  //
+  // Round-4 CodeRabbit: the original "lazyDaily = [] ⇒ AUTHORITATIVE empty"
+  // assertion used a fixture whose s.daily30 was also `[]` — so a regression
+  // to the old fall-through behavior would STILL pass (s.daily30 empty ⇒
+  // zeros either way). The fixture below carries a NON-EMPTY s.daily30 with
+  // an in-window row, so the only way the assertion can hold is if the
+  // empty lazy slice is treated as authoritative (NOT a fall-through).
+  describe("aggregate() — tri-state lazyDaily (refresh-bottleneck round-3)", () => {
+    const noisyDaily30ForAd: DailyMetrics[] = [
+      // A non-zero row inside the 30d window. If aggregate() falls through
+      // to s.daily30 (round-3 regression), this row's metrics would leak
+      // into the result and the assertion below would fail. With the
+      // authoritative-empty semantic in place, the lazy slice (empty)
+      // wins and the result is exactly zero.
+      {
+        ...win({ spend: 999, impressions: 99999, conversions: 99, linkClicks: 9999 }),
+        date: "2026-07-08",
+      },
+    ];
+    const emptyAdSeries: SeriesObj = {
+      id: "ad_silent_30d",
+      level: "ad",
+      parentId: null,
+      status: "ACTIVE",
+      effectiveStatus: "ACTIVE",
+      thumbnailUrl: null,
+      today: win({ spend: 1, impressions: 100, conversions: 0 }),
+      w3d: win({ spend: 3, impressions: 300, conversions: 0 }),
+      // Round-4 fix: post-fix ad rows carry NO daily30 in the cached snapshot.
+      // The fixture keeps a non-zero row here so the test below proves the
+      // empty lazy slice is authoritative (not a fall-through to this row).
+      daily30: noisyDaily30ForAd,
+    };
+
+    it("lazyDaily = null ⇒ loading (returns null, caller renders em-dash)", () => {
+      const agg = aggregate(emptyAdSeries, "30d", "", "", ASOF, null);
+      expect(agg).toBeNull();
+    });
+
+    it("lazyDaily = [] ⇒ AUTHORITATIVE empty (zeros, NOT falling through to s.daily30's non-zero row)", () => {
+      const agg = aggregate(emptyAdSeries, "30d", "", "", ASOF, []);
+      expect(agg).not.toBeNull();
+      expect(agg!.spend).toBe(0);
+      expect(agg!.impressions).toBe(0);
+      expect(agg!.results).toBe(0);
+      // linkClicks is a derived field (sum of linkClicks across rows);
+      // also zero proves no row from s.daily30 leaked through.
+      expect(agg!.linkClicks).toBe(0);
+    });
+
+    it("lazyDaily = [] still returns the 3d-window fallback for the 3d chip", () => {
+      // The 3d chip is a special case — historical code (and the post-fix
+      // code) prefer the engine's w3d window when daily data is empty,
+      // so the user still sees today's / 3d metrics on the default view.
+      const agg = aggregate(emptyAdSeries, "3d", "", "", ASOF, []);
+      expect(agg).not.toBeNull();
+      expect(agg!.spend).toBe(3); // matches w3d.spend
+    });
+
+    it("lazyDaily = [...rows] ⇒ uses the slice exactly (does NOT fall through)", () => {
+      const series: DailyMetrics[] = [
+        { ...win({ spend: 7, impressions: 700, conversions: 1, linkClicks: 70 }), date: "2026-07-06" },
+        { ...win({ spend: 8, impressions: 800, conversions: 1, linkClicks: 80 }), date: "2026-07-07" },
+        { ...win({ spend: 9, impressions: 900, conversions: 1, linkClicks: 90 }), date: "2026-07-08" },
+      ];
+      const agg = aggregate(emptyAdSeries, "7d", "", "", ASOF, series);
+      expect(agg).not.toBeNull();
+      expect(agg!.spend).toBe(7 + 8 + 9); // rows in last_7d window sum
+    });
+
+    it("lazyDaily = undefined ⇒ falls back to s.daily30 (campaign / adset default)", () => {
+      const cmpSeries: SeriesObj = {
+        id: "cmp_x",
+        level: "campaign",
+        parentId: null,
+        status: "ACTIVE",
+        effectiveStatus: "ACTIVE",
+        thumbnailUrl: null,
+        today: win({ spend: 1, impressions: 100, conversions: 0 }),
+        w3d: win({ spend: 3, impressions: 300, conversions: 0 }),
+        daily30, // 8 rows (4..7 days ago, total spend 5+6+7+8+9+10+11 = 56)
+      };
+      const agg = aggregate(cmpSeries, "7d", "", "", ASOF, undefined);
+      expect(agg).not.toBeNull();
+      // Last 7 calendar days: 5+6+7+8+9+10+11 = 56
+      expect(agg!.spend).toBe(5 + 6 + 7 + 8 + 9 + 10 + 11);
+    });
+  });
 });

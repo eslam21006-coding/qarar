@@ -90,6 +90,77 @@ describe("buildSnapshot — concurrency (T_refresh_perf)", () => {
     }
   });
 
+  it("fetchBaselines runs concurrently with fetchHierarchy + insightsParallel (round-12, refresh-instant-feel Part B)", async () => {
+    // Round-12: pre-12 buildSnapshot serialized fetchBaselines AFTER the
+    // insights block. The current implementation kicks off fetchBaselines
+    // in parallel with fetchHierarchy + insightsParallel, so all three
+    // top-level phases overlap. This test pins the parallel structure so
+    // a regression to the serial chain (fetchHierarchy → insightsParallel
+    // → fetchBaselines → silencedAdRestore) clearly fails.
+    //
+    // Parallel wall-time floor with the parallel layout:
+    //   - fetchHierarchy: 3 sequential paginated calls (campaigns/adsets/ads)
+    //     because the function uses sequential await on graphGetAll. Each
+    //     takes 1× delay. Hierarchy dominates at 3× delay.
+    //   - insightsParallel: 10 parallel calls → 1× delay (overlaps with
+    //     the start of fetchHierarchy at t=0; resolved by t=1×).
+    //   - fetchBaselines: 3 parallel groups (ctr, cpm-2-in-1, cpa) → 1×
+    //     delay (overlaps with everything; resolved by t=1×).
+    //   - silencedAdRestore: ≈ 0 in this empty mock (no silenced ads).
+    //   Total floor: 3× delay.
+    //
+    // The serial regression floor would be:
+    //   3 (hierarchy) + 1 (insights) + 1 (baselines) = 5× delay.
+    //   → a 67% regression in wall-time. This test asserts the parallel
+    //   floor of < 4× delay (well between the two, with margin for
+    //   the timer-pump overhead).
+    vi.useFakeTimers();
+    const callTimestamps: number[] = [];
+    const fetchMock = vi.fn(async (_input: unknown) => {
+      callTimestamps.push(Date.now());
+      await new Promise(r => setTimeout(r, CALL_DELAY_MS));
+      return new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    try {
+      const start = Date.now();
+      const result = buildSnapshot("token", "act_test_account", "USD");
+      await vi.runAllTimersAsync();
+      await result;
+      const elapsed = Date.now() - start;
+
+      // Sanity: the fetch was actually exercised.
+      expect(callTimestamps.length).toBeGreaterThan(0);
+
+      // Parallel floor: 3× delay (hierarchy dominates because the three
+      // paginated calls run sequentially inside fetchHierarchy). The
+      // serial regression would be 5× delay. We assert < 4× delay
+      // (well between the two, with margin for the timer-pump overhead).
+      expect(elapsed).toBeLessThan(4 * CALL_DELAY_MS);
+
+      // Cross-check: at least one call from EACH top-level phase starts
+      // within the same fake-time tick as another — i.e. they're
+      // genuinely concurrent, not serialized. Three calls with the
+      // exact same Date.now() at t=0 (the start of the parallel block)
+      // is the proof.
+      const t0 = callTimestamps[0];
+      const concurrent = callTimestamps.filter(t => t === t0);
+      // fetchHierarchy is the FIRST call; insightsParallel (10 calls)
+      // and fetchBaselines (3 calls: ctr, cpm, cpa) all start at the
+      // same t=0 in the parallel layout → 14 calls at t=0.
+      // (One of the 10 insights is the existence-of-fetchHierarchy check.)
+      expect(concurrent.length).toBeGreaterThanOrEqual(10);
+    } finally {
+      globalThis.fetch = realFetch;
+      vi.useRealTimers();
+    }
+  });
+
   it("output is unchanged: an empty Meta response yields an empty-object payload (byte shape parity smoke test)", async () => {
     // Empty-but-valid Meta responses should produce a structurally valid
     // AccountSnapshotPayload with no objects. This guards against accidental
