@@ -105,9 +105,12 @@ WHAT THIS COMMIT DELIBERATELY DOES NOT DO
   - No change to the existing data-age indicator in the header
     ("آخر تحديث: منذ X دقيقة"). It already shows correctly during
     refresh.
-  - No change to the error state — the existing `onError` handler
-    already toasts and preserves the old data. Test #5 pins this
-    contract.
+  - Error state (round-12 CodeRabbit fix): the refresh `onError` handler
+    toasts the failure, AND the dashboard render gate was corrected from
+    `dash.error || !dash.data` to `!dash.data` so a background refetch
+    error no longer wipes the cached table — the old data stays visible.
+    Test #5 (Dashboard.swr.test.tsx) pins this contract by rerendering
+    the same instance in the error state.
 
 VERIFICATION (manual)
 
