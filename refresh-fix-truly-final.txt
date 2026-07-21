@@ -285,9 +285,11 @@ The full analysis (and the proof):
   - The only "remaining" edge case is Meta's own query-time behavior,
     which is not something the client has control over.
   - For wearefforce with its actual ad distribution, the per-refresh
-    restore cohort is bounded at roughly 10-50 ads (the chunked call
-    costs 1-2 Graph round-trips total), with wall-time ~108-216 s.
-    For accounts with 0 silenced ads it costs 0 s.
+    restore cohort was estimated at roughly 10-50 ads. With CHUNK=50 and
+    CONCURRENCY=3 that cohort is exactly ONE Graph request in ONE wave,
+    with wall-time ~108 s (NOT 1-2 requests or 108-216 s). For accounts
+    with 0 silenced ads it costs 0 s. (Live 2026-07-21: the real run saw
+    916 ads / 176 silenced — one filtered batch, ~2.8 s actual.)
   - This is a documented, bounded cost, not a bug. Future fixes for
     the residual can include: server-side per-account daily-cache
     (out of scope for this PR), or accepting that Meta's query-time

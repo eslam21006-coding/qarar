@@ -32,8 +32,18 @@ async function main() {
   }
 
   console.log(`[measure] starting refresh for ${account} (currency ${currency})`);
+  // Round-12 CodeRabbit: bound the standalone measurement so a stalled Meta
+  // request can't hang the harness forever. Abort at 180s (matches the
+  // dashboard.refresh server-side timeout) and always clear the timer.
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), 180_000);
   const t0 = performance.now();
-  const snap = await buildSnapshot(token, account, currency);
+  let snap;
+  try {
+    snap = await buildSnapshot(token, account, currency, controller.signal);
+  } finally {
+    clearTimeout(deadline);
+  }
   const totalMs = Math.round(performance.now() - t0);
 
   // buildSnapshot already printed its [refresh-timing] line. Add the harness

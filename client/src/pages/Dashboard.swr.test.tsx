@@ -198,15 +198,15 @@ describe("Dashboard (round-12 Part A) — stale-while-revalidate gating", () => 
   });
 
   it("preserves the OLD data on refresh error (not wiped)", () => {
-    render(<Dashboard />);
+    const { rerender } = render(<Dashboard />);
     // Simulate the failure path: dash.data still has the old snapshot
     // (React Query's keepPreviousData behavior), and dash.error is set.
     mocks.dash.isError = true;
     mocks.dash.error = new Error("refresh failed (background refetch)");
-    render(<Dashboard />);
-    // Asserting the production intent: OLD data is preserved on error.
-    // If this fails, the gating logic regressed — tighten the gating or
-    // add keepPreviousData to the query options.
+    // Re-render the SAME instance (not a second mount) so the assertion
+    // reflects the error-state render, not a stale first table left in the
+    // DOM. With the gate fixed to `!dash.data`, the cached table survives.
+    rerender(<Dashboard />);
     expect(screen.getByTestId("decision-table-stub")).toBeTruthy();
   });
 

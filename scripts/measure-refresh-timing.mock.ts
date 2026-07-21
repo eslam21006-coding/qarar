@@ -15,7 +15,7 @@
  *                               user picks a ≥14d range.
  *
  * Each role uses a mock with a deterministic per-call latency that mirrors
- * Meta's actual behavior on a real wearefforce account (≈108s for the 875
+ * Meta's actual behavior on a real wearefforce account (≈108s for the 916-ad
  * ad-level daily call historically). The harness prints per-call timings
  * so the post-fix shape is visible without needing live Meta access.
  *
@@ -30,7 +30,10 @@
 import { performance } from "node:perf_hooks";
 import { buildSnapshot, fetchAdDailyHistory } from "../server/meta.ts";
 
-const AD_COUNT = 875;
+// Modeled population = the live wearefforce account size (916 ads), matching
+// the figures reported in refresh-instant-feel-report.txt. Round-12 CodeRabbit:
+// the mock previously said 875 while the report said 916 — one verified size now.
+const AD_COUNT = 916;
 const BASE_LATENCY_MS = {
   hierarchy: 2500, // 3 parallel calls (campaigns/adsets/ads) — fastest
   insights_fast: 4500, // 8 of 9 per-level calls — small payloads (<4s each)
@@ -82,6 +85,9 @@ async function buildSimulatedRefresh(): Promise<{ objects: any[] }> {
     // stay at 0. Round-3 CodeRabbit: the legacy shape's delay was missing
     // from this branch, weakening the slowCalls regression guard.
     let delay: number;
+    // Only the UNFILTERED legacy ad-level last_30d/1 shape is a regression;
+    // the filtered silenced-ad restore shares that latency but is expected.
+    let isUnfilteredLegacyBottleneck = false;
     if (url.pathname.endsWith("/campaigns") || url.pathname.endsWith("/adsets") || url.pathname.endsWith("/ads")) {
       delay = BASE_LATENCY_MS.hierarchy;
     } else if (url.pathname.endsWith("/insights")) {
@@ -95,18 +101,26 @@ async function buildSimulatedRefresh(): Promise<{ objects: any[] }> {
     //   unfiltered  : last_30d/1 + no filtering param  ⇒  BUG (regression)
     //   filtered    : last_30d/1 + adIdFilter=JSON    ⇒  silenced-ad restore
     //
-    // For the silent mock account (AD_COUNT=875, all ads "recently
+    // For the silent mock account (AD_COUNT=916, all ads "recently
     // active"), silencedAdIds=[] so the filtered branch never fires —
     // slowCalls remains 0 and the assertion passes. If a future regression
     // re-introduces the unfiltered call, slowCalls becomes 1 and the
     // assertion fails with the same hard error as before.
     const filtering = qs.get("filtering");
-    if (
+    const isAdLast30dDaily =
       qs.get("level") === "ad" &&
       qs.get("date_preset") === "last_30d" &&
-      qs.get("time_increment") === "1" &&
-      !filtering
-    ) {
+      qs.get("time_increment") === "1";
+    if (isAdLast30dDaily && !filtering) {
+      // Unfiltered legacy bottleneck shape — MUST NEVER fire post-fix.
+      delay = AD_LEVEL_LATENCY_MS;
+      isUnfilteredLegacyBottleneck = true;
+    } else if (isAdLast30dDaily && filtering) {
+      // Targeted silenced-ad restore: the SAME ~108s request shape as the
+      // legacy call, just filtered to the silenced ad IDs and OFF the hot
+      // path. Round-12 CodeRabbit: model it at the real 30-day latency (not
+      // insights_fast) so sparse-cohort sims don't understate refresh time —
+      // but keep it OUT of slowCalls (it's expected, not a regression).
       delay = AD_LEVEL_LATENCY_MS;
     }
       // presence30d (no time_increment, level=ad, last_30d) → cheap
@@ -132,10 +146,12 @@ async function buildSimulatedRefresh(): Promise<{ objects: any[] }> {
     }
 
     // This MUST NEVER fire under the post-fix code path. If it does, the
-    // bottleneck has slipped back in.
-    if (delay >= AD_LEVEL_LATENCY_MS) {
+    // bottleneck has slipped back in. Only the UNFILTERED legacy shape counts
+    // — the filtered silenced-ad restore pays the same latency but is expected
+    // and OFF the hot path, so it is deliberately excluded from slowCalls.
+    if (isUnfilteredLegacyBottleneck) {
       slowCalls++;
-      console.warn(`[mock] WARNING: ${label} matched the legacy 108s shape — bottleneck regressed`);
+      console.warn(`[mock] WARNING: ${label} matched the legacy UNFILTERED 108s shape — bottleneck regressed`);
     }
 
     await new Promise(r => setTimeout(r, delay));

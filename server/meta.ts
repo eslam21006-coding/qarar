@@ -605,13 +605,13 @@ export async function buildSnapshot(
     })();
     const baselinesP = (async () => {
       const t = performance.now();
-      const r = await fetchBaselines(token, accountId);
+      const r = await fetchBaselines(token, accountId, signal);
       phase.fetchBaselines = Math.round(performance.now() - t);
       return r;
     })();
     const tzP = (async () => {
       const t = performance.now();
-      const r = await fetchAccountTimezone();
+      const r = await fetchAccountTimezone(signal);
       phase.accountTimezone = Math.round(performance.now() - t);
       return r;
     })();
@@ -701,12 +701,13 @@ export async function buildSnapshot(
     // running it in parallel with the big phases eliminates the
     // previously-serial 400ms tail.
     // ======================================================================
-    async function fetchAccountTimezone(): Promise<string> {
+    async function fetchAccountTimezone(signal?: AbortSignal): Promise<string> {
       try {
-        const acct = await graphGet(`/${accountId}`, {
-          fields: "timezone_name",
-          access_token: token,
-        });
+        const acct = await graphGet(
+          `/${accountId}`,
+          { fields: "timezone_name", access_token: token },
+          signal,
+        );
         const tzName = acct?.timezone_name;
         return new Intl.DateTimeFormat("en-CA", {
           timeZone: tzName || undefined,
@@ -1130,22 +1131,33 @@ export function computeSpendShares(objects: NormalizedObject[]): void {
   }
 }
 
-async function fetchBaselines(token: string, accountId: string): Promise<Baselines> {
+async function fetchBaselines(
+  token: string,
+  accountId: string,
+  signal?: AbortSignal,
+): Promise<Baselines> {
   // Round-12 (refresh-instant-feel): the three baseline groups are
   // independent — they touch different windows (90d / 14d+3d / 30d) and
   // different metrics (CTR / CPM / CPA). Previously sequential; now
   // parallelized with Promise.all so the baselines phase wall-time =
   // slowest single call instead of sum.
+  // Round-12 CodeRabbit: thread the refresh AbortSignal into every graphGet
+  // so an aborted/timed-out refresh cancels these baseline requests too —
+  // otherwise they keep running past the deadline until the socket closes.
   const ctrP = (async (): Promise<number[]> => {
     try {
-      const json = await graphGet(`/${accountId}/insights`, {
-        level: "ad",
-        date_preset: "last_90d",
-        time_increment: "1",
-        fields: "inline_link_click_ctr",
-        limit: "1000",
-        access_token: token,
-      });
+      const json = await graphGet(
+        `/${accountId}/insights`,
+        {
+          level: "ad",
+          date_preset: "last_90d",
+          time_increment: "1",
+          fields: "inline_link_click_ctr",
+          limit: "1000",
+          access_token: token,
+        },
+        signal,
+      );
       return (json.data ?? [])
         .map((r: any) => parseFloat(r.inline_link_click_ctr))
         .filter((v: number) => Number.isFinite(v) && v > 0);
@@ -1157,18 +1169,22 @@ async function fetchBaselines(token: string, accountId: string): Promise<Baselin
   const cpmP = (async (): Promise<{ cpmAvg14: number | null; cpmNow: number | null }> => {
     try {
       const [j1, j2] = await Promise.all([
-        graphGet(`/${accountId}/insights`, {
-          date_preset: "last_14d",
-          fields: "cpm",
-          access_token: token,
-        }),
-        graphGet(`/${accountId}/insights`, {
-          // "current" CPM over the last 3 complete days (account tz, excludes today)
-          // — matches the engine's corrected w3d window (spec 010 FR-003).
-          date_preset: "last_3d",
-          fields: "cpm",
-          access_token: token,
-        }),
+        graphGet(
+          `/${accountId}/insights`,
+          { date_preset: "last_14d", fields: "cpm", access_token: token },
+          signal,
+        ),
+        graphGet(
+          `/${accountId}/insights`,
+          {
+            // "current" CPM over the last 3 complete days (account tz, excludes today)
+            // — matches the engine's corrected w3d window (spec 010 FR-003).
+            date_preset: "last_3d",
+            fields: "cpm",
+            access_token: token,
+          },
+          signal,
+        ),
       ]);
       return {
         cpmAvg14: parseFloat(j1.data?.[0]?.cpm) || null,
@@ -1181,12 +1197,16 @@ async function fetchBaselines(token: string, accountId: string): Promise<Baselin
 
   const cpaP = (async (): Promise<number[]> => {
     try {
-      const json = await graphGet(`/${accountId}/insights`, {
-        date_preset: "last_30d",
-        time_increment: "1",
-        fields: "spend,actions",
-        access_token: token,
-      });
+      const json = await graphGet(
+        `/${accountId}/insights`,
+        {
+          date_preset: "last_30d",
+          time_increment: "1",
+          fields: "spend,actions",
+          access_token: token,
+        },
+        signal,
+      );
       return (json.data ?? [])
         .map((r: any) => {
           const conv = pickAction(r.actions, CONVERSION_ACTION_TYPES);

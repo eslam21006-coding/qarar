@@ -719,7 +719,16 @@ export const appRouter = router({
           const byId = await fetchAdDailyHistory(token, account.accountId, input.days, signal);
           return { byId: Object.fromEntries(byId.entries()) };
         } catch (e: any) {
-          if (e?.name === "AbortError" || e?.code === "ABORT_ERR") {
+          // AbortSignal.timeout() rejects with a DOMException named
+          // "TimeoutError" (NOT "AbortError" — that is what
+          // AbortController.abort() throws). Without catching TimeoutError
+          // the deadline path falls through to BAD_GATEWAY instead of the
+          // intended retry-worthy TIMEOUT. Catch all three shapes.
+          if (
+            e?.name === "AbortError" ||
+            e?.name === "TimeoutError" ||
+            e?.code === "ABORT_ERR"
+          ) {
             throw new TRPCError({
               code: "TIMEOUT",
               message: "TIMEOUT",

@@ -118,9 +118,16 @@ ITEM 3. RESIDUAL SPARSE-DAY EDGE CASE — RESOLVED BY ROUND-9 THRESHOLD
   - The remaining ~175-350 ads include daily-budget-pacing, learning-
     phase, paused-then-resumed, etc. Of those, an estimated 5-15%
     (~10-50 ads) will trigger the round-9 chunked restore.
-  - That adds 1-2 Graph round-trips and ~108-216 s wall-time per
-    refresh. For accounts with 0 silenced ads (the common case),
-    cost is 0 s.
+  - With CHUNK=50 and CONCURRENCY=3, a 10-50 ad cohort is exactly ONE
+    chunk = ONE Graph request in ONE wave, adding ~108 s wall-time per
+    refresh (NOT 1-2 requests or 108-216 s). For accounts with 0
+    silenced ads, cost is 0 s.
+  - NOTE (live 2026-07-21): the real wearefforce run measured 916 ads
+    with 176 silenced — far above this 10-50 estimate. Because the
+    restore is a single FILTERED batch (chunked at 50, 3 concurrent),
+    the 176-ad cohort cost only ~2.8 s, not 108 s: the per-ad daily
+    payload is tiny once scoped to the silenced IDs. The count estimate
+    was low; the wall-time impact was smaller still.
 
   ACCEPT-AND-DOCUMENT: the residual is bounded, gated on Meta's
   query-time semantics, and not worth chasing further in this PR.

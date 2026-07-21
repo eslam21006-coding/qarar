@@ -61,7 +61,13 @@ export default function Dashboard() {
 
   if (dash.isLoading) return <DashboardSkeleton />;
 
-  if (dash.error || !dash.data) {
+  // SWR (round-12 Part A): only fall to the empty error state when there is
+  // NO cached data to show. A background refetch error (dash.error set while
+  // dash.data still holds the last successful snapshot) must NOT wipe the
+  // table — the user keeps seeing what they were looking at, and the refresh
+  // mutation's onError toast surfaces the failure. Gating on `dash.error`
+  // here (the old `dash.error || !dash.data`) regressed that intent.
+  if (!dash.data) {
     return (
       <Shell accountId={accountId}>
         <EmptyState
