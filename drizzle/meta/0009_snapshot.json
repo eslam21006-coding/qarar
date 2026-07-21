@@ -84,7 +84,7 @@
     "adAccounts": {
       "name": "adAccounts",
       "columns": {
-        "1": {
+        "funnelConfiguredAt": {
           "name": "funnelConfiguredAt",
           "type": "timestamp",
           "primaryKey": false,
@@ -191,7 +191,7 @@
     "funnelSettings": {
       "name": "funnelSettings",
       "columns": {
-        "2": {
+        "metaAccountId": {
           "name": "metaAccountId",
           "type": "varchar(64)",
           "primaryKey": false,
@@ -910,7 +910,7 @@
         },
         "event_type": {
           "name": "event_type",
-          "type": "enum('signup','login','logout','email_verified','password_reset_requested','password_reset_completed','password_changed','login_failed','account_created')",
+          "type": "enum('signup','login','logout','email_verified','password_reset_requested','password_reset_completed','password_changed','login_failed','account_created','identity_email_merged','funnel_settings_unavailable')",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false

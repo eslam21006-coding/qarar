@@ -31,17 +31,21 @@ const prevId = "dd3d75ba-c3eb-46ab-ba31-16b536c46fc1"; // 0008's id
 snap.prevId = prevId;
 
 // --- Change 1: audit_log.event_type enum gains two values ----------------
+// In the squashed snapshot the enum's members are NOT a separate `col.enum`
+// array — they live inside the `type` string, e.g.
+//   "type": "enum('signup',...,'account_created')".
+// So we append the two new values to that string (idempotently). The earlier
+// `Array.isArray(col.enum)` form was a silent no-op and left the snapshot's
+// enum stale, which made `drizzle-kit generate` emit a phantom MODIFY.
 for (const def of Object.values(snap.tables)) {
   if (def.name !== "audit_log") continue;
   for (const col of Object.values(def.columns)) {
     if (col.name !== "event_type") continue;
-    if (Array.isArray(col.enum)) {
-      // idempotent: only push values that aren't already there
-      for (const v of [
-        "identity_email_merged",
-        "funnel_settings_unavailable",
-      ]) {
-        if (!col.enum.includes(v)) col.enum.push(v);
+    if (typeof col.type !== "string" || !col.type.startsWith("enum(")) continue;
+    for (const v of ["identity_email_merged", "funnel_settings_unavailable"]) {
+      if (!col.type.includes(`'${v}'`)) {
+        // insert before the closing ")" of enum(...)
+        col.type = col.type.replace(/\)$/, `,'${v}')`);
       }
     }
   }
@@ -59,18 +63,15 @@ for (const def of Object.values(snap.tables)) {
 }
 
 // --- Change 3: adAccounts.funnelConfiguredAt (new column) ----------------
-// Find the highest numeric id currently in use across ALL tables so
-// we don't collide.
-let maxColId = 0;
-for (const def of Object.values(snap.tables)) {
-  for (const id of Object.keys(def.columns)) {
-    const n = Number(id);
-    if (Number.isFinite(n) && n > maxColId) maxColId = n;
-  }
-}
+// drizzle-kit keys a table's `columns` map BY COLUMN NAME (see every
+// other entry: "id", "userId", ...). Keying by anything else (e.g. a
+// numeric id) makes `drizzle-kit generate` treat the name-keyed schema
+// column as a brand-new ADD *and* the mis-keyed snapshot column as a
+// stale DROP — producing a phantom ADD-then-DROP migration. So the key
+// MUST equal the column name.
 for (const def of Object.values(snap.tables)) {
   if (def.name !== "adAccounts") continue;
-  def.columns[String(++maxColId)] = {
+  def.columns["funnelConfiguredAt"] = {
     name: "funnelConfiguredAt",
     type: "timestamp",
     primaryKey: false,
@@ -83,10 +84,10 @@ for (const def of Object.values(snap.tables)) {
 
 // --- Change 4: funnelSettings.metaAccountId (new column) ---------------
 // Note: in the squashed snapshot, varchar(N) is encoded as the single
-// string type "varchar(N)".
+// string type "varchar(N)". Key by column name (see Change 3).
 for (const def of Object.values(snap.tables)) {
   if (def.name !== "funnelSettings") continue;
-  def.columns[String(++maxColId)] = {
+  def.columns["metaAccountId"] = {
     name: "metaAccountId",
     type: "varchar(64)",
     primaryKey: false,
