@@ -289,7 +289,10 @@ The full analysis (and the proof):
     CONCURRENCY=3 that cohort is exactly ONE Graph request in ONE wave,
     with wall-time ~108 s (NOT 1-2 requests or 108-216 s). For accounts
     with 0 silenced ads it costs 0 s. (Live 2026-07-21: the real run saw
-    916 ads / 176 silenced — one filtered batch, ~2.8 s actual.)
+    916 ads / 176 silenced — split into ceil(176/50)=4 chunks of ≤ 50
+    ads, executed across ceil(4/3)=2 concurrency waves, each chunk
+    paying a per-chunk latency of ~700ms. Total ~2.8s, not 108s: the
+    per-ad daily payload is tiny once scoped to the silenced IDs.)
   - This is a documented, bounded cost, not a bug. Future fixes for
     the residual can include: server-side per-account daily-cache
     (out of scope for this PR), or accepting that Meta's query-time

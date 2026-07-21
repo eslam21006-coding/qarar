@@ -288,7 +288,12 @@ Once it runs, the [refresh-timing] line gives the exact per-phase ms.
       fetchBaselines      : 15000 ms (mock — cpmNow 90-day is the slowest)
       accountTimezone     : 600 ms
       buildSnapshotTotal  : 28 s (mock) / 29.1 s (live, wearefforce)
-      metaMsSerialSum     : ~65000 ms (concurrency gap — ~25s wall savings)
+      metaMsSerialSum     : ~65000 ms (concurrency gap — ~37s wall savings:
+                            serial sum of Meta round-trip wall-times
+                            minus the wall-clock the parallel block
+                            actually takes; the ~25s figure was from
+                            the pre-round-12 buildSnapshot where
+                            fetchBaselines added another 10s serially)
       metaRoundTrips      : 18   metaRetries: 0   asyncFallbacks: 0
       legacy 108s-shape calls: 0 (the regression-guard invariant;
                                  see scripts/measure-refresh-timing.mock.ts)

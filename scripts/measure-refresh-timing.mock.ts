@@ -44,6 +44,14 @@ const BASE_LATENCY_MS = {
   presence_aggregate: 1200, // 1 row per ad, very small payload
   baselines: 3500, // cpmAvg/cpmNow/ctrMedian90
   timezone_lookup: 600,
+  // Round-12 CodeRabbit: the FILTERED silenced-ad legacy-restore is NOT
+  // the same as the legacy 108s unfiltered call. The filtered cohort is
+  // typically 50-200 ads (the "active-but-recently-silent" population),
+  // yielding ~2-4 Graph round-trips × ~700ms = ~2.8s total on the live
+  // wearefforce run. Modeling it at AD_LEVEL_LATENCY_MS (108s per chunk)
+  // overstates the cohort cost; the live ~2.8s is what the simulator
+  // should project.
+  silenced_filtered_chunk: 700, // per filtered-chunk; chunks ≤ 50 ads.
 };
 const AD_LEVEL_LATENCY_MS = 108_000; // legacy ad-level last_30d daily on wearefforce
 
@@ -116,12 +124,14 @@ async function buildSimulatedRefresh(): Promise<{ objects: any[] }> {
       delay = AD_LEVEL_LATENCY_MS;
       isUnfilteredLegacyBottleneck = true;
     } else if (isAdLast30dDaily && filtering) {
-      // Targeted silenced-ad restore: the SAME ~108s request shape as the
-      // legacy call, just filtered to the silenced ad IDs and OFF the hot
-      // path. Round-12 CodeRabbit: model it at the real 30-day latency (not
-      // insights_fast) so sparse-cohort sims don't understate refresh time —
-      // but keep it OUT of slowCalls (it's expected, not a regression).
-      delay = AD_LEVEL_LATENCY_MS;
+      // Targeted silenced-ad restore: the SAME request shape as the
+      // legacy call, just filtered to the silenced ad IDs and OFF the
+      // hot path. Round-12 CodeRabbit: model it at the live per-chunk
+      // latency (~700ms per chunk, observed 2.8s total for 176
+      // silenced ads ≈ 4 chunks) so sparse-cohort sims match the live
+      // numbers, not the 108s legacy figure. Keep it OUT of slowCalls
+      // (it's expected, not a regression).
+      delay = BASE_LATENCY_MS.silenced_filtered_chunk;
     }
       // presence30d (no time_increment, level=ad, last_30d) → cheap
       else if (qs.get("level") === "ad" && qs.get("date_preset") === "last_30d" && qs.get("time_increment") === null) {

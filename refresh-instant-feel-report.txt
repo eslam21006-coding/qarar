@@ -84,13 +84,26 @@ WHAT THIS COMMIT ADDS
      - keeps showing the OLD data while a refetch is in flight
        (isFetching=true, isLoading=false)
      - shows the refreshing banner only when refresh.isPending is true
-     - preserves the OLD data on refresh error (not wiped)
+     - preserves the OLD data on refresh error (not wiped) — see
+       preserved-data contract below
      - clicking the refresh button triggers the mutation +
        onSuccess invalidates the cache
 
-     The mocks stub heavy children (DecisionTable, TodayActions,
-     PromotionList, DiagnosisSection) so the test runs in ~200ms
-     and exercises only the gating logic in the Dashboard.
+    The mocks stub heavy children (DecisionTable, TodayActions,
+    PromotionList, DiagnosisSection) so the test runs in ~200ms
+    and exercises only the gating logic in the Dashboard.
+
+    Preserved-data contract on error (round-12 CodeRabbit [2]):
+    when a background refetch fails, the Dashboard does NOT clear
+    the table. The gating `if (dash.error || !dash.data) return
+    <EmptyState/>` only fires when BOTH `dash.error` is set AND
+    `dash.data` is undefined. React Query's keepPreviousData
+    behavior keeps `dash.data` populated across background refetch
+    failures, so the user keeps seeing what they were looking at
+    while the toast surfaces the failure. Test #5 pins this
+    contract. If the test fails, the gating regressed: tighten
+    the gate to `dash.error && !dash.data`, or add
+    `keepPreviousData: true` to the query options.
 
   3. tsc + 385 tests pass (was 378 + 7 from the swr test file).
 
@@ -366,18 +379,17 @@ brief, ask me to "confirm or explain" the gap honestly.
 ================================================================================
 
   Branch: fix/refresh-instant-feel (pushed to origin)
-  PR   : (NOT YET OPENED — see below)
-  CI   : local vitest green; not yet pushed to a PR
-  CodeRabbit: not yet pinged — this report is the pre-PR audit.
+  PR   : #21 (https://github.com/eslam21006-coding/qarar/pull/21)
+  CI   : green — test action passes, CodeRabbit status check passes
+  CodeRabbit: clean as of round-2 (commit 2e9a1dc); 8 / 8 threads
+             resolved, 0 open. Round-3 follow-ups addressed here.
 
   Next steps (operator-side):
-    1. Open PR against main: `gh pr create --base main --head
-       fix/refresh-instant-feel --title 'fix(refresh): make refresh
-       feel instant + parallelize fetchBaselines'`
-    2. Re-run the live measurement with FB_TOKEN (see §4).
-    3. Update the PR body with the live number.
-    4. Trigger CodeRabbit and loop until clean.
-    5. Hand back for gate review.
+    1. Re-run the live measurement with FB_TOKEN (see §4) and update
+       the PR body with the live number once measured.
+    2. Continue the CodeRabbit loop until clean.
+    3. Hand back for gate review (do NOT merge per the original
+       brief).
 
 ================================================================================
 END OF REPORT

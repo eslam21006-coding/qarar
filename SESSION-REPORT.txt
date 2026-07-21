@@ -124,10 +124,12 @@ ITEM 3. RESIDUAL SPARSE-DAY EDGE CASE — RESOLVED BY ROUND-9 THRESHOLD
     silenced ads, cost is 0 s.
   - NOTE (live 2026-07-21): the real wearefforce run measured 916 ads
     with 176 silenced — far above this 10-50 estimate. Because the
-    restore is a single FILTERED batch (chunked at 50, 3 concurrent),
-    the 176-ad cohort cost only ~2.8 s, not 108 s: the per-ad daily
-    payload is tiny once scoped to the silenced IDs. The count estimate
-    was low; the wall-time impact was smaller still.
+    restore is a single FILTERED batch, the 176-ad cohort is split
+    into 4 chunks of ≤ 50 ads (ceil(176/50) = 4), executed across
+    2 concurrency waves (ceil(4/3) = 2), each chunk paying a
+    per-chunk latency of ~700ms. Total: ~2.8s, not 108s: the per-ad
+    daily payload is tiny once scoped to the silenced IDs. The count
+    estimate was low; the wall-time impact was smaller still.
 
   ACCEPT-AND-DOCUMENT: the residual is bounded, gated on Meta's
   query-time semantics, and not worth chasing further in this PR.

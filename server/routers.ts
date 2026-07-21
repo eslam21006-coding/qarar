@@ -562,11 +562,18 @@ export const appRouter = router({
           // deadline rather than waiting for the server's TCP timeout (which
           // on a slow 30-day call can be minutes). We also keep the legacy
           // Promise.race timer as a belt-and-suspenders safety net.
+          //
+          // Round-12 CodeRabbit: capture BOTH setTimeout handles and clear
+          // them in the same finally so a successful buildSnapshot that
+          // returns before the deadline doesn't leave the second
+          // setTimeout in Promise.race's reject arm firing 180s later
+          // (memory leak + spurious 180s-late rejection).
           const refreshAbort = new AbortController();
           refreshAbort.signal.addEventListener("abort", () => {
             // No-op; signal passed to fetch() will cancel the request.
           });
           const refreshTimer = setTimeout(() => refreshAbort.abort(), 180_000);
+          let raceTimer: ReturnType<typeof setTimeout> | null = null;
           const payload = await Promise.race([
             buildSnapshot(
               token,
@@ -574,19 +581,23 @@ export const appRouter = router({
               account.currency ?? "USD",
               refreshAbort.signal,
             ),
-            new Promise<never>((_, reject) =>
-              setTimeout(() =>
-                reject(
-                  new TRPCError({
-                    code: "TIMEOUT",
-                    message:
-                      "استغرق تحميل البيانات وقتًا طويلًا جدًا — حسابك كبير جداً. حاول مرة أخرى وقد تستغرق 3 دقائق.",
-                  })
-                ),
+            new Promise<never>((_, reject) => {
+              raceTimer = setTimeout(
+                () =>
+                  reject(
+                    new TRPCError({
+                      code: "TIMEOUT",
+                      message:
+                        "استغرق تحميل البيانات وقتًا طويلًا جدًا — حسابك كبير جداً. حاول مرة أخرى وقد تستغرق 3 دقائق.",
+                    })
+                  ),
                 180_000
-              )
-            ),
-          ]).finally(() => clearTimeout(refreshTimer));
+              );
+            }),
+          ]).finally(() => {
+            clearTimeout(refreshTimer);
+            if (raceTimer) clearTimeout(raceTimer);
+          });
           tAfterBuild = Date.now();
           await db.saveSnapshot(ctx.user.id, account.id, payload);
           const tAfterSave = Date.now();

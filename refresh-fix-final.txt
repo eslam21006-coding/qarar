@@ -464,6 +464,6 @@ introduced by the round-9 chunking + threshold change:
 [7] refresh-fix-report.txt:191-203 — duplicated trailing "numbers.)"
     removed.
 
-TypeScript clean, vitest 376 passed + 13 skipped (no test changes in
+TypeScript clean, vitest 379 passed + 13 skipped (no test changes in
 round 10 — pure doc-sync). Mock simulator regression-guard invariant
 preserved.
