@@ -721,19 +721,28 @@ export async function buildSnapshot(
       }
     }
 
-    // Extract the Phase 1 results. We need the hierarchy + insights results
-    // before Phase 2 (silencedAdRestore + relevance filter + object
-    // construction). Baselines + asOfDate can wait until the end since
-    // they're only used in the return object.
-    const { campaigns, adsets, ads } = await hierarchyP;
-    const insightsPResult = await insightsP;
-    const {
-      w3dMaps,
-      todayMaps,
-      dailyMaps,
-      adPresence30d,
-      callTrace: insightsCallTrace,
-    } = insightsPResult;
+    // Extract the Phase 1 results. We need the hierarchy + insights
+    // results before Phase 2 (silencedAdRestore + relevance filter +
+    // object construction). Baselines + asOfDate can wait until the
+    // end since they're only used in the return object.
+    //
+    // Round-12 CodeRabbit: handle hierarchyP and insightsP via
+    // Promise.all so a rejection in one doesn't leave the other as
+    // an unhandled rejection. The previous sequential `await` had a
+    // rejection window: if hierarchyP rejected first, the await
+    // re-threw and insightsP's later rejection had no handler
+    // (Node logs UnhandledPromiseRejection). Wrapping both in
+    // Promise.all attaches the awaiting handler at the same tick.
+    const [
+      { campaigns, adsets, ads },
+      {
+        w3dMaps,
+        todayMaps,
+        dailyMaps,
+        adPresence30d,
+        callTrace: insightsCallTrace,
+      },
+    ] = await Promise.all([hierarchyP, insightsP]);
     // Preserve the callTrace on the phase object so the [refresh-timing]
     // line carries it (matches the pre-Phase-1-parallel structure).
     if (timingVerbose()) {
