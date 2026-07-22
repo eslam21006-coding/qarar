@@ -27,6 +27,11 @@
 import "dotenv/config";
 import { sql } from "drizzle-orm";
 import { getDb } from "../server/db";
+// The tuple-unwrap this inspector was built around now lives in the
+// shipped code (server/dbRows.ts) — the whole point of the fix. Import it
+// rather than keeping a private copy, so the inspector can never again
+// disagree with the functions it is inspecting.
+import { unwrapRows } from "../server/dbRows";
 import {
   type DamageFinding,
   resolveCandidateIdentities,
@@ -37,28 +42,6 @@ import {
 
 const out = (s = "") => process.stdout.write(s + "\n");
 const err = (s: string) => process.stderr.write(s + "\n");
-
-/**
- * drizzle-orm/mysql2 `db.execute()` returns the raw mysql2 result, which
- * for a SELECT is the tuple `[rows, fieldPackets]` — NOT a bare row
- * array. Any code that iterates the result directly walks those two
- * tuple members as if they were rows. This helper normalises both
- * shapes so the inspector always sees actual rows.
- */
-function unwrapRows<T = Record<string, unknown>>(result: unknown): T[] {
-  if (Array.isArray(result)) {
-    const first = result[0];
-    // Tuple shape: [rows[], fields[]]
-    if (Array.isArray(first)) return first as T[];
-    // Already a row array (or empty)
-    return result as T[];
-  }
-  if (result && typeof result === "object" && "rows" in (result as object)) {
-    const rows = (result as { rows?: unknown }).rows;
-    return Array.isArray(rows) ? (rows as T[]) : [];
-  }
-  return [];
-}
 
 /**
  * Close the underlying mysql2 pool so the event loop can drain and the

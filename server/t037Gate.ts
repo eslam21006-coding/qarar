@@ -15,6 +15,7 @@
  */
 import { sql } from "drizzle-orm";
 import { getDb } from "./db";
+import { unwrapRows } from "./dbRows";
 
 export const UNIQUE_INDEX_NAME = "uq_funnelSettings_user_account";
 
@@ -86,7 +87,11 @@ export async function evaluateT037Gate(
     };
   }
 
-  const indexRows = await db.execute(sql`
+  // `db.execute()` hands back the mysql2 `[rows, fieldPackets]` tuple for
+  // a SELECT. Reading `.length` off the tuple yields a constant 2, which
+  // made this gate report "index_exists" unconditionally — i.e. it never
+  // blocked anything. Unwrap first (see ./dbRows).
+  const indexResult = await db.execute(sql`
     SELECT 1
     FROM information_schema.statistics
     WHERE table_schema = DATABASE()
@@ -94,7 +99,7 @@ export async function evaluateT037Gate(
       AND index_name = ${UNIQUE_INDEX_NAME}
     LIMIT 1
   `);
-  const indexExists = (indexRows as unknown as unknown[]).length > 0;
+  const indexExists = unwrapRows(indexResult).length > 0;
 
   if (indexExists) {
     return {
@@ -107,13 +112,17 @@ export async function evaluateT037Gate(
     };
   }
 
-  const countRows = await db.execute(sql`
+  const countResult = await db.execute(sql`
     SELECT COUNT(*) AS n
     FROM funnelSettings
   `);
-  const rowCount = Number(
-    (countRows as unknown as Array<{ n: unknown }>)[0]?.n ?? 0,
-  );
+  // COUNT(*) is BIGINT and can arrive as a string depending on the driver
+  // build — Number() normalises both. Reading slot 0 of the *tuple* would
+  // have returned the row array, whose `.n` is undefined → 0 → the gate
+  // would have declared a populated table "empty" and waved the push
+  // through. Both defects are on this one line; both are fixed by the
+  // unwrap.
+  const rowCount = Number(unwrapRows<{ n: unknown }>(countResult)[0]?.n ?? 0);
 
   if (rowCount === 0) {
     return {

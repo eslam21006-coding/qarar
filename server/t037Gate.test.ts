@@ -101,10 +101,26 @@ describe("T037 gate — drizzle/schema.ts must not declare the unique index", ()
 const mocks = vi.hoisted(() => ({ getDb: vi.fn() }));
 vi.mock("./db", () => ({ getDb: mocks.getDb }));
 
-/** A fake drizzle handle whose `execute` returns queued result sets in order. */
+/**
+ * A fake drizzle handle whose `execute` returns queued result sets in order.
+ *
+ * The rows are wrapped in the mysql2 `[rows, fieldPackets]` tuple, because
+ * that — not a bare row array — is what `drizzle-orm/mysql2`'s
+ * `db.execute()` actually resolves to for a SELECT. This mock used to
+ * return the bare array, and that over-simplification is precisely why
+ * this suite gave a clean bill of health to a gate that could not block:
+ * `.length` on the tuple is a constant 2, so `indexExists` was always
+ * true and every run reported "index_exists". A mock that is easier to
+ * write than the real shape will certify the wrong contract.
+ */
 function fakeDb(...resultSets: unknown[][]) {
   const queue = [...resultSets];
-  return { execute: vi.fn(async () => queue.shift() ?? []) };
+  return {
+    execute: vi.fn(async () => {
+      const rows = queue.shift() ?? [];
+      return [rows, [{ name: "n" }]];
+    }),
+  };
 }
 
 describe("evaluateT037Gate", () => {

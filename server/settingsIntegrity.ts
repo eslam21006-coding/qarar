@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { adAccounts, funnelSettings, user as authUser } from "../drizzle/schema";
 import { getDb } from "./db";
+import { unwrapRows } from "./dbRows";
 
 /**
  * US11 / Spec 011 / T020 — shared query module for the diagnostic and
@@ -89,7 +90,10 @@ export async function findOrphaned(
 
   // LEFT JOIN of funnelSettings → adAccounts on adAccountId. Rows
   // with `adAccounts.id IS NULL` are orphaned.
-  const rows = await db.execute(sql`
+  //
+  // `db.execute()` returns the mysql2 `[rows, fieldPackets]` tuple for a
+  // SELECT — it MUST be unwrapped before iteration (see ./dbRows).
+  const result = await db.execute(sql`
     SELECT fs.id AS fs_id,
            fs.userId AS fs_userId,
            fs.adAccountId AS fs_adAccountId,
@@ -99,14 +103,15 @@ export async function findOrphaned(
     WHERE fs.userId IN (${sql.join(userIds.map(id => sql`${id}`), sql`, `)})
       AND a.id IS NULL
   `);
-
-  const findings: DamageFinding[] = [];
-  for (const row of rows as unknown as Array<{
+  const rows = unwrapRows<{
     fs_id: number;
     fs_userId: string;
     fs_adAccountId: number;
     fs_metaAccountId: string | null;
-  }>) {
+  }>(result);
+
+  const findings: DamageFinding[] = [];
+  for (const row of rows) {
     findings.push({
       kind: "orphaned",
       userId: row.fs_userId,
@@ -142,7 +147,9 @@ export async function findStranded(
   // NULL` are stranded. We also detect "superseded by sibling
   // identity" via contact id equality — those are NOT stranded but
   // they ARE drift candidates the repair can re-attach (T031).
-  const rows = await db.execute(sql`
+  //
+  // Same tuple caveat as findOrphaned — unwrap before iterating.
+  const result = await db.execute(sql`
     SELECT fs.id AS fs_id,
            fs.userId AS fs_userId,
            fs.adAccountId AS fs_adAccountId,
@@ -152,14 +159,15 @@ export async function findStranded(
     WHERE fs.userId IN (${sql.join(userIds.map(id => sql`${id}`), sql`, `)})
       AND u.id IS NULL
   `);
-
-  const findings: DamageFinding[] = [];
-  for (const row of rows as unknown as Array<{
+  const rows = unwrapRows<{
     fs_id: number;
     fs_userId: string;
     fs_adAccountId: number;
     fs_metaAccountId: string | null;
-  }>) {
+  }>(result);
+
+  const findings: DamageFinding[] = [];
+  for (const row of rows) {
     findings.push({
       kind: "stranded",
       userId: row.fs_userId,

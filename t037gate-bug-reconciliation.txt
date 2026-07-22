@@ -1,0 +1,461 @@
+================================================================================
+t037Gate.ts — RECONCILING THE CLAIMED BUG AGAINST THE OBSERVED PRODUCTION BLOCK
+Date: 2026-07-22
+================================================================================
+
+BOTTOM LINE UP FRONT
+--------------------
+Three things are true at once, and they are not in conflict once separated:
+
+  1. The tuple bug is REAL. I re-verified the mechanism down to mysql2's own
+     source. Proof is in section 3.
+
+  2. My earlier phrasing — "could not block anything, ever" — was OVERSTATED
+     and I am withdrawing it. The precise claim is narrower: WHENEVER THE
+     DATABASE WAS REACHABLE, the gate always returned ALLOW. It could still
+     BLOCK on the `db_unreachable` branch, which never touches the buggy
+     code. Section 6 restates this exactly.
+
+  3. Consequently, the pre-fix gate CANNOT have produced the message
+     "BLOCK: ... but funnelSettings already has N row(s)". That branch was
+     unreachable. I proved this by running the real script (section 4).
+
+So the contradiction is genuine and must be resolved in favour of one of two
+possibilities, NOT by softening the bug analysis. Either:
+
+  (A) the block you witnessed was the OTHER block branch — `db_unreachable` —
+      which is the only branch whose message instructs the operator to set
+      ALLOW_UNVERIFIED_DB_PUSH=1 (and you did exactly that); or
+
+  (B) the "observed block" is a recollection of a PREDICTION written into
+      the project memory yesterday, not of an actual terminal session.
+
+Evidence in section 5 points hard at (A) and/or (B). I cannot close it from
+the repo alone — section 7 states the one artefact that would settle it in
+five seconds. Please read section 7 before trusting either reading.
+
+ANSWER TO YOUR Q4, PLAINLY: NO. Today's event does NOT prove the row-count
+check works. Under the pre-fix code the row-count query was never even sent
+to the database. See section 4 for the wire log proving only ONE statement
+was issued.
+
+
+================================================================================
+1. THE EXACT CURRENT CODE, EVERY BRANCH IN ORDER
+================================================================================
+
+server/t037Gate.ts — `evaluateT037Gate()`, lines 38-163. Branch order:
+
+  L45   if (env.ALLOW_UNVERIFIED_DB_PUSH === "1")
+  L46-54    -> return { code: 0, allow: true,  reason: "skipped_by_env" }
+
+  L57   const db = await getDb();
+  L64   if (!db)
+  L65-87    -> return { code: 2, allow: false, reason: "db_unreachable" }
+            message: "BLOCK: cannot reach the database..."
+            message ALSO contains: "ALLOW_UNVERIFIED_DB_PUSH=1 pnpm run db:push"
+
+  L94   const indexResult = await db.execute(sql`
+  L95-100     SELECT 1 FROM information_schema.statistics
+              WHERE table_schema = DATABASE()
+                AND table_name = 'funnelSettings'
+                AND index_name = 'uq_funnelSettings_user_account'
+              LIMIT 1
+  L101  `);
+  L102  const indexExists = unwrapRows(indexResult).length > 0;   <-- FIXED HERE
+                     pre-fix: (indexResult as unknown[]).length > 0
+
+  L104  if (indexExists)
+  L105-112  -> return { code: 0, allow: true,  reason: "index_exists" }
+
+  L115  const countResult = await db.execute(sql`
+  L116-117    SELECT COUNT(*) AS n FROM funnelSettings
+  L118  `);
+  L125  const rowCount = Number(unwrapRows<{n:unknown}>(countResult)[0]?.n ?? 0);
+                     pre-fix: Number((countResult as Array<{n}>)[0]?.n ?? 0)
+
+  L127  if (rowCount === 0)
+  L128-137  -> return { code: 0, allow: true,  reason: "empty_table" }
+
+  L140-162  -> return { code: 2, allow: false, reason: "rows_without_index" }
+            message: "BLOCK: uq_funnelSettings_user_account is NOT in place,
+                      but funnelSettings already has ${rowCount} row(s)."
+            message does NOT mention ALLOW_UNVERIFIED_DB_PUSH.
+
+Note the control-flow fact that decides this whole question: L104 is an early
+return. `rowCount` at L125 and the block at L140 are reachable ONLY if
+`indexExists` at L102 evaluated FALSE.
+
+
+--------------------------------------------------------------------------
+1a. TRACE — PRE-FIX CODE, against today's stated inputs
+    (index MISSING, funnelSettings HAS rows)
+--------------------------------------------------------------------------
+  L45   ALLOW_UNVERIFIED_DB_PUSH unset            -> fall through
+  L57   getDb() returns a drizzle instance        -> not null
+  L64   !db is false                              -> fall through
+  L94   execute() runs. Index is MISSING, so the driver returns:
+              [ [], [fieldPackets] ]     <- 2-element tuple, rows array EMPTY
+  L102  (indexResult as unknown[]).length
+              = 2                                 <- length of the TUPLE
+        2 > 0                                     -> indexExists = TRUE
+  L104  if (indexExists) -> TAKEN
+  L105  RETURN { code: 0, allow: true, reason: "index_exists",
+                message: "PASS: uq_funnelSettings_user_account already
+                          exists on the live DB. db:push may proceed." }
+
+  L115 COUNT(*) query: NEVER SENT.
+  L140 rows_without_index block: UNREACHABLE.
+
+  Exit code 0. db:push proceeds. No block, no override needed.
+
+  Note the specific perversity: the emptier the result, the more confidently
+  wrong the answer. Zero matching index rows still gives .length === 2.
+
+--------------------------------------------------------------------------
+1b. TRACE — FIXED CODE, same inputs
+--------------------------------------------------------------------------
+  L94   execute() -> [ [], [fieldPackets] ]
+  L102  unwrapRows(...) -> []           -> .length 0 -> indexExists = FALSE
+  L104  not taken
+  L115  COUNT(*) query SENT            -> [ [{n:47}], [fields] ]
+  L125  unwrapRows(...)[0].n = 47      -> rowCount = 47
+  L127  47 === 0 false                 -> not taken
+  L140  RETURN rows_without_index, code 2, "already has 47 row(s)"
+
+
+================================================================================
+2. WAS THE GATE'S CODE DIFFERENT EARLIER TODAY? NO.
+================================================================================
+I checked, because "the code changed under us" would have been the easy
+reconciliation. It did not.
+
+  git log --follow server/t037Gate.ts
+    bb8f331  2026-07-14 20:52  test(gate): machine-enforce ... (file created)
+
+  Before that the same logic lived inline in the CLI wrapper:
+  git show b294617:scripts/verify-t037-prerequisites.ts
+    L99-100:  const indexExists =
+                (indexRows as unknown as unknown[]).length > 0;
+
+CHARACTER-FOR-CHARACTER THE SAME DEFECT. The extraction on 2026-07-14 moved
+it verbatim; it did not introduce or repair it. So the buggy line has been
+continuously present since at least 2026-07-13 (8144a11), through today.
+
+There is no second implementation: a repo-wide grep for the block message
+("is NOT in place", "already has ... row(s)") finds exactly ONE source,
+server/t037Gate.ts L146-147. Nothing in old-specs-backup-010/ or elsewhere
+contains a competing copy. So whatever printed that message, if anything did,
+was this function.
+
+
+================================================================================
+3. THE MECHANISM, RE-VERIFIED FROM SOURCE (not from my assumption)
+================================================================================
+I did not take my earlier analysis on trust. Chain, each link read locally:
+
+  server/db.ts:22
+      _db = drizzle(process.env.DATABASE_URL)            // a STRING
+
+  drizzle-orm/mysql2/driver.cjs:97-99
+      typeof params[0] === "string"
+        -> createPool({ uri: connectionString })         // mysql2 CALLBACK pool
+
+  drizzle-orm/mysql2/driver.cjs:63 + 91-93
+      isCallbackClient(c) = typeof c.promise === "function"   // true
+        -> clientForInstance = client.promise()          // mysql2 PROMISE pool
+
+  mysql2/promise.js:107
+      const done = makeDoneCb(resolve, reject, localErr);
+      corePool.query(sql, args, done);
+
+  mysql2/lib/promise/make_done_cb.js:14
+      resolve([rows, fields]);              <-- THE TUPLE, from mysql2 itself
+
+  drizzle-orm/mysql2/session.cjs:72-96  (MySql2PreparedQuery.execute)
+      if (!fields && !customResultMapper) {          // true for raw sql``
+        const res = await client.query(rawQuery, params);
+        ...
+        return res;                                  // returned VERBATIM
+      }
+
+So `db.execute(sql\`SELECT ...\`)` resolves to `[rows, fieldPackets]`, and
+`.length` on it is 2 — always, for any SELECT, regardless of row count.
+
+Versions pinned and installed: drizzle-orm 0.44.6 (range ^0.44.5),
+mysql2 3.15.1 (range ^3.15.1). Same lockfile production installs from.
+
+Contrast: `db.select()` (the query BUILDER) takes the other branch at
+session.cjs:98-104, where drizzle maps driver rows to row objects itself.
+That is why only `db.execute()` call sites are affected.
+
+
+================================================================================
+4. EMPIRICAL PROOF — I RAN THE REAL SCRIPT BOTH WAYS
+================================================================================
+Static argument is not enough for something this load-bearing, so I executed
+the operator's actual command path: scripts/verify-t037-prerequisites.ts, the
+exact script `pnpm run db:push` invokes first.
+
+Fidelity of the test rig: I intercepted `mysql2.createPool` and returned a
+CALLBACK-style core pool wrapped in mysql2's OWN real `PromisePool`, so the
+`[rows, fields]` tuple is manufactured by mysql2's real `makeDoneCb`, not by
+me. drizzle's driver and the gate code are entirely unmodified. The only
+fiction is the bytes that would have come off the wire:
+
+    information_schema.statistics  -> 0 rows   (index MISSING)
+    SELECT COUNT(*) FROM funnelSettings -> [{n: 47}]  (47 rows present)
+
+These are exactly today's stated production conditions.
+
+------------------------- PRE-FIX CODE -------------------------
+  [wire] SELECT 1 FROM information_schema.statistics WHERE ... -> 0 row(s)
+
+  [verify-t037] PASS: `uq_funnelSettings_user_account` already exists on
+            the live DB.
+            db:push may proceed (T037 already applied; the constraint is
+            in place).
+  EXIT=0
+
+  ONE statement issued. The COUNT(*) query was never sent. The gate
+  asserted the index EXISTS when it does not, and allowed the push.
+
+------------------------- FIXED CODE ---------------------------
+  [wire] SELECT 1 FROM information_schema.statistics WHERE ... -> 0 row(s)
+  [wire] SELECT COUNT(*) AS n FROM funnelSettings ...          -> 1 row(s)
+
+  [verify-t037] BLOCK: uq_funnelSettings_user_account is NOT in place,
+               but funnelSettings already has 47 row(s).
+               ...
+  EXIT=2
+
+  TWO statements issued. Correct block, correct count, correct exit code.
+
+FORENSIC SIGNATURE, and this is the useful part for you:
+  The pre-fix gate issues exactly ONE query when the DB is reachable.
+  It is structurally impossible for it to print a row count, because it
+  never asks for one. Any terminal output containing a real number of rows
+  proves the COUNT(*) query ran, which proves indexExists was false, which
+  under the pre-fix code was impossible on a reachable database.
+
+
+================================================================================
+5. SO WHAT DID YOU ACTUALLY SEE? THE EVIDENCE
+================================================================================
+I can prove what the code does. I cannot prove what was on your screen. Here
+is the evidence I found, stated as evidence and not as conclusion.
+
+EVIDENCE 1 — the ALLOW_UNVERIFIED_DB_PUSH tell. [strong]
+  You said the operator had to set ALLOW_UNVERIFIED_DB_PUSH=1 to get past it.
+  Of the two BLOCK branches, only ONE mentions that variable in its message:
+
+    db_unreachable (L69-86):
+       "...If you are in a dev sandbox with no database and you genuinely
+        intend to skip this check, opt in explicitly:
+          ALLOW_UNVERIFIED_DB_PUSH=1 pnpm run db:push"
+
+    rows_without_index (L144-161):
+       tells the operator to run diagnose-settings, then repair-settings
+       --all --commit, then re-verify, then manually apply
+       drizzle/0010_settings_unique_index.sql.
+       It NEVER mentions ALLOW_UNVERIFIED_DB_PUSH.
+
+  An operator who responded by setting ALLOW_UNVERIFIED_DB_PUSH=1 was
+  following the db_unreachable instructions. The rows_without_index message
+  does not offer that escape, and following it would not have produced that
+  action. This is also fully consistent with the bug: db_unreachable is the
+  one BLOCK branch that returns at L65, BEFORE any db.execute() runs.
+
+EVIDENCE 2 — the literal "N". [moderate]
+  The message you quoted reads "already has N row(s)". In the source that is
+  a template interpolation, `${rowCount}`. A real run cannot print "N"; it
+  prints a number. A quotation containing the placeholder is a quotation of
+  the template or of a paraphrase, not of observed stdout.
+
+EVIDENCE 3 — the memory record is a PREDICTION, not an observation. [strong]
+  Observation 1293, 2026-07-21 21:09, is the origin of the "gate will block"
+  belief. Its own metadata settles its nature:
+
+      title:  "T037 gate WILL BLOCK db:push on production due to missing
+               unique index with existing rows"
+      files_read:     ["server/t037Gate.ts", "package.json"]
+      files_modified: []
+      narrative: "running `pnpm run db:push` on production right now WILL
+                  hit the rows_without_index case. Production's
+                  funnelSettings table ALMOST CERTAINLY has real rows..."
+
+  It records no command, no stdout, no exit code — only two files read. It is
+  a static code-reading forecast, and it is wrong for precisely the reason
+  under discussion: whoever wrote it read `.length > 0` as a row count.
+  Reading the code that way is exactly the mistake the code invites.
+
+EVIDENCE 4 — an older report shows the same misreading. [supporting]
+  gate-fixes-applied.txt (now deleted from the worktree, still in HEAD)
+  asserts: "CI's database is always empty, so the rowCount===0 PASS branch
+  is always taken." Under the pre-fix code that is also impossible — with a
+  reachable DB the function always returned at L105 (index_exists) and never
+  evaluated rowCount at all. Another confident statement about a branch that
+  could not execute. The misreading is systemic in this file's paper trail,
+  which is itself part of why the bug survived.
+
+WHAT I AM NOT CLAIMING:
+  I am not claiming you did not see a block. A block on db_unreachable is a
+  real block, it really halts db:push, and it really requires that override.
+  I am claiming the specific attribution — that it was the row-count check
+  firing — is not supported, and is refuted by the code as executed.
+
+
+================================================================================
+6. PRECISE RESTATEMENT OF THE BUG (replacing my overstated version)
+================================================================================
+WITHDRAWN:  "the gate could not block anything, ever."
+            Wrong: the db_unreachable branch (L64-87) blocks correctly and
+            never touches the buggy code. If that is what fired today, the
+            gate did its job on that path.
+
+ACCURATE STATEMENT OF WHAT THE BUG BROKE:
+
+  Scope. Two `db.execute()` call sites, L94 and L115, both inside
+  evaluateT037Gate. No other function in the file is affected.
+
+  Which variable. The load-bearing one is `indexExists` (L102). It is
+  computed from the LENGTH OF THE TUPLE rather than the length of the row
+  array, so it was `2 > 0` — TRUE — under every possible database state.
+
+  Failure mode. Whenever the database was REACHABLE, the gate returned
+  "index_exists / ALLOW / exit 0" unconditionally. It could not distinguish
+  an index that exists from one that does not.
+
+  The two states it therefore failed to detect — its entire purpose:
+    (a) index MISSING + funnelSettings HAS rows   -> should BLOCK, ALLOWED.
+        THIS IS THE PRODUCTION-DANGEROUS ONE. It is the state prior analysis
+        believes production is in.
+    (b) index MISSING + funnelSettings EMPTY      -> should ALLOW with
+        reason "empty_table"; instead ALLOWED with the false reason
+        "index_exists". Same exit code, wrong justification — harmless
+        outcome, misleading operator message.
+
+  What still worked:
+    - ALLOW_UNVERIFIED_DB_PUSH=1 skip (L45)              — correct
+    - db_unreachable fail-closed BLOCK (L64)             — correct
+    - the genuine index-exists case                      — right answer,
+                                                           by luck, for the
+                                                           wrong reason
+
+  Second, subordinate defect. `rowCount` (L125) read slot 0 of the tuple —
+  the row array — whose `.n` is undefined, so `?? 0` yielded 0. Had
+  `indexExists` ever been correct while `rowCount` stayed broken, the gate
+  would have called a populated table "empty" and allowed the push anyway.
+  Two independent bugs stacked in the same direction: both fail OPEN. This
+  one was masked and unreachable because L104 always returned first.
+
+  Net: on a reachable database the gate was decorative. That is materially
+  worse than "it blocked for the wrong reason", and materially narrower
+  than "it could never block".
+
+
+================================================================================
+7. ANSWERS TO YOUR FOUR QUESTIONS
+================================================================================
+
+Q1. Which branch fired today and why?
+    Under the pre-fix code with a REACHABLE database, only one branch can
+    fire: L104 index_exists, ALLOW, exit 0. Proven by execution in section 4.
+    Therefore the observed block did NOT come from L140 (rows_without_index).
+    If a block genuinely occurred, the only branch that can produce one on
+    the pre-fix code is L64 db_unreachable — which is also the only one whose
+    message tells the operator to set ALLOW_UNVERIFIED_DB_PUSH=1, which is
+    what the operator did.
+
+Q2. Same check, or a different one elsewhere in the file?
+    SAME FUNCTION, and this is the important nuance: the buggy call at L94
+    is not an unrelated check. It is the GATEKEEPER of the check that
+    produced your message. `indexExists` (L102) sits at L104 as an early
+    return directly above the row-count logic. Being wrongly TRUE, it
+    short-circuited and prevented the row-count check from ever running.
+    So the bug did not corrupt the row-count check's output — it prevented
+    its execution entirely. Both queries live in evaluateT037Gate; there is
+    no second, unrelated index check anywhere in the file.
+
+Q3. The narrower, accurate scenario. See section 6 in full. Compressed:
+    "Whenever the DB was reachable, `indexExists` was unconditionally true,
+    so the gate always returned index_exists/ALLOW and never evaluated the
+    table's contents. The state it was built to catch — index missing while
+    funnelSettings holds rows — was silently allowed through."
+
+Q4. Does today's block prove the row-count check works?
+    NO. On the pre-fix code the row-count query was never sent — the wire
+    log in section 4 shows exactly one statement issued. A check that does
+    not execute cannot be validated by an event.
+    What today's event DOES prove, if it happened as an actual run: that
+    `pnpm run db:push` correctly halts on a non-zero exit from the verifier,
+    that the `&&` chaining works, and that ALLOW_UNVERIFIED_DB_PUSH=1 is an
+    effective override. Those are real and unaffected by this bug.
+    The row-count check is now proven to work — but by section 4's fixed-code
+    run (correct block, correct count of 47, exit 2), not by today's event.
+
+
+================================================================================
+8. THE ONE ARTEFACT THAT WOULD SETTLE THIS IN FIVE SECONDS
+================================================================================
+I have reasoned to the limit of what the repository can tell me. To close it
+definitively, retrieve the operator's actual terminal output and check:
+
+  - Does the message say "cannot reach the database" (db_unreachable),
+    or "uq_funnelSettings_user_account is NOT in place" (rows_without_index)?
+  - If the latter: does it show a REAL NUMBER, e.g. "already has 47 row(s)"?
+    A real number is impossible under the pre-fix code — it would mean the
+    COUNT(*) ran, which would falsify my analysis outright and I would want
+    to know immediately.
+  - Was DATABASE_URL actually exported in that shell? The db_unreachable
+    branch fires when it is unset, which is easy to hit when running a
+    production command from a fresh terminal or a CI/Manus context.
+
+If the output turns out to show a real row count, then something in the
+chain I traced in section 3 does not hold in your production environment and
+I want to re-open this rather than defend the analysis. I have given you the
+exact discriminator (one query vs two, placeholder vs real number) so this is
+checkable rather than a matter of who sounds more confident.
+
+
+================================================================================
+9. OPERATIONAL CONSEQUENCE OF THE FIX — READ BEFORE NEXT DEPLOY
+================================================================================
+This is a genuine behaviour change and it will surprise someone.
+
+  BEFORE: on a reachable DB, `pnpm run db:push` always cleared the gate.
+  AFTER:  if production has funnelSettings rows and the unique index is
+          missing, the gate WILL now block, exit 2, and halt db:push before
+          drizzle-kit runs.
+
+If prior analysis is right about production's state, THE NEXT db:push WILL
+BLOCK — for the first time ever on that path, and correctly. That is the fix
+working, not a regression. The required sequence is in the block message:
+diagnose-settings --all, repair-settings --all --commit, re-diagnose clean,
+then manually apply drizzle/0010_settings_unique_index.sql.
+
+Do not paper over it with ALLOW_UNVERIFIED_DB_PUSH=1. That override now
+carries real weight: it disables a check that, until today, was not actually
+checking anything.
+
+Corollary worth stating: because the gate never truly evaluated production,
+the true state of the index and of funnelSettings has never been measured by
+this tool. Treat it as unknown until diagnose-settings --all is run against
+production with the fixed code.
+
+
+================================================================================
+10. VERIFICATION STATE AFTER THIS RECONCILIATION
+================================================================================
+  server/t037Gate.ts restored to the FIXED version (revert used only for the
+  section 4 experiment; both temporary harnesses deleted).
+
+  git status: 4 modified files, as before this investigation —
+    scripts/inspect-4-findings.ts, server/settingsIntegrity.ts,
+    server/t037Gate.ts, server/t037Gate.test.ts
+  (plus the two new files: server/dbRows.ts, server/settingsIntegrity.tuple.test.ts)
+
+  server/t037Gate.test.ts .................. 8 passed
+  server/settingsIntegrity.tuple.test.ts ... 13 passed
+
+  Nothing in section 4's experiment was left behind.
