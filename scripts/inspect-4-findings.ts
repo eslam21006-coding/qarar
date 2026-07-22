@@ -295,16 +295,29 @@ async function main(): Promise<number> {
   let email: string | undefined;
   let contactId: string | undefined;
   let json = false;
-  for (let i = 0; i < argv.length; i++) {
+  // A missing value must be a hard error, never a silent default: with
+  // `email`/`contactId` left undefined the run widens from one person to
+  // the whole fleet, which is not what someone typing `--email` meant.
+  let bad = false;
+  const takeValue = (flag: string, next: string | undefined): string => {
+    if (next === undefined || next.startsWith("--")) {
+      err(`✗ ${flag} requires a value`);
+      bad = true;
+      return "";
+    }
+    return next;
+  };
+  for (let i = 0; i < argv.length && !bad; i++) {
     const a = argv[i];
-    if (a === "--email") email = argv[++i];
-    else if (a === "--contact-id") contactId = argv[++i];
+    if (a === "--email") email = takeValue(a, argv[++i]);
+    else if (a === "--contact-id") contactId = takeValue(a, argv[++i]);
     else if (a === "--json") json = true;
     else {
       err(`✗ Unknown argument: ${a}`);
       return 2;
     }
   }
+  if (bad) return 2;
 
   const db = await getDb();
   if (!db) {
