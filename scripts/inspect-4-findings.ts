@@ -60,6 +60,43 @@ function unwrapRows<T = Record<string, unknown>>(result: unknown): T[] {
   return [];
 }
 
+/**
+ * Close the underlying mysql2 pool so the event loop can drain and the
+ * process can exit naturally.
+ *
+ * This script must NOT call `process.exit()`: Node does not flush async
+ * stdout writes on a forced exit, so a piped or redirected run would
+ * lose the tail of the report (and the whole `--json` dump). Setting
+ * `process.exitCode` instead is only safe if nothing keeps the loop
+ * alive — and `getDb()` opens a connection pool that otherwise would.
+ * Hence this teardown.
+ */
+async function closeDb(): Promise<void> {
+  try {
+    const db = await getDb();
+    const client = (
+      db as unknown as {
+        $client?: {
+          promise?: () => { end: () => Promise<void> };
+          end?: (cb: (err?: unknown) => void) => void;
+        };
+      } | null
+    )?.$client;
+    if (!client) return;
+    // drizzle's mysql2 driver stores the callback-style pool; its
+    // `.promise()` wrapper gives an awaitable `end()`.
+    if (typeof client.promise === "function") {
+      await client.promise().end();
+      return;
+    }
+    if (typeof client.end === "function") {
+      await new Promise<void>(resolve => client.end!(() => resolve()));
+    }
+  } catch {
+    // Teardown is best-effort — never mask the real result of the run.
+  }
+}
+
 function fmt(value: unknown): string {
   if (value === null) return "NULL";
   if (value === undefined) return "<undefined — column absent from result>";
@@ -225,7 +262,8 @@ async function explainRow(row: Record<string, unknown>) {
   };
 }
 
-async function main() {
+/** Returns the process exit code; never calls `process.exit` (see closeDb). */
+async function main(): Promise<number> {
   const argv = process.argv.slice(2);
   let email: string | undefined;
   let contactId: string | undefined;
@@ -237,14 +275,14 @@ async function main() {
     else if (a === "--json") json = true;
     else {
       err(`✗ Unknown argument: ${a}`);
-      process.exit(2);
+      return 2;
     }
   }
 
   const db = await getDb();
   if (!db) {
     err("✗ DB unavailable — set DATABASE_URL");
-    process.exit(2);
+    return 2;
   }
 
   out("=".repeat(78));
@@ -257,7 +295,7 @@ async function main() {
   if (email || contactId) for (const id of userIds) out(`  - ${id}`);
   if (userIds.length === 0) {
     out("\nNo candidate identities — nothing to inspect.");
-    process.exit(0);
+    return 0;
   }
 
   // ---------------------------------------------------------------
@@ -407,10 +445,23 @@ async function main() {
   out("\n" + "=".repeat(78));
   out("Done. Read-only — no writes were performed.");
   out("=".repeat(78));
-  process.exit(0);
+  return 0;
 }
 
-main().catch((e: unknown) => {
-  err(`✗ Inspection failed: ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
-  process.exit(2);
-});
+main()
+  .then(code => {
+    process.exitCode = code;
+  })
+  .catch((e: unknown) => {
+    err(`✗ Inspection failed: ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
+    process.exitCode = 2;
+  })
+  .finally(async () => {
+    await closeDb();
+    // Last-resort guard: if some other handle still holds the event loop
+    // open, don't hang a production run forever. `unref()` means this
+    // timer alone never keeps the process alive, so it fires only when
+    // something else already did — by which point stdout has long
+    // drained, and the truncation this refactor fixes cannot occur.
+    setTimeout(() => process.exit(process.exitCode ?? 0), 10_000).unref();
+  });
