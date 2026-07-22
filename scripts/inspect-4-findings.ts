@@ -71,27 +71,54 @@ function unwrapRows<T = Record<string, unknown>>(result: unknown): T[] {
  * alive — and `getDb()` opens a connection pool that otherwise would.
  * Hence this teardown.
  */
+interface PoolLike {
+  promise?: () => { end: () => Promise<void> };
+  end?: (cb?: (err?: unknown) => void) => unknown;
+}
+
+/** Milliseconds to wait for the pool to close before giving up on it. */
+const TEARDOWN_TIMEOUT_MS = 5_000;
+
+/**
+ * Shut the pool down without assuming which mysql2 flavour `$client` is.
+ * The callback pool signals completion via the callback and returns
+ * `undefined`; the promise pool ignores the callback and returns a
+ * promise. Handling only one of the two would leave the other pending
+ * forever, so honour whichever signal actually arrives.
+ */
+function endClient(client: PoolLike): Promise<void> {
+  if (typeof client.promise === "function") {
+    return client.promise().end();
+  }
+  if (typeof client.end !== "function") return Promise.resolve();
+  return new Promise<void>(resolve => {
+    let settled = false;
+    const done = () => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    };
+    const returned = client.end!(done);
+    if (returned && typeof (returned as Promise<void>).then === "function") {
+      (returned as Promise<void>).then(done, done);
+    }
+  });
+}
+
 async function closeDb(): Promise<void> {
   try {
     const db = await getDb();
-    const client = (
-      db as unknown as {
-        $client?: {
-          promise?: () => { end: () => Promise<void> };
-          end?: (cb: (err?: unknown) => void) => void;
-        };
-      } | null
-    )?.$client;
+    const client = (db as unknown as { $client?: PoolLike } | null)?.$client;
     if (!client) return;
-    // drizzle's mysql2 driver stores the callback-style pool; its
-    // `.promise()` wrapper gives an awaitable `end()`.
-    if (typeof client.promise === "function") {
-      await client.promise().end();
-      return;
-    }
-    if (typeof client.end === "function") {
-      await new Promise<void>(resolve => client.end!(() => resolve()));
-    }
+    // Bounded: teardown must never be the reason the script stops making
+    // progress. On timeout the caller's guard takes over.
+    await Promise.race([
+      endClient(client),
+      new Promise<void>(resolve =>
+        setTimeout(resolve, TEARDOWN_TIMEOUT_MS).unref()
+      ),
+    ]);
   } catch {
     // Teardown is best-effort — never mask the real result of the run.
   }
@@ -457,11 +484,11 @@ main()
     process.exitCode = 2;
   })
   .finally(async () => {
-    await closeDb();
-    // Last-resort guard: if some other handle still holds the event loop
-    // open, don't hang a production run forever. `unref()` means this
-    // timer alone never keeps the process alive, so it fires only when
-    // something else already did — by which point stdout has long
-    // drained, and the truncation this refactor fixes cannot occur.
+    // Armed BEFORE teardown, so it also covers a teardown that itself
+    // fails to settle. `unref()` means this timer alone never keeps the
+    // process alive — it fires only if some other handle already did, by
+    // which point stdout has long drained and the truncation this
+    // refactor fixes cannot occur.
     setTimeout(() => process.exit(process.exitCode ?? 0), 10_000).unref();
+    await closeDb();
   });
