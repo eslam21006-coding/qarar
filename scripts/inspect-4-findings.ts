@@ -234,12 +234,19 @@ async function explainRow(row: Record<string, unknown>) {
         `)
       )
     : [];
-  const dupCount = unwrapRows<{ c: number }>(
+  // COUNT(*) is BIGINT; depending on driver settings it can arrive as a
+  // string rather than a number. Normalise once — a `typeof === "number"`
+  // guard would silently skip the duplicate check against a string.
+  const rawDupCount = unwrapRows<{ c: number | string }>(
     await db.execute(sql`
       SELECT COUNT(*) AS c FROM funnelSettings
       WHERE userId = ${userId} AND adAccountId = ${adAccountId}
     `)
   )[0]?.c;
+  const dupCount =
+    rawDupCount === undefined || rawDupCount === null
+      ? null
+      : Number(rawDupCount);
 
   const reasons: string[] = [];
   if (userRows.length === 0) {
@@ -265,7 +272,7 @@ async function explainRow(row: Record<string, unknown>) {
         `foreign-key-only check finds nothing.`
     );
   }
-  if (typeof dupCount === "number" && Number(dupCount) > 1) {
+  if (dupCount !== null && Number.isFinite(dupCount) && dupCount > 1) {
     reasons.push(
       `DUPLICATED: ${dupCount} funnelSettings rows share (userId, adAccountId) = ` +
         `("${userId}", ${adAccountId}).`
@@ -285,7 +292,7 @@ async function explainRow(row: Record<string, unknown>) {
     accountAnyOwner,
     accountSameOwner,
     accountByMetaId,
-    dupCount: dupCount === undefined ? null : Number(dupCount),
+    dupCount,
   };
 }
 
