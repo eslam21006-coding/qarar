@@ -10,20 +10,21 @@ READ THIS FIRST — ANSWER TO QUESTION 4 (the safety question)
 --------------------------------------------------------------------------------
 In plain language:
 
-  NO. Nothing in this runbook touches your real data.
+  NO. Nothing in this runbook modifies your real data.
 
-  Every statement below reads or writes exactly ONE table:
-  `__drizzle_migrations`. That table is a bookkeeping notepad. It holds a
-  list of "which migration files have already been run", and nothing else.
-  It has three columns: an id number, a text hash, and a timestamp number.
-  It contains no user data, no ad data, no settings.
+  The procedure does NOT modify adAccounts, funnelSettings, user, or
+  audit_log. The only WRITES are: one CREATE TABLE that makes a NEW
+  backup table in STEP 1, one INSERT that adds rows to the bookkeeping
+  table in STEP 2, and (in the ROLLBACK section only, inside a
+  transaction) a DELETE+INSERT that replaces the bookkeeping table
+  with the backup. None of those writes affect any application table.
 
-  These four tables are NOT named anywhere in the statements below, are not
-  read, are not written, and cannot be affected:
-      adAccounts
-      funnelSettings
-      user
-      audit_log
+  The procedure DOES read from adAccounts, funnelSettings, user, and
+  audit_log — but only via the `SHOW CREATE TABLE`, `SHOW COLUMNS`,
+  `SHOW INDEX`, and `information_schema.TABLE_CONSTRAINTS` queries
+  in the PRECONDITION section, which are read-only metadata
+  inspections that prove the listed migrations actually ran against
+  production. Those reads do not affect the data in those tables.
 
   The backfill flow itself (STEPS 1–3) is purely additive: one CREATE
   TABLE that makes a NEW backup table, and one INSERT that adds rows
@@ -205,12 +206,13 @@ only when the named object exists and matches the description.
 
       SHOW CREATE TABLE `audit_log`\G
       Expected: PRIMARY KEY on `id`, columns include `user_id`,
-      `email`, `event_type` (with the original 9-value enum:
-      signup/login/logout/email_verified/password_reset_requested/
-      password_reset_completed/password_changed/login_failed/
-      account_created), `status`, `ip_address`, `user_agent`,
-      `details`, `created_at`. 0009 later widens the enum;
-      0008's evidence is the ORIGINAL 9 values.                         [ ]
+      `email`, `event_type` (with AT LEAST the original 9-value
+      enum: signup/login/logout/email_verified/
+      password_reset_requested/password_reset_completed/
+      password_changed/login_failed/account_created —
+      0009 later widens the enum to 11 values, so the post-0009
+      enum is a superset and is also acceptable), `status`,
+      `ip_address`, `user_agent`, `details`, `created_at`.      [ ]
 
       SHOW CREATE TABLE `rate_limit_log`\G
       Expected: PRIMARY KEY on `id`, columns include `email`,
@@ -751,10 +753,33 @@ restored to its pre-rollback state.
 ================================ PHASE 1 — DO THE WRITES ================================
 
 --------------------------------- COPY BELOW ---------------------------------
--- 1. Cross-connection mutex. Any concurrent migration run also tries
---    to acquire this lock; the 0 timeout means "fail fast, do not
---    queue". GET_LOCK() can return three values:
---      1 — lock was acquired by this connection
+-- 1. Cross-connection mutex. The lock name is the SAME as the one
+--    acquired by the backfill flow in STEP 0 of the runbook
+--    ('qarar.drizzle_migrations_backfill'). Sharing the name means
+--    a backup-then-rollback pair is automatically serialised
+--    against any other backfill-or-rollback pair, AND against any
+--    new backfill that an operator might launch while rollback is
+--    in progress.
+--
+--    There are two distinct run-time cases for this GET_LOCK:
+--      (A) IMMEDIATE ROLLBACK: the operator discovered an error
+--          between STEP 0 and STEP 3.5, in the SAME connection
+--          that still holds the lock from STEP 0. In this case
+--          the second GET_LOCK is a reentrant no-op (MySQL
+--          returns 1 immediately because this session already
+--          holds the lock) and the subsequent RELEASE_LOCK
+--          below decrements the hold count — STEP 3.5 will be
+--          the actual final release.
+--      (B) LATER ROLLBACK: the operator already ran STEP 3.5
+--          and the backfill connection is closed. In this case
+--          the lock is no longer held; this GET_LOCK acquires it
+--          from scratch and the subsequent RELEASE_LOCK releases
+--          it for real.
+--    In both cases the operator MUST proceed only when the
+--    result is exactly 1.
+--
+--    GET_LOCK() can return three values:
+--      1 — lock was acquired (or reentrantly held) by this connection
 --      0 — lock is held by another connection (CONTINUE would race)
 --      NULL — lock acquisition errored (server-side fault, killed
 --             connection, etc.) — the lock state is unknown
@@ -868,4 +893,38 @@ Safe sequence once both fixes are in place:
   c. npx drizzle-kit migrate   -> must be a no-op, no SQL executed
 Expect `verify-t037` to still block `db:push`. That block is correct and
 unrelated to this backfill; the real unique index is applied separately.
+
+================================================================================
+MAINTENANCE WINDOW — REQUIRED AROUND THIS RUNBOOK
+================================================================================
+`pnpm run db:push` runs `drizzle-kit generate && drizzle-kit migrate`
+WITHOUT acquiring the `qarar.drizzle_migrations_backfill` advisory
+lock. A concurrent `db:push` can therefore mutate the live
+`__drizzle_migrations` ledger while STEPS 0–3 of this runbook are
+in progress, invalidating the STEP 1 backup and racing the STEP 2
+`NOT EXISTS` check. The lock-acquisition that STEPS 0–3 of THIS
+runbook do cannot block a separate `db:push` invocation; it can
+only block another instance of THIS runbook.
+
+For that reason, the entire STEPS 0–3 flow MUST run during a
+window in which no `db:push` is in progress. The window extends
+from the moment STEP 0 acquires the lock until the moment STEP 3.5
+releases it (or the connection closes). During that window:
+
+  - NO `pnpm run db:push` may be invoked.
+  - NO `drizzle-kit generate` or `drizzle-kit migrate` may be
+    invoked directly either — the same race exists.
+  - NO production deploy that includes a migration may be
+    triggered.
+
+The window in practice is short (a few minutes for the operator
+to paste each block and read the output), but it is a window. If
+`db:push` is invoked during the window, STOP this runbook, wait
+for `db:push` to finish, and start over from STEP 0 (the lock
+will have been released by the now-closed `db:push` connection,
+or by the live deploy connection).
+
+(The deeper fix — wiring the same advisory lock into `db:push`
+itself — is tracked separately. Until that is in place, the
+maintenance window is the operator's protection.)
 ================================================================================
