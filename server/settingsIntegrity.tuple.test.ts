@@ -63,6 +63,25 @@ interface Route {
   columns: string[];
 }
 
+/**
+ * Build a fake mysql2 `Pool` that resolves every `pool.query()` call to
+ * the next matching route, recording every SQL it has seen.
+ *
+ * The fake returns the **tuple** `[rows, fieldPackets]`, not a bare row
+ * array — because that is what mysql2 actually returns for a SELECT, and
+ * a mock that hides that shape is exactly the kind of mock that would
+ * have hidden the original tuple-bug. A test that lets the bug back in
+ * by writing a too-convenient mock is worse than no test.
+ *
+ * @param routes Ordered list of pattern→rows mappings. The pool tries
+ *   them in order; the first regex that matches the incoming SQL wins.
+ *   The order is therefore meaningful and tests must list routes in
+ *   the order the production code issues its queries.
+ * @returns The fake `pool` (suitable for `drizzle(pool)`) and a
+ *   `seen` array of every SQL string the pool has been asked to run,
+ *   useful for asserting that the code under test issued the queries
+ *   the test was written to handle.
+ */
 function makeFakePool(routes: Route[]) {
   const seen: string[] = [];
   const pool = {

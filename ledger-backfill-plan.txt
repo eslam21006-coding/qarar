@@ -77,32 +77,100 @@ CREATE TABLE `__drizzle_migrations_bak_20260721` AS SELECT * FROM `__drizzle_mig
 
 Expected result: success. If it errors with "table already exists", the
 backup was already taken earlier today. BEFORE re-using that backup,
-the operator MUST validate it is the current snapshot of the live
-ledger. Validation, in this order — any failure here means a fresh
-backup is required, NOT a re-use of this one:
+the operator MUST run the four validation checks below IN ORDER. All
+four are mandatory and every one has a copy-paste SQL form so the
+operator can paste and run it as-is.
 
-  (a) The backup must be non-empty (the original "mystery row" should
-      be in it). Empty means someone truncated it; treat as failure
-      and take a fresh backup.
+  Check (a) — backup is non-empty. Empty means someone truncated it;
+  a fresh backup is required, NOT a re-use of this one.
 
-  (b) Every row in the backup must still exist in the live
-      `__drizzle_migrations` table. If a row in the backup has been
-      removed from the live ledger, the backup no longer represents
-      the current state of the bookkeeping — take a fresh backup.
+--------------------------------- COPY BELOW ---------------------------------
+SELECT COUNT(*) AS bak_row_count
+FROM `__drizzle_migrations_bak_20260721`;
+--------------------------------- COPY ABOVE ---------------------------------
+  Expected: bak_row_count >= 1 (typically 1 — the original mystery row).
 
-  (c) For every timestamp STEP 2 is about to insert, that row must
-      be ABSENT from the live `__drizzle_migrations` table. If any
-      of the ten timestamps is already present, the backfill has
-      already happened and STEP 2 would be a no-op. STOP and
-      report — do not run STEP 2 again.
+  Check (b) — every row in the backup is still in the live ledger.
+  If a row has been removed from the live table, the backup pre-dates
+  a deletion and the safe move is a fresh backup.
+
+--------------------------------- COPY BELOW ---------------------------------
+SELECT b.`id`, b.`hash`, b.`created_at`
+FROM `__drizzle_migrations_bak_20260721` b
+LEFT JOIN `__drizzle_migrations` m
+  ON m.`id` = b.`id`
+WHERE m.`id` IS NULL;
+--------------------------------- COPY ABOVE ---------------------------------
+  Expected: zero rows. Anything returned means a backup row is no
+  longer in the live ledger; the backup is STALE — take a fresh one.
+
+  Check (c) — no row was added to the live ledger AFTER the backup
+  was taken. This is the case a one-way "backup ⊆ live" check
+  misses: a concurrent migration could have added rows after STEP 1
+  ran, and re-using the now-stale backup would cause a later
+  ROLLBACK to delete those newer rows. Any unexpected row here means
+  the backup is STALE — take a fresh one.
+
+--------------------------------- COPY BELOW ---------------------------------
+SELECT m.`id`, m.`hash`, m.`created_at`
+FROM `__drizzle_migrations` m
+LEFT JOIN `__drizzle_migrations_bak_20260721` b
+  ON b.`id` = m.`id`
+WHERE b.`id` IS NULL;
+--------------------------------- COPY ABOVE ---------------------------------
+  Expected: zero rows. A non-empty result means rows have been added
+  to the live ledger since the backup; the backup no longer
+  represents the current state. Do NOT re-use it; take a fresh one.
+
+  Check (d) — report which of the ten backfill timestamps are
+  already present in the live ledger. The expected outcome is that
+  ZERO of them are present (in which case STEP 2 will insert all
+  ten), but a partial overlap is FINE: STEP 2's `NOT EXISTS` clause
+  is keyed off the live ledger and will silently skip any already-
+  present timestamps. The procedure below is "report and continue",
+  not "stop and report" — stopping here would prevent the likely
+  case where 0000 already exists and 0001–0009 still need to be
+  inserted (which is exactly the "9 rows affected" path STEP 2
+  already documents).
+
+--------------------------------- COPY BELOW ---------------------------------
+SELECT `created_at`,
+       CASE `created_at`
+         WHEN 1781281837535 THEN '0000_fixed_sasquatch'
+         WHEN 1781282280110 THEN '0001_foamy_ogun'
+         WHEN 1781283386153 THEN '0002_special_speedball'
+         WHEN 1781547396467 THEN '0003_natural_speedball'
+         WHEN 1781548732893 THEN '0004_broken_iron_man'
+         WHEN 1781782080434 THEN '0005_add_better_auth_tables'
+         WHEN 1781798470826 THEN '0006_calm_dagger'
+         WHEN 1782814406325 THEN '0007_goofy_jubilee'
+         WHEN 1782837034281 THEN '0008_warm_amazoness'
+         WHEN 1783972463571 THEN '0009_striped_stark_industries'
+       END AS migration_name
+FROM `__drizzle_migrations`
+WHERE `created_at` IN (
+  1781281837535, 1781282280110, 1781283386153, 1781547396467,
+  1781548732893, 1781782080434, 1781798470826, 1782814406325,
+  1782837034281, 1783972463571
+);
+--------------------------------- COPY ABOVE ---------------------------------
+  Expected: 0 rows (in which case STEP 2 inserts all 10) OR
+  exactly the rows that are already present (typically just 0000
+  in the most common re-run scenario). Report which migrations are
+  present so STEP 2's "10 rows affected" / "9 rows affected" /
+  "8 rows affected" outcome can be cross-checked.
+
+  STOP only when (a), (b), or (c) fails — the backup is stale or
+  damaged. (d) is a report-and-continue, never a stop.
 
 (The runbook intentionally never deletes a backup; that decision
 belongs to a human, after the post-success window has passed. A
 failed validation in (a)–(c) does NOT mean the operator should drop
 the old backup — it means a fresh one is needed alongside it.)
 
-If (a), (b), and (c) all pass, skip to STEP 2 and do NOT run STEP 1
-again.
+If (a), (b), and (c) all pass, skip to STEP 1's CREATE step and do
+NOT run it again. STEP 2 may then proceed; the cross-check from (d)
+predicts how many rows it will affect.
 
 Confirm the backup landed (read-only, safe to run any number of times):
 
@@ -326,37 +394,79 @@ ROLLBACK IS ATOMIC. The earlier wording said "no DELETE statements", but a
 standalone DELETE before the restore INSERT is not safe — if the INSERT
 fails (network drop, lock timeout, anything), the live ledger is left
 empty, which is the worst possible state for `drizzle-kit migrate`. The
-procedure below wraps both writes in a single transaction AND acquires
-a table lock first so a concurrent migration run cannot interleave:
+procedure below wraps both writes in a single transaction so either
+both succeed or neither does, AND uses a MySQL named advisory lock
+(`GET_LOCK`) for cross-session concurrency control.
+
+`LOCK TABLES` is NOT used here because MySQL implicitly commits any
+active transaction when `LOCK TABLES` is issued — that would defeat the
+atomicity this procedure exists to provide. `GET_LOCK` does not have
+that side effect; it is the right tool for cross-connection mutual
+exclusion without disturbing the transaction state.
+
+The procedure is a TWO-PHASE COMMIT-style flow: the destructive writes
+happen inside the transaction, the operator READS the sanity-check
+output, and only then issues a single explicit `COMMIT` or `ROLLBACK`
+based on the observed counts. The transaction guarantees that the
+destructive writes are invisible to other connections until COMMIT,
+so a wrong outcome simply means running ROLLBACK — the live ledger is
+restored to its pre-rollback state.
+
+================================ PHASE 1 — DO THE WRITES ================================
 
 --------------------------------- COPY BELOW ---------------------------------
+-- 1. Cross-connection mutex. Any concurrent migration run also tries
+--    to acquire this lock; the 0 timeout means "fail fast, do not
+--    queue". If got_lock = 0 the operator MUST stop and report.
+SELECT GET_LOCK('qarar.drizzle_migrations_rollback', 0) AS got_lock;
+
+-- 2. Open the single transaction. Everything below until the
+--    COMMIT in phase 2 is one all-or-nothing unit.
 START TRANSACTION;
 
--- Lock both tables for the duration of the transaction so no concurrent
--- migration or `drizzle-kit migrate` run can read or write them while
--- the ledger is being restored. The lock is released on COMMIT/ROLLBACK.
-LOCK TABLES `__drizzle_migrations` WRITE, `__drizzle_migrations_bak_20260721` READ;
+-- 3. Sanity check #1 — record the backup row count.
+SELECT COUNT(*) AS bak_rows
+  FROM `__drizzle_migrations_bak_20260721`;
 
--- Sanity check: the backup must still be there and non-empty. If it has
--- been dropped, tampered with, or is empty, ABORT — the rollback would
--- leave the ledger empty or incomplete, which is exactly the state this
--- procedure exists to avoid.
-SELECT COUNT(*) INTO @bak_rows FROM `__drizzle_migrations_bak_20260721`;
--- If @bak_rows = 0 the operator must stop and ask for guidance;
--- the script below intentionally does not silently continue.
-
--- Single verified transaction: replace the live ledger with the backup
--- in one shot. If the INSERT fails, the DELETE rolls back too.
+-- 4. The destructive writes. If either fails (constraint violation,
+--    lock timeout, network drop) the operator issues ROLLBACK in
+--    phase 2 and the live ledger is unchanged.
 DELETE FROM `__drizzle_migrations`;
-INSERT INTO `__drizzle_migrations` SELECT * FROM `__drizzle_migrations_bak_20260721`;
+INSERT INTO `__drizzle_migrations`
+  SELECT * FROM `__drizzle_migrations_bak_20260721`;
 
--- Verify inside the transaction: the row count must match the backup.
-SELECT COUNT(*) INTO @live_rows FROM `__drizzle_migrations`;
--- If @live_rows <> @bak_rows the operator must stop; do not commit.
-
-UNLOCK TABLES;
-COMMIT;
+-- 5. Sanity check #2 — the live count must match the backup exactly.
+--    The operator reads this BEFORE issuing COMMIT/ROLLBACK.
+SELECT COUNT(*) AS live_rows
+  FROM `__drizzle_migrations`;
 --------------------------------- COPY ABOVE ---------------------------------
+
+================================ PHASE 2 — COMMIT OR ROLLBACK ================================
+
+DO NOT paste phase 2 until you have read the `bak_rows` and `live_rows`
+values from phase 1. They MUST be equal and non-zero. If they are not,
+run the ROLLBACK block (not the COMMIT block). If they are equal and
+non-zero, run the COMMIT block.
+
+TO COMMIT (the safe, correct outcome — bak_rows > 0 AND live_rows = bak_rows):
+
+--------------------------------- COPY BELOW ---------------------------------
+COMMIT;
+SELECT RELEASE_LOCK('qarar.drizzle_migrations_rollback') AS released;
+--------------------------------- COPY ABOVE ---------------------------------
+
+TO ROLLBACK (bak_rows = 0 OR live_rows <> bak_rows — DO NOT COMMIT):
+
+--------------------------------- COPY BELOW ---------------------------------
+ROLLBACK;
+SELECT RELEASE_LOCK('qarar.drizzle_migrations_rollback') AS released;
+--------------------------------- COPY ABOVE ---------------------------------
+
+A failed ROLLBACK means the ledger is in the same state it was before
+phase 1 — no rows were lost. The operator must report the failed check
+(`bak_rows = 0` or `live_rows <> bak_rows`) and stop; do not retry the
+rollback without guidance, since the failure indicates a more serious
+problem (e.g. the backup has been tampered with).
 
 (Keep `__drizzle_migrations_bak_20260721` around for at least a week after a
 successful run, then it can be dropped. The backup table is NEVER
