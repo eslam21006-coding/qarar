@@ -128,7 +128,7 @@ only when the named object exists and matches the description.
       objectId, evaluatedAt) in that order.                             [ ]
 
   0005_add_better_auth_tables   — creates 4 better-auth tables, 2 FKs,
-                                  and 3 indexes (10 statements total)
+                                  and 3 indexes (9 statements total)
       Every statement below must succeed — a partial application
       would be a corrupt 0005 and must NOT be backfilled.
 
@@ -202,7 +202,7 @@ only when the named object exists and matches the description.
       Expected: Type = 'varchar(8)', Null = 'YES'.                       [ ]
 
   0008_warm_amazoness           — creates 2 tables, 1 FK, 6 indexes
-                                  (10 statements total)
+                                  (9 statements total)
 
       SHOW CREATE TABLE `audit_log`\G
       Expected: PRIMARY KEY on `id`, columns include `user_id`,
@@ -237,15 +237,36 @@ only when the named object exists and matches the description.
         WHERE Key_name = 'rate_limit_windowEnd_idx';
       Expected: one row each, total 2 rows across the 2 statements.      [ ]
 
-  0009_striped_stark_industries — five schema changes
-      All five named changes are present (the operator has confirmed
-      these earlier in the diagnosis flow):
-        (1) adAccounts.funnelConfiguredAt                              CONFIRMED
-        (2) funnelSettings.metaAccountId                               CONFIRMED
-        (3) audit_log.event_type enum includes identity_email_merged
-            and funnel_settings_unavailable                            CONFIRMED
-        (4) user.ghl_contact_id is varchar(64)                         CONFIRMED
-        (5) index user_ghlContactId_idx exists                         CONFIRMED
+  0009_striped_stark_industries — five schema changes.
+      The five statements below are the self-contained evidence for
+      0009. The operator runs each one against production and
+      confirms the expected output before ticking the box. A
+      partial application would be a corrupt 0009 and must NOT
+      be backfilled.
+
+      (1) adAccounts has a `funnelConfiguredAt` column.
+      SHOW COLUMNS FROM `adAccounts` LIKE 'funnelConfiguredAt';
+      Expected: one row, Type = 'timestamp', Null = 'YES'.              [ ]
+
+      (2) funnelSettings has a `metaAccountId` column.
+      SHOW COLUMNS FROM `funnelSettings` LIKE 'metaAccountId';
+      Expected: one row, Type = 'varchar(64)', Null = 'YES'.            [ ]
+
+      (3) audit_log.event_type enum includes BOTH 0009 additions.
+      SHOW COLUMNS FROM `audit_log` LIKE 'event_type';
+      Expected: the enum column's Type string contains BOTH
+      'identity_email_merged' AND 'funnel_settings_unavailable'.
+      (The 0008 form is a 9-value enum; 0009 widens it to 11.
+      Either form passes for 0008's evidence; only the 11-value
+      form passes for 0009.)                                            [ ]
+
+      (4) user.ghl_contact_id is varchar(64).
+      SHOW COLUMNS FROM `user` LIKE 'ghl_contact_id';
+      Expected: Type = 'varchar(64)'.                                   [ ]
+
+      (5) index user_ghlContactId_idx exists on `user`.
+      SHOW INDEX FROM `user` WHERE Key_name = 'user_ghlContactId_idx';
+      Expected: one row.                                                [ ]
 
 If ANY box above is not ticked, STOP. Do not run the backfill until the
 operator has gathered the missing evidence and resolved the gap. The
@@ -275,6 +296,25 @@ and STEP 3. The 0 timeout means "fail fast, do not queue".
 The lock name is the SAME for the whole runbook (backfill AND
 rollback), so a backup-then-rollback pair is automatically
 serialised against any other run.
+
+CONNECTION SCOPE — CRITICAL. The lock, the transaction in any
+later block, and the COMMIT/RELEASE_LOCK at the end are all
+CONNECTION-SCOPED. They do not survive a connection close. The
+operator MUST run every block in STEPS 0 through 3.5 (and every
+block in ROLLBACK, if invoked) on ONE persistent MySQL
+connection — the same connection for the whole runbook. If the
+operator is using `webdev_execute_sql` or a similar tool that
+opens a new connection per call, the lock acquired in STEP 0
+will be released as soon as the STEP 0 block returns, and
+STEPS 1–3 will run with no protection. In that case the
+operator MUST use a long-lived SQL execution path (a single
+`mysql` CLI session, or one continuous connection from a
+script) instead of running each block as a fresh call.
+
+If the tool being used CANNOT guarantee one connection across
+all blocks, the operator MUST treat the lock as advisory only
+and rely on the MAINTENANCE WINDOW section to keep uncoordinated
+ledger writers off the database.
 
 --------------------------------- COPY BELOW ---------------------------------
 SELECT GET_LOCK('qarar.drizzle_migrations_backfill', 0) AS got_lock;
@@ -476,6 +516,36 @@ operator or a human reviewer may drop it later, after the
 post-success window, once the new backup has been confirmed
 correct.
 
+================================ ROLLBACK BASELINE — WHICH BACKUP IS THE TRUTH ================================
+
+The ROLLBACK section restores the live ledger from THE ORIGINAL
+PRE-BACKFILL BACKUP, not from any backup created during recovery.
+A backup taken AFTER a partial STEP 2 INSERT (e.g. during a
+recovery flow where the original backup was deemed stale) would
+already contain the partial backfill as a permanent part of its
+contents; restoring from it would lock the partial state in,
+not undo the partial backfill.
+
+Concretely:
+  - The ROLLBACK statement ALWAYS targets the original
+    `__drizzle_migrations_bak_YYYYMMDD` table that was the
+    FIRST backup created on the date of the runbook. The
+    operator MUST identify this backup (the one whose (a)
+    check was originally "non-empty" and whose validation
+    passed) and use it for the ROLLBACK statement.
+  - If recovery created a SECOND backup on a LATER date, that
+    second backup is for INSPECTION and for any FUTURE
+    independent run only. It is NOT a rollback target.
+  - If the original backup is itself damaged or missing, the
+    ROLLBACK CANNOT be performed safely; STOP and report to
+    a human reviewer. There is no automatic fallback to a
+    later-date backup.
+
+The simplest way to keep these straight is to record the name
+of the original backup at the time STEP 1's `SELECT COUNT(*)
+AS backup_row_count` first returned a non-empty result. That
+name is the only valid input to the ROLLBACK section.
+
 Confirm the backup landed (read-only, safe to run any number of times):
 
 --------------------------------- COPY BELOW ---------------------------------
@@ -611,6 +681,14 @@ Expected: recognised_count   = 10
           unrecognised_count = any non-negative number (0, 1, 2, …)
           The unrecognised count is reported back to the team lead for
           the record; it is NOT a defect on its own.
+
+This result MUST match check (d) in STEP 1: the set of timestamps
+listed by check (d) is exactly the set of (created_at, hash) pairs
+this query counts as `recognised_count = 10`. If check (d) reported
+no pre-existing rows and this query reports recognised_count < 10,
+STEP 2's INSERT did not run in full — STOP and report. If check (d)
+reported K pre-existing rows and this query reports recognised_count
+< 10, K rows are missing — STOP and report.
 
 ================================ STEP 3.5 — RELEASE THE WORKFLOW-WIDE LOCK ================================
 
@@ -899,17 +977,23 @@ MAINTENANCE WINDOW — REQUIRED AROUND THIS RUNBOOK
 ================================================================================
 `pnpm run db:push` runs `drizzle-kit generate && drizzle-kit migrate`
 WITHOUT acquiring the `qarar.drizzle_migrations_backfill` advisory
-lock. A concurrent `db:push` can therefore mutate the live
-`__drizzle_migrations` ledger while STEPS 0–3 of this runbook are
-in progress, invalidating the STEP 1 backup and racing the STEP 2
-`NOT EXISTS` check. The lock-acquisition that STEPS 0–3 of THIS
-runbook do cannot block a separate `db:push` invocation; it can
-only block another instance of THIS runbook.
+lock. The lock this runbook acquires (STEP 0 for backfill, the
+GET_LOCK at the top of the ROLLBACK section) ONLY serialises
+cooperating runbook sessions — it cannot block a separate `db:push`
+invocation, a direct `drizzle-kit` call, or any other ledger-
+writing path that does not know the lock name. A concurrent
+ledger writer on an uncoordinated path can therefore mutate
+`__drizzle_migrations` while the runbook is in progress.
 
-For that reason, the entire STEPS 0–3 flow MUST run during a
-window in which no `db:push` is in progress. The window extends
-from the moment STEP 0 acquires the lock until the moment STEP 3.5
-releases it (or the connection closes). During that window:
+For that reason, the entire runbook — backfill (STEPS 0 through
+3.5) AND the ROLLBACK section, including the destructive
+DELETE/INSERT that ROLLBACK performs — MUST run during a window
+in which no uncoordinated ledger writer is active. The window
+extends from the moment the FIRST runbook block (STEP 0 for
+backfill, or the GET_LOCK at the top of ROLLBACK) acquires the
+lock, until the moment the LAST runbook block (STEP 3.5 for
+backfill, or the COMMIT-or-ROLLBACK block at the end of ROLLBACK)
+releases it. During that window:
 
   - NO `pnpm run db:push` may be invoked.
   - NO `drizzle-kit generate` or `drizzle-kit migrate` may be
