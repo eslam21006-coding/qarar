@@ -40,7 +40,19 @@ import {
   findDuplicates,
 } from "../server/settingsIntegrity";
 
+/**
+ * Write one line to stdout. Used for all non-error output so the report
+ * stays readable when piped (`script | less` or `| grep`); every line
+ * ends with a newline so `tail` shows the last entry on its own line.
+ */
 const out = (s = "") => process.stdout.write(s + "\n");
+
+/**
+ * Write one line to stderr. Kept separate from `out` so the on-screen
+ * separation between "what the inspector found" (stdout) and
+ * "what went wrong running the inspector" (stderr) survives a
+ * `2>/dev/null` or `1>/dev/null` redirect.
+ */
 const err = (s: string) => process.stderr.write(s + "\n");
 
 /**
@@ -53,6 +65,13 @@ const err = (s: string) => process.stderr.write(s + "\n");
  * `process.exitCode` instead is only safe if nothing keeps the loop
  * alive — and `getDb()` opens a connection pool that otherwise would.
  * Hence this teardown.
+ */
+/**
+ * The subset of the mysql2 connection-pool interface that the
+ * teardown path actually needs. Declared locally so the script
+ * does not need to import the mysql2 type tree (which has both
+ * promise and callback variants of every method, and a single
+ * declaration cannot cover both without losing type safety).
  */
 interface PoolLike {
   promise?: () => { end: () => Promise<void> };
@@ -107,6 +126,20 @@ async function closeDb(): Promise<void> {
   }
 }
 
+/**
+ * Format an unknown column value for human-readable display in the
+ * report. The output is unambiguous about type (e.g. `Date` and
+ * `Buffer` are tagged alongside their rendered form) so the operator
+ * reading the report cannot mistake a NULL for an empty string, a
+ * missing column for a NULL, or a numeric for a string. JSON
+ * encoding for objects keeps the output line-oriented.
+ *
+ * @param value The column value, typed as `unknown` because the
+ *   underlying mysql2 driver returns each column as whatever the
+ *   server sent; this function must be ready for any of them.
+ * @returns A single-line string with the rendered value and (where
+ *   relevant) an explicit `(Type)` annotation.
+ */
 function fmt(value: unknown): string {
   if (value === null) return "NULL";
   if (value === undefined) return "<undefined — column absent from result>";
@@ -289,6 +322,22 @@ async function main(): Promise<number> {
   // `email`/`contactId` left undefined the run widens from one person to
   // the whole fleet, which is not what someone typing `--email` meant.
   let bad = false;
+  /**
+   * Parse a CLI flag's value, rejecting the case where the user
+   * typed `--email` (no value) or `--email --json` (the next
+   * argument is itself a flag). A missing value is a hard error
+   * because the alternative — falling back to "no filter" — would
+   * silently widen a one-person inspection into a fleet-wide one,
+   * which is never what the operator meant.
+   *
+   * @param flag The flag being parsed (e.g. `"--email"`), used in
+   *   the error message.
+   * @param next The next argv element; undefined or a leading
+   *   `--` both mean "no value was supplied".
+   * @returns The flag's value, or `""` if the value is missing
+   *   (and the bad-flag side effect is recorded on the enclosing
+   *   `bad` variable so the caller aborts).
+   */
   const takeValue = (flag: string, next: string | undefined): string => {
     if (next === undefined || next.startsWith("--")) {
       err(`✗ ${flag} requires a value`);

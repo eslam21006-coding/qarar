@@ -98,6 +98,20 @@ describe("T037 gate — drizzle/schema.ts must not declare the unique index", ()
 // 2. The gate verdict — every branch, including the two BLOCK paths.
 // ---------------------------------------------------------------------------
 
+/**
+ * A shared mock object for `./db.getDb`, hoisted to the top of the
+ * vitest module so the `vi.mock("./db", ...)` factory below can
+ * close over it. Each test that needs a specific behaviour calls
+ * `mocks.getDb.mockResolvedValue(...)` (or `mockResolvedValue(null)`
+ * for the unreachable-DB branch) and the next `await import("./t037Gate")`
+ * will pick up the fresh mock.
+ *
+ * The factory that wraps it is intentionally minimal — only
+ * `getDb` is mocked, because that is the single seam the gate
+ * uses to reach the database. Other named exports of `./db` are
+ * not in this gate's path; if a future change adds one, this
+ * factory must be extended to mock it as well.
+ */
 const mocks = vi.hoisted(() => ({ getDb: vi.fn() }));
 vi.mock("./db", () => ({ getDb: mocks.getDb }));
 

@@ -20,8 +20,25 @@ import { unwrapRows } from "./dbRows";
  * the repair uses to build its plan.
  */
 
+/**
+ * The kind of damage a `DamageFinding` describes.
+ *   - `orphaned` — `funnelSettings.adAccountId` no longer references a
+ *     live `adAccounts` row (the account was deleted, or the row was
+ *     re-keyed to a new account with a different internal id).
+ *   - `stranded` — `funnelSettings.userId` no longer references a
+ *     live `user` row (the user was deleted, or their identity
+ *     drifted and the new identity owns no record yet).
+ *   - `duplicated` — more than one `funnelSettings` row shares the
+ *     same `(userId, adAccountId)` pair.
+ */
 export type DamageFindingKind = "orphaned" | "stranded" | "duplicated";
 
+/**
+ * One row of the diagnostic output. Each finding names the user and
+ * the internal ad-account id the settings row currently references,
+ * plus the stable platform id (the recovery key — see FR-031) so
+ * the repair can decide whether the row is self-attributable.
+ */
 export interface DamageFinding {
   kind: DamageFindingKind;
   userId: string;
@@ -36,6 +53,13 @@ export interface DamageFinding {
   count: number;
 }
 
+/**
+ * The full result of `runDiagnostic` for one person — every user
+ * id that matched the resolution criteria, plus every finding
+ * observed across the three predicates (orphaned / stranded /
+ * duplicated). The caller is expected to render the report
+ * field-by-field; this interface is the canonical contract.
+ */
 export interface DiagnosticReport {
   /** All user ids that matched the resolution criteria. */
   userIds: string[];
