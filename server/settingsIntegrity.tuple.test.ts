@@ -46,6 +46,15 @@ function fieldPackets(names: string[]) {
   return names.map(name => ({ name, type: 253, table: "funnelSettings" }));
 }
 
+/**
+ * One route in the fake mysql2 pool: a SQL pattern paired with the rows
+ * and column names the pool should return when the pattern matches.
+ *
+ * Tests build an array of `Route`s, in the order the production code
+ * issues its queries, and the pool returns them in that same order
+ * regardless of which one the code asks for — a real mysql2 driver
+ * picks by SQL, but here every route is unique by construction.
+ */
 interface Route {
   /** Matched case-insensitively against the generated SQL. */
   match: RegExp;
@@ -311,8 +320,31 @@ describe("unwrapRows handles every shape db.execute() can return", () => {
     expect(unwrapRows({ rows: [{ id: 7 }] })).toEqual([{ id: 7 }]);
   });
 
-  it("returns [] for a non-SELECT ResultSetHeader", () => {
+  it("returns [] for a bare non-SELECT ResultSetHeader", () => {
+    // Defensive: a bare header is a shape mysql2 never actually produces
+    // under `mysql2/promise` (the promise wrapper always resolves a
+    // two-element tuple), but `unwrapRows` must not blow up on it either.
     expect(unwrapRows({ affectedRows: 3, insertId: 9 })).toEqual([]);
+  });
+
+  it("returns [] for the [ResultSetHeader, undefined] mutation tuple", () => {
+    // The actual shape `mysql2/promise` resolves for an INSERT/UPDATE/DELETE
+    // (see node_modules/mysql2/lib/promise/make_done_cb.js: `resolve([rows, fields])`
+    // — fields is `undefined` for a non-SELECT). Before this case was added
+    // the helper returned the tuple verbatim, which would later be iterated
+    // as two "rows" by any caller that forgot to unwrap. The tuple has no
+    // rows; the helper must say so.
+    const header = { affectedRows: 3, insertId: 9 };
+    expect(unwrapRows([header, undefined])).toEqual([]);
+  });
+
+  it("returns [] for a [ResultSetHeader, fields[]] mutation tuple", () => {
+    // Same shape, but with a populated fields slot (some mysql2 builds do
+    // emit a non-undefined value there). The presence or absence of fields
+    // must not change the verdict: this is a non-SELECT, no rows.
+    const header = { affectedRows: 1, insertId: 42 };
+    const fields = [{ name: "affectedRows" }];
+    expect(unwrapRows([header, fields])).toEqual([]);
   });
 
   it("returns [] for null / undefined", () => {

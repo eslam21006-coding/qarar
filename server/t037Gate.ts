@@ -17,8 +17,22 @@ import { sql } from "drizzle-orm";
 import { getDb } from "./db";
 import { unwrapRows } from "./dbRows";
 
+/**
+ * The name of the unique index the T037 gate exists to protect.
+ *
+ * The constraint lives only in `drizzle/0010_settings_unique_index.sql`
+ * (deliberately absent from `drizzle/meta/_journal.json`) and is
+ * applied by hand after the diagnose → repair → verify-clean cycle
+ * has run. The gate's `db:push` script (T037) refuses to proceed
+ * until this index is in place on a non-empty table.
+ */
 export const UNIQUE_INDEX_NAME = "uq_funnelSettings_user_account";
 
+/**
+ * The reason the gate returned the verdict it did. One value per
+ * branch of `evaluateT037Gate`, including the two BLOCK branches that
+ * existed as prose before the gate was tested end-to-end.
+ */
 export type GateReason =
   | "skipped_by_env"
   | "index_exists"
@@ -26,6 +40,12 @@ export type GateReason =
   | "db_unreachable"
   | "rows_without_index";
 
+/**
+ * The verdict returned by `evaluateT037Gate`. `code` is the process
+ * exit code the caller should use; `allow` is a friendlier boolean
+ * for callers that don't need a numeric code; `reason` and `message`
+ * are the operator-facing explanation.
+ */
 export type GateVerdict = {
   /** Process exit code the caller should use. 0 = allow, 2 = block. */
   code: 0 | 2;

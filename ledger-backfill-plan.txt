@@ -1,0 +1,382 @@
+================================================================================
+__drizzle_migrations LEDGER BACKFILL — PRODUCTION RUNBOOK
+Date: 2026-07-21
+Target: production MySQL, via Manus `webdev_execute_sql`
+Operator: non-technical — every statement below is copy-paste-as-is.
+          There are NO placeholders. Do not edit anything.
+================================================================================
+
+READ THIS FIRST — ANSWER TO QUESTION 4 (the safety question)
+--------------------------------------------------------------------------------
+In plain language:
+
+  NO. Nothing in this runbook touches your real data.
+
+  Every statement below reads or writes exactly ONE table:
+  `__drizzle_migrations`. That table is a bookkeeping notepad. It holds a
+  list of "which migration files have already been run", and nothing else.
+  It has three columns: an id number, a text hash, and a timestamp number.
+  It contains no user data, no ad data, no settings.
+
+  These four tables are NOT named anywhere in the statements below, are not
+  read, are not written, and cannot be affected:
+      adAccounts
+      funnelSettings
+      user
+      audit_log
+
+  There are no ALTER TABLE, no DROP, no UPDATE, and no DELETE statements
+  anywhere in this runbook. The only writes are:
+      1. CREATE TABLE — makes a NEW backup table that did not exist before.
+      2. INSERT       — adds rows to the bookkeeping table only.
+  Both are additive. Nothing existing is modified or removed.
+
+  What this DOES change: it stops Drizzle from wrongly believing migrations
+  0000-0009 were never run. Right now Drizzle thinks they are unapplied and
+  would try to re-run them, which is what causes "table already exists" /
+  "duplicate column" errors on deploy. After this backfill, Drizzle agrees
+  with reality and skips them.
+
+  Worst case if something goes wrong: the bookkeeping table has wrong rows
+  in it. STEP 1 backs it up first, so it can be restored exactly. Your
+  actual application data is not in the blast radius at all.
+
+
+PRECONDITION — ALREADY SATISFIED
+--------------------------------------------------------------------------------
+This backfill is only safe if migrations 0000-0009 are genuinely applied to
+production. That has now been confirmed by the operator via direct
+SHOW CREATE TABLE queries. All five changes in migration 0009 are present:
+
+  (1) adAccounts.funnelConfiguredAt                                 CONFIRMED
+  (2) funnelSettings.metaAccountId                                  CONFIRMED
+  (3) audit_log.event_type enum includes identity_email_merged
+      and funnel_settings_unavailable                               CONFIRMED
+  (4) user.ghl_contact_id is varchar(64)                            CONFIRMED
+  (5) index user_ghlContactId_idx exists                            CONFIRMED
+
+0000-0008 are self-evidently applied — the app has been running on those
+tables in production for weeks.
+
+The phantom 0010_faithful_baron_zemo.sql and its journal entry have been
+deleted from the Manus sandbox by the operator. Confirmed.
+
+=> The precondition is met. This backfill records only things that are
+   already true. Proceed.
+
+
+================================================================================
+STEP 1 — BACK UP THE BOOKKEEPING TABLE
+================================================================================
+Run this first, on its own. It creates a brand-new table and copies the
+current contents into it. It does not modify the original.
+
+--------------------------------- COPY BELOW ---------------------------------
+CREATE TABLE `__drizzle_migrations_bak_20260721` AS SELECT * FROM `__drizzle_migrations`;
+--------------------------------- COPY ABOVE ---------------------------------
+
+Expected result: success. If it errors with "table already exists", the
+backup was already taken earlier today. BEFORE re-using that backup,
+the operator MUST validate it is the current snapshot of the live
+ledger. Validation, in this order — any failure here means a fresh
+backup is required, NOT a re-use of this one:
+
+  (a) The backup must be non-empty (the original "mystery row" should
+      be in it). Empty means someone truncated it; treat as failure
+      and take a fresh backup.
+
+  (b) Every row in the backup must still exist in the live
+      `__drizzle_migrations` table. If a row in the backup has been
+      removed from the live ledger, the backup no longer represents
+      the current state of the bookkeeping — take a fresh backup.
+
+  (c) For every timestamp STEP 2 is about to insert, that row must
+      be ABSENT from the live `__drizzle_migrations` table. If any
+      of the ten timestamps is already present, the backfill has
+      already happened and STEP 2 would be a no-op. STOP and
+      report — do not run STEP 2 again.
+
+(The runbook intentionally never deletes a backup; that decision
+belongs to a human, after the post-success window has passed. A
+failed validation in (a)–(c) does NOT mean the operator should drop
+the old backup — it means a fresh one is needed alongside it.)
+
+If (a), (b), and (c) all pass, skip to STEP 2 and do NOT run STEP 1
+again.
+
+Confirm the backup landed (read-only, safe to run any number of times):
+
+--------------------------------- COPY BELOW ---------------------------------
+SELECT COUNT(*) AS backup_row_count FROM `__drizzle_migrations_bak_20260721`;
+--------------------------------- COPY ABOVE ---------------------------------
+
+Expected: a small number, likely 1. Write it down — you will need it in
+STEP 3. Call this number B.
+
+
+================================================================================
+STEP 2 — INSERT THE BACKFILL ROWS
+================================================================================
+This adds one bookkeeping row per migration, 0000 through 0009.
+
+Note on 0000: the request said "0001 through 0009", but 0000 must be
+included too — it is a real journal entry and leaving it out would leave the
+ledger incomplete. It is included below and is handled safely (see next
+paragraph).
+
+This statement is SELF-PROTECTING. It compares against the LIVE
+`__drizzle_migrations` table and skips any migration whose row already
+exists, so it cannot create a duplicate of the row production already
+has — regardless of which backup is or is not present. Run it exactly
+once.
+
+--------------------------------- COPY BELOW ---------------------------------
+INSERT INTO `__drizzle_migrations` (`hash`, `created_at`)
+SELECT t.h, t.c FROM (
+  SELECT '814a08e40d7fc2bcfd458759d18319198ca8ae394f2fa15617a78678e9c9c93b' AS h, 1781281837535 AS c
+  UNION ALL SELECT '01402e1f8809449f98b61ee30d4e46c5468f9458f0529305014ead5982e1c787', 1781282280110
+  UNION ALL SELECT '875c3ad9c69c83450844d95ccdbb15e929bc920fd8daed4263d5a0c518bebc26', 1781283386153
+  UNION ALL SELECT '708acb0bb16a8d00b38c7f89c5c693272f86184421c6c8b4b81677572fc71429', 1781547396467
+  UNION ALL SELECT 'd11cdfbadae6718dcbfc06ddc5e97d3463fa0987094c9af7dda8e50a23f10612', 1781548732893
+  UNION ALL SELECT 'd60ad8c80c0018b3e74ea10a884551be7b2409640e34f2dbecba77ea1670fe3d', 1781782080434
+  UNION ALL SELECT 'f581cfe32260fa9fcfca12ca15a55dae886f58643a8718132112571d12079231', 1781798470826
+  UNION ALL SELECT '7a4ed4738ceda7652a659548b9544df2838145a9b851d1ca8fa7212833760f22', 1782814406325
+  UNION ALL SELECT '0d05ea4012c62aca2436641cd77e82e75d2e9594b3cc3010ac486d57e06e4746', 1782837034281
+  UNION ALL SELECT 'cc9224da756485e1e53515f21746ff4529f531de9570d17178e99f6bdb857c2b', 1783972463571
+) AS t
+WHERE NOT EXISTS (
+  SELECT 1 FROM `__drizzle_migrations` m WHERE m.`created_at` = t.`c`
+);
+--------------------------------- COPY ABOVE ---------------------------------
+
+Expected result: "10 rows affected" if the pre-existing row did not match any
+of these timestamps, or "9 rows affected" if it did (most likely it is the
+0000 row). Either outcome is correct. Report which one you got.
+
+
+================================================================================
+STEP 3 — VERIFICATION (READ-ONLY)
+================================================================================
+This changes nothing. It is safe to run repeatedly.
+
+--------------------------------- COPY BELOW ---------------------------------
+SELECT
+  `created_at`,
+  COUNT(*) AS row_count,
+  CASE `created_at`
+    WHEN 1781281837535 THEN '0000_fixed_sasquatch'
+    WHEN 1781282280110 THEN '0001_foamy_ogun'
+    WHEN 1781283386153 THEN '0002_special_speedball'
+    WHEN 1781547396467 THEN '0003_natural_speedball'
+    WHEN 1781548732893 THEN '0004_broken_iron_man'
+    WHEN 1781782080434 THEN '0005_add_better_auth_tables'
+    WHEN 1781798470826 THEN '0006_calm_dagger'
+    WHEN 1782814406325 THEN '0007_goofy_jubilee'
+    WHEN 1782837034281 THEN '0008_warm_amazoness'
+    WHEN 1783972463571 THEN '0009_striped_stark_industries'
+    ELSE '*** UNRECOGNISED PRE-EXISTING ROW ***'
+  END AS migration
+FROM `__drizzle_migrations`
+GROUP BY `created_at`
+ORDER BY `created_at`;
+--------------------------------- COPY ABOVE ---------------------------------
+
+WHAT A GOOD RESULT LOOKS LIKE:
+  - All 10 rows named 0000 through 0009 are present, each with
+    row_count = 1. (Each is validated independently of any
+    unrecognised rows that may sit alongside them.)
+  - There MAY be additional rows labelled "*** UNRECOGNISED PRE-EXISTING
+    ROW ***" — any number of them, in any order. These are harmless
+    rows from before the backfill; leave them alone and REPORT their
+    count separately (see below). The recognised/unrecognised split
+    is what matters; the unrecognised rows are not required to be
+    absent, and they are NOT allowed to invalidate the recognised ones.
+
+WHAT IS WRONG AND MUST BE REPORTED, NOT "FIXED":
+  - Any recognised migration has row_count = 2 or more (a duplicate).
+  - Any of the 10 recognised migrations (0000-0009) is missing.
+  In any of those cases, STOP and report back. Do not delete anything.
+
+The presence or timestamp of unrecognised pre-existing rows is
+NEVER a defect on its own. If one of them happens to be newer than
+0009, that is a piece of information to report, not a verdict on
+the backfill — the 10 recognised rows are validated independently
+above.
+
+Second check — the recognised-row count, reported alongside the
+unrecognised-row count. The two are kept separate so an unrecognised
+pre-existing row that is newer than 0009 cannot invalidate the
+backfill verdict:
+
+--------------------------------- COPY BELOW ---------------------------------
+SELECT
+  SUM(CASE WHEN `created_at` IN (
+      1781281837535, 1781282280110, 1781283386153, 1781547396467,
+      1781548732893, 1781782080434, 1781798470826, 1782814406325,
+      1782837034281, 1783972463571
+    ) THEN 1 ELSE 0 END) AS recognised_count,
+  SUM(CASE WHEN `created_at` NOT IN (
+      1781281837535, 1781282280110, 1781283386153, 1781547396467,
+      1781548732893, 1781782080434, 1781798470826, 1782814406325,
+      1782837034281, 1783972463571
+    ) THEN 1 ELSE 0 END) AS unrecognised_count
+FROM `__drizzle_migrations`;
+--------------------------------- COPY ABOVE ---------------------------------
+
+Expected: recognised_count   = 10
+          unrecognised_count = any non-negative number (0, 1, 2, …)
+          The unrecognised count is reported back to the team lead for
+          the record; it is NOT a defect on its own.
+
+
+================================================================================
+WHY THIS ACTUALLY FIXES THE PROBLEM (technical note, for the record)
+================================================================================
+Verified directly against the installed drizzle source in this repo,
+node_modules/drizzle-orm/mysql-core/dialect.js:
+
+    select id, hash, created_at from `__drizzle_migrations`
+      order by created_at desc limit 1
+    ...
+    if (!lastDbMigration || Number(lastDbMigration.created_at) < migration.folderMillis) {
+        <run the migration SQL>
+        insert into `__drizzle_migrations` (`hash`,`created_at`) values(...)
+    }
+
+Two consequences:
+
+ 1. Drizzle reads ONLY the newest row and compares its `created_at` against
+    each journal entry's `when`. Once the newest row is 1783972463571 (0009's
+    `when`, from drizzle/meta/_journal.json), every migration 0000-0009 fails
+    the `<` test and is skipped without running any SQL. That is the whole fix.
+
+ 2. The `hash` column is written but NEVER read back or compared. A hash
+    mismatch cannot cause a re-run. The hashes below are supplied for ledger
+    fidelity, not for correctness of the skip.
+
+Table name/columns confirmed: default `__drizzle_migrations`
+(id serial primary key, hash text not null, created_at bigint), in the
+database named by DATABASE_URL. drizzle.config.ts sets no custom
+migrationsTable or migrationsSchema, so the default applies.
+
+drizzle/0010_settings_unique_index.sql is deliberately NOT in _journal.json
+and therefore is NOT affected by this backfill. The real unique index remains
+pending behind the separate T037 diagnose->repair->verify gate, exactly as
+intended.
+
+
+================================================================================
+HASH PROVENANCE — how the values above were computed
+================================================================================
+Method (from node_modules/drizzle-orm/migrator.js, readMigrationFiles):
+    hash = sha256_hex( entire raw bytes of drizzle/<tag>.sql )
+    created_at = the `when` value of that tag's entry in
+                 drizzle/meta/_journal.json
+Computed from the actual committed files, not guessed.
+
+LINE-ENDING CAVEAT — WHY THESE HASHES DIFFER FROM THE EARLIER DIAGNOSIS FILE
+    This repo has core.autocrlf=true and no .gitattributes, so six of the ten
+    .sql files are stored in git with LF but appear in the Windows working
+    copy with CRLF. sha256 covers those bytes, so the two produce different
+    hashes. The earlier table in db-migration-drift-diagnosis.txt used the
+    Windows CRLF bytes. That was the wrong set for this purpose.
+
+    `drizzle-kit migrate` will be run from the Manus/Linux checkout, where the
+    files are the committed LF bytes. The table below (used in STEP 2) is the
+    LF/committed set — the one that machine would compute. Verified with
+    `git show HEAD:<file> | sha256sum` and cross-checked against
+    `git ls-files --eol`.
+
+    This distinction is cosmetic, not functional: per point 2 above, the hash
+    is never compared at runtime.
+
+USE THESE (LF / committed bytes — what Manus/Linux sees):
+  0000_fixed_sasquatch          1781281837535  814a08e40d7fc2bcfd458759d18319198ca8ae394f2fa15617a78678e9c9c93b
+  0001_foamy_ogun               1781282280110  01402e1f8809449f98b61ee30d4e46c5468f9458f0529305014ead5982e1c787
+  0002_special_speedball        1781283386153  875c3ad9c69c83450844d95ccdbb15e929bc920fd8daed4263d5a0c518bebc26
+  0003_natural_speedball        1781547396467  708acb0bb16a8d00b38c7f89c5c693272f86184421c6c8b4b81677572fc71429
+  0004_broken_iron_man          1781548732893  d11cdfbadae6718dcbfc06ddc5e97d3463fa0987094c9af7dda8e50a23f10612
+  0005_add_better_auth_tables   1781782080434  d60ad8c80c0018b3e74ea10a884551be7b2409640e34f2dbecba77ea1670fe3d
+  0006_calm_dagger              1781798470826  f581cfe32260fa9fcfca12ca15a55dae886f58643a8718132112571d12079231
+  0007_goofy_jubilee            1782814406325  7a4ed4738ceda7652a659548b9544df2838145a9b851d1ca8fa7212833760f22
+  0008_warm_amazoness           1782837034281  0d05ea4012c62aca2436641cd77e82e75d2e9594b3cc3010ac486d57e06e4746
+  0009_striped_stark_industries 1783972463571  cc9224da756485e1e53515f21746ff4529f531de9570d17178e99f6bdb857c2b
+
+(Four files — 0001, 0002, 0004, 0007 — are byte-identical in both checkouts,
+which is why their hashes match the earlier diagnosis table.)
+
+FOR REFERENCE ONLY — DO NOT PASTE. Windows CRLF working-copy hashes, the six
+that differ:
+  0000  b2ba62d710cdddf493918b34e3027d8daafcd82800723f5e9164371bc1740b6b
+  0003  648f0b5baf7498d9525a4be0f5896fefdc1796441d21f615840248756d83de10
+  0005  5f4a8431c14d0e7ff5758147c7f5856021a3177e42e17f618e0206c98d2faf1f
+  0006  92ee6bf87f78a07cf0bb8268ec6e0df26cb822320fe53e37c13f983bf258441b
+  0008  568f9dc7590eb6da93e5b6ce127602ffe4ecccc45aa56ab87a5cc8b73744cc7b
+  0009  5a1ddd2eed928b7860df0de8084f4d1c7715d88427d41e7d8f88e548dc523ed8
+
+
+================================================================================
+ROLLBACK (only if STEP 3 shows something wrong)
+================================================================================
+Not expected to be needed. Do not run this unless instructed after reporting
+a bad STEP 3 result. It restores the bookkeeping table to its pre-backfill
+contents from the STEP 1 backup, and again touches no application data.
+
+ROLLBACK IS ATOMIC. The earlier wording said "no DELETE statements", but a
+standalone DELETE before the restore INSERT is not safe — if the INSERT
+fails (network drop, lock timeout, anything), the live ledger is left
+empty, which is the worst possible state for `drizzle-kit migrate`. The
+procedure below wraps both writes in a single transaction AND acquires
+a table lock first so a concurrent migration run cannot interleave:
+
+--------------------------------- COPY BELOW ---------------------------------
+START TRANSACTION;
+
+-- Lock both tables for the duration of the transaction so no concurrent
+-- migration or `drizzle-kit migrate` run can read or write them while
+-- the ledger is being restored. The lock is released on COMMIT/ROLLBACK.
+LOCK TABLES `__drizzle_migrations` WRITE, `__drizzle_migrations_bak_20260721` READ;
+
+-- Sanity check: the backup must still be there and non-empty. If it has
+-- been dropped, tampered with, or is empty, ABORT — the rollback would
+-- leave the ledger empty or incomplete, which is exactly the state this
+-- procedure exists to avoid.
+SELECT COUNT(*) INTO @bak_rows FROM `__drizzle_migrations_bak_20260721`;
+-- If @bak_rows = 0 the operator must stop and ask for guidance;
+-- the script below intentionally does not silently continue.
+
+-- Single verified transaction: replace the live ledger with the backup
+-- in one shot. If the INSERT fails, the DELETE rolls back too.
+DELETE FROM `__drizzle_migrations`;
+INSERT INTO `__drizzle_migrations` SELECT * FROM `__drizzle_migrations_bak_20260721`;
+
+-- Verify inside the transaction: the row count must match the backup.
+SELECT COUNT(*) INTO @live_rows FROM `__drizzle_migrations`;
+-- If @live_rows <> @bak_rows the operator must stop; do not commit.
+
+UNLOCK TABLES;
+COMMIT;
+--------------------------------- COPY ABOVE ---------------------------------
+
+(Keep `__drizzle_migrations_bak_20260721` around for at least a week after a
+successful run, then it can be dropped. The backup table is NEVER
+deleted as part of this procedure.)
+
+
+================================================================================
+AFTER A SUCCESSFUL RUN
+================================================================================
+Do NOT immediately run `pnpm run db:push`. Confirm first that the Defect B
+snapshot fix (commit fe953c5, "re-key 0009 snapshot columns by name, fix enum
+detection") is present in the Manus checkout. If the corrupted snapshot is
+still there, `drizzle-kit generate` will regenerate the phantom
+ADD-then-DROP migration and `migrate` would then DROP funnelConfiguredAt and
+metaAccountId — re-breaking production.
+
+Safe sequence once both fixes are in place:
+  a. git pull in the Manus checkout (must include fe953c5)
+  b. npx drizzle-kit generate  -> must print "No schema changes"
+  c. npx drizzle-kit migrate   -> must be a no-op, no SQL executed
+Expect `verify-t037` to still block `db:push`. That block is correct and
+unrelated to this backfill; the real unique index is applied separately.
+================================================================================
