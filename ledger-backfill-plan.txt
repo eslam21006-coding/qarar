@@ -69,42 +69,171 @@ ran. The operator runs each row's SHOW statement against production
 and ticks the "CONFIRMED" column. A migration is "evidence-confirmed"
 only when the named object exists and matches the description.
 
-  0000_fixed_sasquatch          — creates table `user` (initial schema)
+  0000_fixed_sasquatch          — creates table `users` (initial schema)
+      SHOW CREATE TABLE `users`\G
+      Expected: PRIMARY KEY on `id`, UNIQUE on `openId`, columns
+      include `name`, `email`, `loginMethod`, `role`, `createdAt`,
+      `updatedAt`, `lastSignedIn`.                                      [ ]
+
+  0001_foamy_ogun               — creates 5 tables
+      The operator MUST run all five `SHOW CREATE TABLE` statements
+      below and confirm the named columns are present in each:
+
+      SHOW CREATE TABLE `actionChecks`\G
+      Expected: PRIMARY KEY on `id`, columns include `userId`,
+      `adAccountId`, `actionKey`, `done`, `day`, `createdAt`,
+      `updatedAt`.                                                     [ ]
+
+      SHOW CREATE TABLE `adAccounts`\G
+      Expected: PRIMARY KEY on `id`, columns include `userId`,
+      `connectionId`, `accountId`, `name`, `currency`,
+      `accountStatus`, `selected`, `isDemo`, `createdAt`,
+      `updatedAt`.                                                     [ ]
+
+      SHOW CREATE TABLE `funnelSettings`\G
+      Expected: PRIMARY KEY on `id`, columns include `userId`,
+      `adAccountId`, `archetype`, `liveComponent`, `offerDescription`,
+      `ticketPrice`, `aov`, `htoPrice`, `htoConversionRate`,
+      `frontEndRoas`, `dailyBudget`, `marketCplBenchmark`, `arena`,
+      `bestInterest`, `geoTiers`, `lastReviewedAt`, `createdAt`,
+      `updatedAt`.                                                     [ ]
+
+      SHOW CREATE TABLE `metaConnections`\G
+      Expected: PRIMARY KEY on `id`, UNIQUE on `userId`, columns
+      include `fbUserId`, `fbUserName`, `encryptedToken`,
+      `tokenExpiresAt`, `scopes`, `status`, `createdAt`,
+      `updatedAt`.                                                     [ ]
+
+      SHOW CREATE TABLE `snapshots`\G
+      Expected: PRIMARY KEY on `id`, columns include `userId`,
+      `adAccountId`, `payload`, `status`, `errorMessage`,
+      `fetchedAt`, `createdAt`.                                        [ ]
+
+  0002_special_speedball        — adds column to `funnelSettings`
+      SHOW CREATE TABLE `funnelSettings`\G
+      Expected: column `htoUnderperforming` is present
+      (boolean, NOT NULL, default false).                               [ ]
+
+  0003_natural_speedball        — creates `verdictHistory`
+      SHOW CREATE TABLE `verdictHistory`\G
+      Expected: PRIMARY KEY on `id`, columns include `userId`,
+      `adAccountId`, `objectId`, `objectName`, `level`, `verdict`,
+      `rule`, `cpa`, `spend3d`, `ctrLink`, `evaluatedAt`.               [ ]
+
+  0004_broken_iron_man          — creates index on `verdictHistory`
+      SHOW INDEX FROM `verdictHistory`
+      WHERE Key_name = 'idx_verdictHistory_user_account_object'\G
+      Expected: index exists on columns (userId, adAccountId,
+      objectId, evaluatedAt) in that order.                             [ ]
+
+  0005_add_better_auth_tables   — creates 4 better-auth tables, 2 FKs,
+                                  and 3 indexes (10 statements total)
+      Every statement below must succeed — a partial application
+      would be a corrupt 0005 and must NOT be backfilled.
+
+      SHOW CREATE TABLE `account`\G
+      Expected: PRIMARY KEY on `id`, columns include `account_id`,
+      `provider_id`, `user_id`, `access_token`, `refresh_token`,
+      `id_token`, `access_token_expires_at`,
+      `refresh_token_expires_at`, `scope`, `password`, `created_at`,
+      `updated_at`.                                                    [ ]
+
+      SHOW CREATE TABLE `session`\G
+      Expected: PRIMARY KEY on `id`, UNIQUE on `token`, columns
+      include `expires_at`, `created_at`, `updated_at`, `ip_address`,
+      `user_agent`, `user_id`.                                         [ ]
+
       SHOW CREATE TABLE `user`\G
-      Expected: PRIMARY KEY on `id`, columns include `openId`,
-      `email`, `name`, `ghlContactId`.                                  [ ]
+      Expected: PRIMARY KEY on `id`, UNIQUE on `email`, columns
+      include `name`, `email_verified`, `image`, `created_at`,
+      `updated_at`, `subscription_status`, `ghl_contact_id`, `role`.   [ ]
 
-  0001_foamy_ogun               — alters `user` (adds columns / indexes)
-      SHOW CREATE TABLE `user`\G
-      Expected: confirms 0001's named column and/or index additions.   [ ]
+      SHOW CREATE TABLE `verification`\G
+      Expected: PRIMARY KEY on `id`, columns include `identifier`,
+      `value`, `expires_at`, `created_at`, `updated_at`.                [ ]
 
-  0002_special_speedball        — alters `user` (additional columns)
-      SHOW CREATE TABLE `user`\G
-      Expected: confirms 0002's named column and/or index additions.   [ ]
+      SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'account'
+          AND CONSTRAINT_NAME = 'account_user_id_user_id_fk';
+      Expected: one row.                                              [ ]
 
-  0003_natural_speedball        — alters `user`
-      SHOW CREATE TABLE `user`\G
-      Expected: confirms 0003's named column and/or index additions.   [ ]
+      SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'session'
+          AND CONSTRAINT_NAME = 'session_user_id_user_id_fk';
+      Expected: one row.                                              [ ]
 
-  0004_broken_iron_man          — alters `user`
-      SHOW CREATE TABLE `user`\G
-      Expected: confirms 0004's named column and/or index additions.   [ ]
+      SHOW INDEX FROM `account` WHERE Key_name = 'account_userId_idx';
+      Expected: one row.                                              [ ]
 
-  0005_add_better_auth_tables   — creates `better_auth` tables
-      SHOW TABLES LIKE 'better_auth%';
-      Expected: at least one row (the set of tables 0005 created).     [ ]
+      SHOW INDEX FROM `session` WHERE Key_name = 'session_userId_idx';
+      Expected: one row.                                              [ ]
 
-  0006_calm_dagger              — alters `user` or `better_auth`
-      SHOW CREATE TABLE `<table 0006 touches>`\G
-      Expected: confirms 0006's named column and/or index additions.   [ ]
+      SHOW INDEX FROM `verification`
+        WHERE Key_name = 'verification_identifier_idx';
+      Expected: one row.                                              [ ]
 
-  0007_goofy_jubilee            — creates or alters a table
-      SHOW CREATE TABLE `<table 0007 touches>`\G
-      Expected: confirms 0007's named column and/or index additions.   [ ]
+  0006_calm_dagger              — widens `userId` to varchar(36) on
+                                  6 tables
+      For every table below, `userId` MUST be `varchar(36) NOT NULL`:
 
-  0008_warm_amazoness           — creates or alters a table
-      SHOW CREATE TABLE `<table 0008 touches>`\G
-      Expected: confirms 0008's named column and/or index additions.   [ ]
+      SHOW COLUMNS FROM `actionChecks` LIKE 'userId';
+      Expected: Type = 'varchar(36)', Null = 'NO'.                       [ ]
+
+      SHOW COLUMNS FROM `adAccounts` LIKE 'userId';
+      Expected: Type = 'varchar(36)', Null = 'NO'.                       [ ]
+
+      SHOW COLUMNS FROM `funnelSettings` LIKE 'userId';
+      Expected: Type = 'varchar(36)', Null = 'NO'.                       [ ]
+
+      SHOW COLUMNS FROM `metaConnections` LIKE 'userId';
+      Expected: Type = 'varchar(36)', Null = 'NO'.                       [ ]
+
+      SHOW COLUMNS FROM `snapshots` LIKE 'userId';
+      Expected: Type = 'varchar(36)', Null = 'NO'.                       [ ]
+
+      SHOW COLUMNS FROM `verdictHistory` LIKE 'userId';
+      Expected: Type = 'varchar(36)', Null = 'NO'.                       [ ]
+
+  0007_goofy_jubilee            — adds `inputCurrency` to `funnelSettings`
+      SHOW COLUMNS FROM `funnelSettings` LIKE 'inputCurrency';
+      Expected: Type = 'varchar(8)', Null = 'YES'.                       [ ]
+
+  0008_warm_amazoness           — creates 2 tables, 1 FK, 6 indexes
+                                  (10 statements total)
+
+      SHOW CREATE TABLE `audit_log`\G
+      Expected: PRIMARY KEY on `id`, columns include `user_id`,
+      `email`, `event_type` (with the original 9-value enum:
+      signup/login/logout/email_verified/password_reset_requested/
+      password_reset_completed/password_changed/login_failed/
+      account_created), `status`, `ip_address`, `user_agent`,
+      `details`, `created_at`. 0009 later widens the enum;
+      0008's evidence is the ORIGINAL 9 values.                         [ ]
+
+      SHOW CREATE TABLE `rate_limit_log`\G
+      Expected: PRIMARY KEY on `id`, columns include `email`,
+      `action`, `request_count`, `window_start`, `window_end`,
+      `created_at`, `updated_at`.                                       [ ]
+
+      SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'audit_log'
+          AND CONSTRAINT_NAME = 'audit_log_user_id_user_id_fk';
+      Expected: one row.                                                [ ]
+
+      SHOW INDEX FROM `audit_log` WHERE Key_name = 'audit_log_userId_idx';
+      SHOW INDEX FROM `audit_log` WHERE Key_name = 'audit_log_email_idx';
+      SHOW INDEX FROM `audit_log` WHERE Key_name = 'audit_log_eventType_idx';
+      SHOW INDEX FROM `audit_log` WHERE Key_name = 'audit_log_createdAt_idx';
+      Expected: one row each, total 4 rows across the 4 statements.      [ ]
+
+      SHOW INDEX FROM `rate_limit_log`
+        WHERE Key_name = 'rate_limit_email_action_idx';
+      SHOW INDEX FROM `rate_limit_log`
+        WHERE Key_name = 'rate_limit_windowEnd_idx';
+      Expected: one row each, total 2 rows across the 2 statements.      [ ]
 
   0009_striped_stark_industries — five schema changes
       All five named changes are present (the operator has confirmed
@@ -247,18 +376,27 @@ WHERE b.`id` IS NULL
   represents the current state. Do NOT re-use it; take a fresh one.
 
   Check (d) — report which of the ten backfill timestamps are
-  already present in the live ledger. The expected outcome is that
-  ZERO of them are present (in which case STEP 2 will insert all
-  ten), but a partial overlap is FINE: STEP 2's `NOT EXISTS` clause
-  is keyed off the live ledger and will silently skip any already-
-  present timestamps. The procedure below is "report and continue",
-  not "stop and report" — stopping here would prevent the likely
-  case where 0000 already exists and 0001–0009 still need to be
-  inserted (which is exactly the "9 rows affected" path STEP 2
-  already documents).
+  already present in the live ledger AND verify that the existing
+  rows have the EXPECTED hash for their timestamp. A row with a
+  recognised timestamp but the WRONG hash means the recorded
+  migration does not match the file in the repo, which is exactly
+  the "ledger says 0009 ran but the live code is a different 0009"
+  failure mode the backfill is meant to prevent. The expected
+  outcome is that ZERO recognised rows are present (in which case
+  STEP 2 will insert all ten), but a partial overlap is FINE so
+  long as the existing rows have the expected hash: STEP 2's
+  `NOT EXISTS` clause is keyed off the live ledger and will
+  silently skip any already-present (and hash-verified)
+  timestamps. The procedure below is "report and continue" on a
+  PASS, "stop and report" on a hash mismatch.
 
 --------------------------------- COPY BELOW ---------------------------------
-SELECT `created_at`,
+-- 4a. The (created_at, hash) pairs of any recognised migration
+--     already present in the live ledger. The operator MUST
+--     cross-check each row against the table below. A mismatch
+--     on the hash column means the recorded migration does not
+--     match the file in the repo, and the procedure MUST abort.
+SELECT `created_at`, `hash`,
        CASE `created_at`
          WHEN 1781281837535 THEN '0000_fixed_sasquatch'
          WHEN 1781282280110 THEN '0001_foamy_ogun'
@@ -278,11 +416,28 @@ WHERE `created_at` IN (
   1782837034281, 1783972463571
 );
 --------------------------------- COPY ABOVE ---------------------------------
+  Cross-check table — for every row returned above, the (created_at,
+  hash) pair must appear in this list verbatim. A row whose hash is
+  NOT in this list is a mismatch; STOP and report.
+
+    1781281837535  814a08e40d7fc2bcfd458759d18319198ca8ae394f2fa15617a78678e9c9c93b  0000_fixed_sasquatch
+    1781282280110  01402e1f8809449f98b61ee30d4e46c5468f9458f0529305014ead5982e1c787  0001_foamy_ogun
+    1781283386153  875c3ad9c69c83450844d95ccdbb15e929bc920fd8daed4263d5a0c518bebc26  0002_special_speedball
+    1781547396467  708acb0bb16a8d00b38c7f89c5c693272f86184421c6c8b4b81677572fc71429  0003_natural_speedball
+    1781548732893  d11cdfbadae6718dcbfc06ddc5e97d3463fa0987094c9af7dda8e50a23f10612  0004_broken_iron_man
+    1781782080434  d60ad8c80c0018b3e74ea10a884551be7b2409640e34f2dbecba77ea1670fe3d  0005_add_better_auth_tables
+    1781798470826  f581cfe32260fa9fcfca12ca15a55dae886f58643a8718132112571d12079231  0006_calm_dagger
+    1782814406325  7a4ed4738ceda7652a659548b9544df2838145a9b851d1ca8fa7212833760f22  0007_goofy_jubilee
+    1782837034281  0d05ea4012c62aca2436641cd77e82e75d2e9594b3cc3010ac486d57e06e4746  0008_warm_amazoness
+    1783972463571  cc9224da756485e1e53515f21746ff4529f531de9570d17178e99f6bdb857c2b  0009_striped_stark_industries
+
   Expected: 0 rows (in which case STEP 2 inserts all 10) OR
   exactly the rows that are already present (typically just 0000
-  in the most common re-run scenario). Report which migrations are
+  in the most common re-run scenario) AND every returned row's
+  hash matches the table above. Report which migrations are
   present so STEP 2's "10 rows affected" / "9 rows affected" /
-  "8 rows affected" outcome can be cross-checked.
+  "8 rows affected" / "0 rows affected" outcome can be
+  cross-checked.
 
   STOP only when (a), (b), or (c) fails — the backup is stale or
   damaged. (d) is a report-and-continue, never a stop.
@@ -364,9 +519,21 @@ WHERE NOT EXISTS (
 );
 --------------------------------- COPY ABOVE ---------------------------------
 
-Expected result: "10 rows affected" if the pre-existing row did not match any
-of these timestamps, or "9 rows affected" if it did (most likely it is the
-0000 row). Either outcome is correct. Report which one you got.
+Expected result: one of the following, depending on which timestamps were
+already present in the live ledger at STEP 3 check (d):
+  - "10 rows affected" if NONE of the ten timestamps were already
+    present (the most common case for a first run).
+  - "9 rows affected" if exactly one was present (most likely 0000,
+    in the common re-run scenario).
+  - "8 rows affected" / "7 rows affected" / … / "1 row affected" if
+    that many of the ten were already present.
+  - "0 rows affected" if ALL ten were already present (the rare case
+    where the backfill was previously completed).
+
+Every one of these outcomes is correct. The relevant question is
+whether the count matches the number of MISSING timestamps reported
+by check (d) — i.e. STEP 2 inserts only the rows that were absent
+before it ran. Report which outcome you got.
 
 
 ================================================================================
@@ -448,8 +615,11 @@ Expected: recognised_count   = 10
 Once STEP 3 has confirmed a good result, release the advisory lock
 that STEP 0 acquired. The lock is workflow-wide, so this is the
 ONLY place it is released in the backfill flow. The rollback
-procedure acquires its OWN lock (with a different name) — see the
-ROLLBACK section.
+procedure acquires the SAME lock (by name) — see the
+ROLLBACK section. Sharing the name means a backup-then-rollback
+pair is automatically serialised against any other
+backfill-or-rollback run, and against a new backfill that an
+operator might launch while a rollback is in progress.
 
 --------------------------------- COPY BELOW ---------------------------------
 SELECT RELEASE_LOCK('qarar.drizzle_migrations_backfill') AS released;
@@ -592,7 +762,7 @@ restored to its pre-rollback state.
 --    A result of 0 OR NULL means STOP and report; the ROLLBACK
 --    must not run without a confirmed lock because the
 --    destructive DELETE+INSERT could race with a live migration.
-SELECT GET_LOCK('qarar.drizzle_migrations_rollback', 0) AS got_lock;
+SELECT GET_LOCK('qarar.drizzle_migrations_backfill', 0) AS got_lock;
 -- If got_lock <> 1 the operator MUST stop and report. Continuing
 -- on got_lock = 0 could race with a live migration; continuing
 -- on got_lock IS NULL is even worse because the lock state is
@@ -660,14 +830,14 @@ TO COMMIT (the safe, correct outcome — all three checks pass):
 
 --------------------------------- COPY BELOW ---------------------------------
 COMMIT;
-SELECT RELEASE_LOCK('qarar.drizzle_migrations_rollback') AS released;
+SELECT RELEASE_LOCK('qarar.drizzle_migrations_backfill') AS released;
 --------------------------------- COPY ABOVE ---------------------------------
 
 TO ROLLBACK (any check failed — DO NOT COMMIT):
 
 --------------------------------- COPY BELOW ---------------------------------
 ROLLBACK;
-SELECT RELEASE_LOCK('qarar.drizzle_migrations_rollback') AS released;
+SELECT RELEASE_LOCK('qarar.drizzle_migrations_backfill') AS released;
 --------------------------------- COPY ABOVE ---------------------------------
 
 A failed ROLLBACK means the ledger is in the same state it was before
