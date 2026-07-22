@@ -100,11 +100,44 @@ function makeFakePool(routes: Route[]) {
   return { pool, seen };
 }
 
+/**
+ * SQL pattern matched (case-insensitive) against the orphan-detecting
+ * LEFT JOIN issued by `findOrphaned` (`LEFT JOIN adAccounts`).
+ * Used by the fake pool to route that query to the rows the test
+ * wants it to see.
+ */
 const ORPHAN_SQL = /left join adAccounts/i;
+
+/**
+ * SQL pattern matched against the strand-detecting LEFT JOIN issued
+ * by `findStranded` (`LEFT JOIN user`). Used by the fake pool to
+ * route that query.
+ */
 const STRAND_SQL = /left join user/i;
+
+/**
+ * SQL pattern matched against the duplicate-grouping query issued by
+ * `findDuplicates` (a `GROUP BY` over `(userId, adAccountId)` with
+ * `HAVING count(*) > 1`). The query-builder path drives this one,
+ * not `db.execute()`, so the row shape is different from the others.
+ */
 const DUP_GROUP_SQL = /group by/i;
+
+/**
+ * SQL pattern matched against the per-group member query issued by
+ * `findDuplicates` to enumerate the `metaAccountId`s that share a
+ * duplicate group. Distinct from `DUP_GROUP_SQL` because the
+ * member-enumeration SELECT has a different shape.
+ */
 const DUP_MEMBERS_SQL = /select `metaAccountId`/i;
 
+/**
+ * Column names returned by the orphan/strand LEFT JOINs — the four
+ * aliased columns (`fs_id`, `fs_userId`, `fs_adAccountId`,
+ * `fs_metaAccountId`) that production code reads off the result.
+ * Pinned here so a future schema change that drops or renames one
+ * of these columns surfaces in the test, not in production.
+ */
 const ORPHAN_COLS = ["fs_id", "fs_userId", "fs_adAccountId", "fs_metaAccountId"];
 
 /** Install a drizzle instance backed by `routes` as the module's `getDb()`. */

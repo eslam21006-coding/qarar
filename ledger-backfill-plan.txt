@@ -25,11 +25,18 @@ In plain language:
       user
       audit_log
 
-  There are no ALTER TABLE, no DROP, no UPDATE, and no DELETE statements
-  anywhere in this runbook. The only writes are:
-      1. CREATE TABLE — makes a NEW backup table that did not exist before.
-      2. INSERT       — adds rows to the bookkeeping table only.
-  Both are additive. Nothing existing is modified or removed.
+  The backfill flow itself (STEPS 1–3) is purely additive: one CREATE
+  TABLE that makes a NEW backup table, and one INSERT that adds rows
+  to the bookkeeping table only. No existing row is modified or
+  removed by STEPS 1–3.
+
+  The ROLLBACK section (only run if STEP 3 shows something wrong and
+  an operator is instructed to use it) DOES include a DELETE, but
+  that DELETE runs inside a single transaction with the restore
+  INSERT, against the bookkeeping table only, and is released by
+  either COMMIT or ROLLBACK. The live ledger is either fully
+  replaced or fully untouched — never partially modified. A failed
+  ROLLBACK leaves the ledger in its pre-rollback state.
 
   What this DOES change: it stops Drizzle from wrongly believing migrations
   0000-0009 were never run. Right now Drizzle thinks they are unapplied and
@@ -45,34 +52,135 @@ In plain language:
 PRECONDITION — ALREADY SATISFIED
 --------------------------------------------------------------------------------
 This backfill is only safe if migrations 0000-0009 are genuinely applied to
-production. That has now been confirmed by the operator via direct
-SHOW CREATE TABLE queries. All five changes in migration 0009 are present:
+production. "Genuinely applied" means: for every migration in the journal,
+every statement in that migration has actually been executed against
+production, and the resulting schema and data are exactly what the
+migration specifies. Drizzle will not check this; it reads only the
+newest row of `__drizzle_migrations` and skips any migration whose
+`when` is not greater than that newest row. An UNAPPLIED migration
+whose `when` happens to be smaller than 0009's would therefore be
+silently masked — Drizzle would skip it as if it had already run.
+For this reason, the operator MUST gather explicit per-migration
+evidence before proceeding.
 
-  (1) adAccounts.funnelConfiguredAt                                 CONFIRMED
-  (2) funnelSettings.metaAccountId                                  CONFIRMED
-  (3) audit_log.event_type enum includes identity_email_merged
-      and funnel_settings_unavailable                               CONFIRMED
-  (4) user.ghl_contact_id is varchar(64)                            CONFIRMED
-  (5) index user_ghlContactId_idx exists                            CONFIRMED
+Required per-migration evidence. The table below names, for every
+migration in scope, the specific table/column/index that proves it
+ran. The operator runs each row's SHOW statement against production
+and ticks the "CONFIRMED" column. A migration is "evidence-confirmed"
+only when the named object exists and matches the description.
 
-0000-0008 are self-evidently applied — the app has been running on those
-tables in production for weeks.
+  0000_fixed_sasquatch          — creates table `user` (initial schema)
+      SHOW CREATE TABLE `user`\G
+      Expected: PRIMARY KEY on `id`, columns include `openId`,
+      `email`, `name`, `ghlContactId`.                                  [ ]
+
+  0001_foamy_ogun               — alters `user` (adds columns / indexes)
+      SHOW CREATE TABLE `user`\G
+      Expected: confirms 0001's named column and/or index additions.   [ ]
+
+  0002_special_speedball        — alters `user` (additional columns)
+      SHOW CREATE TABLE `user`\G
+      Expected: confirms 0002's named column and/or index additions.   [ ]
+
+  0003_natural_speedball        — alters `user`
+      SHOW CREATE TABLE `user`\G
+      Expected: confirms 0003's named column and/or index additions.   [ ]
+
+  0004_broken_iron_man          — alters `user`
+      SHOW CREATE TABLE `user`\G
+      Expected: confirms 0004's named column and/or index additions.   [ ]
+
+  0005_add_better_auth_tables   — creates `better_auth` tables
+      SHOW TABLES LIKE 'better_auth%';
+      Expected: at least one row (the set of tables 0005 created).     [ ]
+
+  0006_calm_dagger              — alters `user` or `better_auth`
+      SHOW CREATE TABLE `<table 0006 touches>`\G
+      Expected: confirms 0006's named column and/or index additions.   [ ]
+
+  0007_goofy_jubilee            — creates or alters a table
+      SHOW CREATE TABLE `<table 0007 touches>`\G
+      Expected: confirms 0007's named column and/or index additions.   [ ]
+
+  0008_warm_amazoness           — creates or alters a table
+      SHOW CREATE TABLE `<table 0008 touches>`\G
+      Expected: confirms 0008's named column and/or index additions.   [ ]
+
+  0009_striped_stark_industries — five schema changes
+      All five named changes are present (the operator has confirmed
+      these earlier in the diagnosis flow):
+        (1) adAccounts.funnelConfiguredAt                              CONFIRMED
+        (2) funnelSettings.metaAccountId                               CONFIRMED
+        (3) audit_log.event_type enum includes identity_email_merged
+            and funnel_settings_unavailable                            CONFIRMED
+        (4) user.ghl_contact_id is varchar(64)                         CONFIRMED
+        (5) index user_ghlContactId_idx exists                         CONFIRMED
+
+If ANY box above is not ticked, STOP. Do not run the backfill until the
+operator has gathered the missing evidence and resolved the gap. The
+two most likely reasons a migration appears unapplied are (a) the
+migration file in the repo does not match the migration actually run
+against production (compare `git show HEAD:<tag>.sql` against the
+schema you observe), or (b) the migration was rolled back at some
+point and is no longer safe to record as "applied". In either case,
+resolving the gap is more important than backfilling the ledger.
 
 The phantom 0010_faithful_baron_zemo.sql and its journal entry have been
 deleted from the Manus sandbox by the operator. Confirmed.
 
-=> The precondition is met. This backfill records only things that are
-   already true. Proceed.
+=> Once every box above is ticked, the precondition is met. This
+   backfill records only things that are already true. Proceed.
 
+
+================================================================================
+STEP 0 — ACQUIRE THE WORKFLOW-WIDE LOCK
+================================================================================
+Before any other step, acquire a MySQL named advisory lock that is
+held for the entire STEPS 1 through 3 flow. This lock prevents two
+operators from racing the `NOT EXISTS` check in STEP 2, and prevents
+a concurrent migration from invalidating the backup between STEP 1
+and STEP 3. The 0 timeout means "fail fast, do not queue".
+
+The lock name is the SAME for the whole runbook (backfill AND
+rollback), so a backup-then-rollback pair is automatically
+serialised against any other run.
+
+--------------------------------- COPY BELOW ---------------------------------
+SELECT GET_LOCK('qarar.drizzle_migrations_backfill', 0) AS got_lock;
+--------------------------------- COPY ABOVE ---------------------------------
+  Expected: got_lock = 1 (the lock was acquired).
+
+  If got_lock = 0, the lock is held by another session — STOP and
+  report. Do not proceed; another operator or a live migration is
+  using the same name. Wait for it to finish, then retry.
+
+  If got_lock IS NULL, the lock acquisition itself errored (server
+  error, killed connection, etc.) — STOP and report. Do not proceed;
+  the lock state is unknown.
+
+  Continue only when got_lock = 1. The lock is released either
+  explicitly by STEP 3's RELEASE_LOCK or implicitly when this
+  connection ends.
 
 ================================================================================
 STEP 1 — BACK UP THE BOOKKEEPING TABLE
 ================================================================================
-Run this first, on its own. It creates a brand-new table and copies the
-current contents into it. It does not modify the original.
+With the workflow-wide lock held, create the backup table. The lock
+was acquired in STEP 0 and is released only in STEP 3.
+
+The backup table is named with TODAY'S DATE (UTC) so a re-run today
+cannot collide with yesterday's backup, and validation failures can
+be recovered by creating a NEW backup with a NEW name (the runbook
+NEVER drops an existing backup — that decision belongs to a human,
+after the post-success window).
+
+Before running, the operator MUST replace `YYYYMMDD` below with the
+current date in UTC. The substitution is a single find-and-replace;
+no other part of the runbook requires editing.
 
 --------------------------------- COPY BELOW ---------------------------------
-CREATE TABLE `__drizzle_migrations_bak_20260721` AS SELECT * FROM `__drizzle_migrations`;
+-- Replace YYYYMMDD with today's UTC date. Example: 20260721.
+CREATE TABLE `__drizzle_migrations_bak_YYYYMMDD` AS SELECT * FROM `__drizzle_migrations`;
 --------------------------------- COPY ABOVE ---------------------------------
 
 Expected result: success. If it errors with "table already exists", the
@@ -86,37 +194,53 @@ operator can paste and run it as-is.
 
 --------------------------------- COPY BELOW ---------------------------------
 SELECT COUNT(*) AS bak_row_count
-FROM `__drizzle_migrations_bak_20260721`;
+FROM `__drizzle_migrations_bak_YYYYMMDD`;
 --------------------------------- COPY ABOVE ---------------------------------
   Expected: bak_row_count >= 1 (typically 1 — the original mystery row).
 
-  Check (b) — every row in the backup is still in the live ledger.
-  If a row has been removed from the live table, the backup pre-dates
-  a deletion and the safe move is a fresh backup.
+  Check (b) — every row in the backup is still in the live ledger,
+  with the same `(id, hash, created_at)`. A row whose primary key
+  matches but whose `hash` or `created_at` differs has been TAMPERED
+  with between STEP 1 and now; the backup is no longer a faithful
+  snapshot and the safe move is a fresh backup. A row missing
+  entirely means the backup pre-dates a deletion — also stale.
 
 --------------------------------- COPY BELOW ---------------------------------
-SELECT b.`id`, b.`hash`, b.`created_at`
-FROM `__drizzle_migrations_bak_20260721` b
+SELECT b.`id`, b.`hash`, b.`created_at`,
+       m.`id`    AS live_id,
+       m.`hash`  AS live_hash,
+       m.`created_at` AS live_created_at
+FROM `__drizzle_migrations_bak_YYYYMMDD` b
 LEFT JOIN `__drizzle_migrations` m
   ON m.`id` = b.`id`
-WHERE m.`id` IS NULL;
+WHERE m.`id` IS NULL
+   OR m.`hash` <> b.`hash`
+   OR m.`created_at` <> b.`created_at`;
 --------------------------------- COPY ABOVE ---------------------------------
-  Expected: zero rows. Anything returned means a backup row is no
-  longer in the live ledger; the backup is STALE — take a fresh one.
+  Expected: zero rows. Any non-empty result means a backup row is
+  missing from the live ledger, OR a backup row's hash or
+  created_at disagrees with the live row at the same id; in
+  either case the backup is STALE — take a fresh one.
 
   Check (c) — no row was added to the live ledger AFTER the backup
-  was taken. This is the case a one-way "backup ⊆ live" check
-  misses: a concurrent migration could have added rows after STEP 1
-  ran, and re-using the now-stale backup would cause a later
-  ROLLBACK to delete those newer rows. Any unexpected row here means
-  the backup is STALE — take a fresh one.
+  was taken, AND no live row's hash or created_at was changed. This
+  is the case a one-way "backup ⊆ live" check misses: a concurrent
+  migration could have added or altered rows after STEP 1 ran, and
+  re-using the now-stale backup would cause a later ROLLBACK to
+  delete those newer rows or lose those changes. Any unexpected
+  row here means the backup is STALE — take a fresh one.
 
 --------------------------------- COPY BELOW ---------------------------------
-SELECT m.`id`, m.`hash`, m.`created_at`
+SELECT m.`id`, m.`hash`, m.`created_at`,
+       b.`id`    AS bak_id,
+       b.`hash`  AS bak_hash,
+       b.`created_at` AS bak_created_at
 FROM `__drizzle_migrations` m
-LEFT JOIN `__drizzle_migrations_bak_20260721` b
+LEFT JOIN `__drizzle_migrations_bak_YYYYMMDD` b
   ON b.`id` = m.`id`
-WHERE b.`id` IS NULL;
+WHERE b.`id` IS NULL
+   OR b.`hash` <> m.`hash`
+   OR b.`created_at` <> m.`created_at`;
 --------------------------------- COPY ABOVE ---------------------------------
   Expected: zero rows. A non-empty result means rows have been added
   to the live ledger since the backup; the backup no longer
@@ -172,10 +296,33 @@ If (a), (b), and (c) all pass, skip to STEP 1's CREATE step and do
 NOT run it again. STEP 2 may then proceed; the cross-check from (d)
 predicts how many rows it will affect.
 
+================================ IF VALIDATION FAILED — RECOVERY ================================
+
+When check (a), (b), or (c) fails, the existing backup is stale or
+damaged. The operator MUST take a fresh backup, on a NEW date, and
+re-run all four validation checks against the new name. The runbook
+NEVER drops an existing backup — it creates a new one with a new
+date and re-validates. The complete copy-paste sequence:
+
+  1. Pick the new date as today's UTC date. Example: 20260722.
+  2. Run the CREATE statement with the new date substituted for
+     YYYYMMDD.
+  3. Re-run checks (a) through (d) against the new backup name.
+  4. If the new backup passes, proceed to STEP 2 using the new
+     backup name in any reference.
+  5. If the new backup also fails, STOP and report — the live
+     ledger itself is in an unexpected state and a human must
+     decide whether to proceed.
+
+A stale backup is NEVER dropped as part of this procedure; the
+operator or a human reviewer may drop it later, after the
+post-success window, once the new backup has been confirmed
+correct.
+
 Confirm the backup landed (read-only, safe to run any number of times):
 
 --------------------------------- COPY BELOW ---------------------------------
-SELECT COUNT(*) AS backup_row_count FROM `__drizzle_migrations_bak_20260721`;
+SELECT COUNT(*) AS backup_row_count FROM `__drizzle_migrations_bak_YYYYMMDD`;
 --------------------------------- COPY ABOVE ---------------------------------
 
 Expected: a small number, likely 1. Write it down — you will need it in
@@ -295,6 +442,25 @@ Expected: recognised_count   = 10
           unrecognised_count = any non-negative number (0, 1, 2, …)
           The unrecognised count is reported back to the team lead for
           the record; it is NOT a defect on its own.
+
+================================ STEP 3.5 — RELEASE THE WORKFLOW-WIDE LOCK ================================
+
+Once STEP 3 has confirmed a good result, release the advisory lock
+that STEP 0 acquired. The lock is workflow-wide, so this is the
+ONLY place it is released in the backfill flow. The rollback
+procedure acquires its OWN lock (with a different name) — see the
+ROLLBACK section.
+
+--------------------------------- COPY BELOW ---------------------------------
+SELECT RELEASE_LOCK('qarar.drizzle_migrations_backfill') AS released;
+--------------------------------- COPY ABOVE ---------------------------------
+  Expected: released = 1 (the lock was released by this connection).
+
+  If released = 0 or NULL, the lock was not held by this connection
+  — most likely a server reset or a previous timeout dropped it. The
+  lock will be released automatically when this connection ends;
+  REPORT the anomalous release so a follow-up check can confirm
+  nothing else is using the same name.
 
 
 ================================================================================
@@ -417,45 +583,87 @@ restored to its pre-rollback state.
 --------------------------------- COPY BELOW ---------------------------------
 -- 1. Cross-connection mutex. Any concurrent migration run also tries
 --    to acquire this lock; the 0 timeout means "fail fast, do not
---    queue". If got_lock = 0 the operator MUST stop and report.
+--    queue". GET_LOCK() can return three values:
+--      1 — lock was acquired by this connection
+--      0 — lock is held by another connection (CONTINUE would race)
+--      NULL — lock acquisition errored (server-side fault, killed
+--             connection, etc.) — the lock state is unknown
+--    The operator MUST proceed only when the result is exactly 1.
+--    A result of 0 OR NULL means STOP and report; the ROLLBACK
+--    must not run without a confirmed lock because the
+--    destructive DELETE+INSERT could race with a live migration.
 SELECT GET_LOCK('qarar.drizzle_migrations_rollback', 0) AS got_lock;
+-- If got_lock <> 1 the operator MUST stop and report. Continuing
+-- on got_lock = 0 could race with a live migration; continuing
+-- on got_lock IS NULL is even worse because the lock state is
+-- unknown. The procedure must not proceed past this point until
+-- the lock is confirmed.
 
 -- 2. Open the single transaction. Everything below until the
 --    COMMIT in phase 2 is one all-or-nothing unit.
 START TRANSACTION;
 
--- 3. Sanity check #1 — record the backup row count.
+-- 3. Sanity check #1 — record the backup row count, AND record the
+--    full (id, hash, created_at) tuple for each backup row. Both will
+--    be cross-checked after the restore INSERT; a count match alone
+--    would let a row whose `hash` or `created_at` was tampered with
+--    slip through. The full-row snapshot is the basis for the
+--    equality check in step 5b.
 SELECT COUNT(*) AS bak_rows
-  FROM `__drizzle_migrations_bak_20260721`;
+  FROM `__drizzle_migrations_bak_YYYYMMDD`;
 
 -- 4. The destructive writes. If either fails (constraint violation,
 --    lock timeout, network drop) the operator issues ROLLBACK in
 --    phase 2 and the live ledger is unchanged.
 DELETE FROM `__drizzle_migrations`;
 INSERT INTO `__drizzle_migrations`
-  SELECT * FROM `__drizzle_migrations_bak_20260721`;
+  SELECT * FROM `__drizzle_migrations_bak_YYYYMMDD`;
 
--- 5. Sanity check #2 — the live count must match the backup exactly.
---    The operator reads this BEFORE issuing COMMIT/ROLLBACK.
+-- 5a. Sanity check #2 — the live count must match the backup exactly.
+--     The operator reads this BEFORE issuing COMMIT/ROLLBACK.
 SELECT COUNT(*) AS live_rows
   FROM `__drizzle_migrations`;
+
+-- 5b. Sanity check #3 — every row in the live ledger must have
+--     IDENTICAL (id, hash, created_at) to the corresponding row in
+--     the backup. A row-count match is necessary but not sufficient:
+--     a tampered row could pass the count check while disagreeing on
+--     the row contents. The operator must read this result and
+--     confirm it is empty BEFORE issuing COMMIT. A non-empty result
+--     means the restored ledger does not exactly match the backup;
+--     issue ROLLBACK and report.
+SELECT m.`id`, m.`hash`, m.`created_at`,
+       b.`id`    AS bak_id,
+       b.`hash`  AS bak_hash,
+       b.`created_at` AS bak_created_at
+  FROM `__drizzle_migrations` m
+  LEFT JOIN `__drizzle_migrations_bak_YYYYMMDD` b
+    ON b.`id` = m.`id`
+ WHERE b.`id` IS NULL
+    OR b.`hash` <> m.`hash`
+    OR b.`created_at` <> m.`created_at`;
 --------------------------------- COPY ABOVE ---------------------------------
 
 ================================ PHASE 2 — COMMIT OR ROLLBACK ================================
 
-DO NOT paste phase 2 until you have read the `bak_rows` and `live_rows`
-values from phase 1. They MUST be equal and non-zero. If they are not,
-run the ROLLBACK block (not the COMMIT block). If they are equal and
-non-zero, run the COMMIT block.
+DO NOT paste phase 2 until you have read all three sanity-check results
+from phase 1: `bak_rows`, `live_rows`, and the full-row comparison
+in step 5b. ALL THREE must pass. Specifically:
+  - bak_rows must be > 0 (the backup is not empty)
+  - live_rows must equal bak_rows (no rows lost or gained)
+  - the step-5b result must be empty (every row matches on
+    id, hash, AND created_at — a count match alone is not enough)
+If ANY of these fails, run the ROLLBACK block (not the COMMIT block).
+If all three pass, run the COMMIT block.
 
-TO COMMIT (the safe, correct outcome — bak_rows > 0 AND live_rows = bak_rows):
+TO COMMIT (the safe, correct outcome — all three checks pass):
 
 --------------------------------- COPY BELOW ---------------------------------
 COMMIT;
 SELECT RELEASE_LOCK('qarar.drizzle_migrations_rollback') AS released;
 --------------------------------- COPY ABOVE ---------------------------------
 
-TO ROLLBACK (bak_rows = 0 OR live_rows <> bak_rows — DO NOT COMMIT):
+TO ROLLBACK (any check failed — DO NOT COMMIT):
 
 --------------------------------- COPY BELOW ---------------------------------
 ROLLBACK;
@@ -463,12 +671,13 @@ SELECT RELEASE_LOCK('qarar.drizzle_migrations_rollback') AS released;
 --------------------------------- COPY ABOVE ---------------------------------
 
 A failed ROLLBACK means the ledger is in the same state it was before
-phase 1 — no rows were lost. The operator must report the failed check
-(`bak_rows = 0` or `live_rows <> bak_rows`) and stop; do not retry the
-rollback without guidance, since the failure indicates a more serious
-problem (e.g. the backup has been tampered with).
+phase 1 — no rows were lost. The operator must report which check
+failed (`bak_rows = 0`, `live_rows <> bak_rows`, or a non-empty
+step-5b result) and stop; do not retry the rollback without guidance,
+since a failed step-5b indicates tampering or partial restoration
+that a human must investigate.
 
-(Keep `__drizzle_migrations_bak_20260721` around for at least a week after a
+(Keep `__drizzle_migrations_bak_YYYYMMDD` around for at least a week after a
 successful run, then it can be dropped. The backup table is NEVER
 deleted as part of this procedure.)
 
