@@ -153,27 +153,54 @@ only when the named object exists and matches the description.
       Expected: PRIMARY KEY on `id`, columns include `identifier`,
       `value`, `expires_at`, `created_at`, `updated_at`.                [ ]
 
-      SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+      -- FK on account.user_id -> user.id, cascade on delete.
+      SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME,
+             REFERENCED_COLUMN_NAME
+        FROM information_schema.KEY_COLUMN_USAGE
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'account'
           AND CONSTRAINT_NAME = 'account_user_id_user_id_fk';
-      Expected: one row.                                              [ ]
+      Expected: one row with COLUMN_NAME='user_id',
+                REFERENCED_TABLE_NAME='user',
+                REFERENCED_COLUMN_NAME='id'.                         [ ]
 
-      SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+      SELECT DELETE_RULE, UPDATE_RULE
+        FROM information_schema.REFERENTIAL_CONSTRAINTS
+        WHERE CONSTRAINT_SCHEMA = DATABASE()
+          AND CONSTRAINT_NAME = 'account_user_id_user_id_fk';
+      Expected: one row with DELETE_RULE='CASCADE',
+                UPDATE_RULE='NO ACTION'.                              [ ]
+
+      -- FK on session.user_id -> user.id, cascade on delete.
+      SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME,
+             REFERENCED_COLUMN_NAME
+        FROM information_schema.KEY_COLUMN_USAGE
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'session'
           AND CONSTRAINT_NAME = 'session_user_id_user_id_fk';
-      Expected: one row.                                              [ ]
+      Expected: one row with COLUMN_NAME='user_id',
+                REFERENCED_TABLE_NAME='user',
+                REFERENCED_COLUMN_NAME='id'.                         [ ]
 
+      SELECT DELETE_RULE, UPDATE_RULE
+        FROM information_schema.REFERENTIAL_CONSTRAINTS
+        WHERE CONSTRAINT_SCHEMA = DATABASE()
+          AND CONSTRAINT_NAME = 'session_user_id_user_id_fk';
+      Expected: one row with DELETE_RULE='CASCADE',
+                UPDATE_RULE='NO ACTION'.                              [ ]
+
+      -- Indexes. The check verifies the index exists, the column
+      -- it covers, and that it is non-unique (these are lookup
+      -- indexes, not constraints).
       SHOW INDEX FROM `account` WHERE Key_name = 'account_userId_idx';
-      Expected: one row.                                              [ ]
+      Expected: one row with Column_name='user_id', Non_unique=1.   [ ]
 
       SHOW INDEX FROM `session` WHERE Key_name = 'session_userId_idx';
-      Expected: one row.                                              [ ]
+      Expected: one row with Column_name='user_id', Non_unique=1.   [ ]
 
       SHOW INDEX FROM `verification`
         WHERE Key_name = 'verification_identifier_idx';
-      Expected: one row.                                              [ ]
+      Expected: one row with Column_name='identifier', Non_unique=1.[ ]
 
   0006_calm_dagger              — widens `userId` to varchar(36) on
                                   6 tables
@@ -219,23 +246,45 @@ only when the named object exists and matches the description.
       `action`, `request_count`, `window_start`, `window_end`,
       `created_at`, `updated_at`.                                       [ ]
 
-      SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+      -- FK on audit_log.user_id -> user.id, cascade on delete.
+      SELECT CONSTRAINT_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME,
+             REFERENCED_COLUMN_NAME
+        FROM information_schema.KEY_COLUMN_USAGE
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'audit_log'
           AND CONSTRAINT_NAME = 'audit_log_user_id_user_id_fk';
-      Expected: one row.                                                [ ]
+      Expected: one row with COLUMN_NAME='user_id',
+                REFERENCED_TABLE_NAME='user',
+                REFERENCED_COLUMN_NAME='id'.                           [ ]
 
+      SELECT DELETE_RULE
+        FROM information_schema.REFERENTIAL_CONSTRAINTS
+        WHERE CONSTRAINT_SCHEMA = DATABASE()
+          AND CONSTRAINT_NAME = 'audit_log_user_id_user_id_fk';
+      Expected: one row with DELETE_RULE='CASCADE'.                    [ ]
+
+      -- Indexes on audit_log — each is a single-column lookup
+      -- index on the named column, non-unique.
       SHOW INDEX FROM `audit_log` WHERE Key_name = 'audit_log_userId_idx';
+      Expected: Column_name='user_id', Non_unique=1.                   [ ]
       SHOW INDEX FROM `audit_log` WHERE Key_name = 'audit_log_email_idx';
+      Expected: Column_name='email', Non_unique=1.                     [ ]
       SHOW INDEX FROM `audit_log` WHERE Key_name = 'audit_log_eventType_idx';
+      Expected: Column_name='event_type', Non_unique=1.                [ ]
       SHOW INDEX FROM `audit_log` WHERE Key_name = 'audit_log_createdAt_idx';
-      Expected: one row each, total 4 rows across the 4 statements.      [ ]
+      Expected: Column_name='created_at', Non_unique=1.                [ ]
 
+      -- Composite index on rate_limit_log (email, action).
       SHOW INDEX FROM `rate_limit_log`
         WHERE Key_name = 'rate_limit_email_action_idx';
+      Expected: Seq_in_index=1, Column_name='email', Non_unique=1
+                AND a second row with Seq_in_index=2,
+                Column_name='action', Non_unique=1.                    [ ]
+
+      -- Single-column index on rate_limit_log (window_end).
       SHOW INDEX FROM `rate_limit_log`
         WHERE Key_name = 'rate_limit_windowEnd_idx';
-      Expected: one row each, total 2 rows across the 2 statements.      [ ]
+      Expected: Column_name='window_end', Non_unique=1.                [ ]
 
   0009_striped_stark_industries — five schema changes.
       The five statements below are the self-contained evidence for
@@ -460,7 +509,14 @@ WHERE `created_at` IN (
 --------------------------------- COPY ABOVE ---------------------------------
   Cross-check table — for every row returned above, the (created_at,
   hash) pair must appear in this list verbatim. A row whose hash is
-  NOT in this list is a mismatch; STOP and report.
+  NOT in this list is a HARD STOP. The procedure MUST NOT continue
+  to STEP 2 in this case. The mismatch means the recorded
+  migration does not match the file in the repo — either the
+  ledger has been tampered with or the migration file in the
+  repo does not match what ran against production. Either way,
+  inserting the corresponding backfill row (in STEP 2) would
+  silently write the WRONG hash and mask the discrepancy. STOP
+  and report; do not proceed to STEP 2.
 
     1781281837535  814a08e40d7fc2bcfd458759d18319198ca8ae394f2fa15617a78678e9c9c93b  0000_fixed_sasquatch
     1781282280110  01402e1f8809449f98b61ee30d4e46c5468f9458f0529305014ead5982e1c787  0001_foamy_ogun
@@ -616,6 +672,7 @@ This changes nothing. It is safe to run repeatedly.
 --------------------------------- COPY BELOW ---------------------------------
 SELECT
   `created_at`,
+  `hash`,
   COUNT(*) AS row_count,
   CASE `created_at`
     WHEN 1781281837535 THEN '0000_fixed_sasquatch'
@@ -631,7 +688,7 @@ SELECT
     ELSE '*** UNRECOGNISED PRE-EXISTING ROW ***'
   END AS migration
 FROM `__drizzle_migrations`
-GROUP BY `created_at`
+GROUP BY `created_at`, `hash`
 ORDER BY `created_at`;
 --------------------------------- COPY ABOVE ---------------------------------
 
@@ -639,6 +696,13 @@ WHAT A GOOD RESULT LOOKS LIKE:
   - All 10 rows named 0000 through 0009 are present, each with
     row_count = 1. (Each is validated independently of any
     unrecognised rows that may sit alongside them.)
+  - For each of those 10 rows, the `hash` column matches the
+    EXPECTED hash for that timestamp. The cross-check table is
+    below. A recognised timestamp with a wrong hash is a HARD
+    STOP — the ledger has been tampered with or the migration
+    file in the repo does not match what ran against
+    production, and the backfill cannot be recorded as
+    successful.
   - There MAY be additional rows labelled "*** UNRECOGNISED PRE-EXISTING
     ROW ***" — any number of them, in any order. These are harmless
     rows from before the backfill; leave them alone and REPORT their
@@ -646,9 +710,24 @@ WHAT A GOOD RESULT LOOKS LIKE:
     is what matters; the unrecognised rows are not required to be
     absent, and they are NOT allowed to invalidate the recognised ones.
 
+HASH CROSS-CHECK TABLE — every recognised row above MUST match:
+
+    1781281837535  814a08e40d7fc2bcfd458759d18319198ca8ae394f2fa15617a78678e9c9c93b  0000_fixed_sasquatch
+    1781282280110  01402e1f8809449f98b61ee30d4e46c5468f9458f0529305014ead5982e1c787  0001_foamy_ogun
+    1781283386153  875c3ad9c69c83450844d95ccdbb15e929bc920fd8daed4263d5a0c518bebc26  0002_special_speedball
+    1781547396467  708acb0bb16a8d00b38c7f89c5c693272f86184421c6c8b4b81677572fc71429  0003_natural_speedball
+    1781548732893  d11cdfbadae6718dcbfc06ddc5e97d3463fa0987094c9af7dda8e50a23f10612  0004_broken_iron_man
+    1781782080434  d60ad8c80c0018b3e74ea10a884551be7b2409640e34f2dbecba77ea1670fe3d  0005_add_better_auth_tables
+    1781798470826  f581cfe32260fa9fcfca12ca15a55dae886f58643a8718132112571d12079231  0006_calm_dagger
+    1782814406325  7a4ed4738ceda7652a659548b9544df2838145a9b851d1ca8fa7212833760f22  0007_goofy_jubilee
+    1782837034281  0d05ea4012c62aca2436641cd77e82e75d2e9594b3cc3010ac486d57e06e4746  0008_warm_amazoness
+    1783972463571  cc9224da756485e1e53515f21746ff4529f531de9570d17178e99f6bdb857c2b  0009_striped_stark_industries
+
 WHAT IS WRONG AND MUST BE REPORTED, NOT "FIXED":
   - Any recognised migration has row_count = 2 or more (a duplicate).
   - Any of the 10 recognised migrations (0000-0009) is missing.
+  - Any recognised migration has a hash that disagrees with the
+    cross-check table above.
   In any of those cases, STOP and report back. Do not delete anything.
 
 The presence or timestamp of unrecognised pre-existing rows is
@@ -839,25 +918,61 @@ restored to its pre-rollback state.
 --    new backfill that an operator might launch while rollback is
 --    in progress.
 --
+--    HOLD-COUNT SEMANTICS — CORRECTED. MySQL's GET_LOCK is NOT
+--    reentrant: each call from the same session increments the
+--    hold count and each RELEASE_LOCK decrements it. The lock is
+--    released when the count reaches zero. An earlier version of
+--    this comment said the second call is a 'no-op', which was
+--    misleading — MySQL returns 1 from the second call but it
+--    DOES increment the hold count, and a single RELEASE_LOCK
+--    will not release the lock.
+--
+--    TOPOLOGY ASSUMPTION — VERIFY BEFORE RELYING ON THIS LOCK.
+--    GET_LOCK is scoped to a SINGLE mysqld instance. It is NOT
+--    cluster-wide: two different MySQL servers in a primary/
+--    replica topology, or two writers behind a proxy, will each
+--    have their own lock namespace and the runbook's lock will
+--    NOT serialise sessions that land on different instances.
+--    Additionally, GET_LOCK is documented as unsafe under
+--    statement-based replication (binlog_format=STATEMENT); row-
+--    based or mixed replication is required for the lock to be
+--    safely replicated to replicas that the application might
+--    read from. Before running this runbook on production the
+--    operator MUST confirm:
+--      (a) all writers (including the operator's session, db:push,
+--          drizzle-kit, and any cron jobs) land on the SAME
+--          mysqld instance as the runbook's lock holder. With
+--          multiple writers / a load balancer that doesn't
+--          pin by session, the lock is advisory only.
+--      (b) binlog_format is ROW or MIXED, NOT STATEMENT.
+--    Both can be checked by SHOW VARIABLES. If either is
+--    unfavourable, the lock is advisory only and the
+--    MAINTENANCE WINDOW is the operator's sole protection.
+--
 --    There are two distinct run-time cases for this GET_LOCK:
 --      (A) IMMEDIATE ROLLBACK: the operator discovered an error
 --          between STEP 0 and STEP 3.5, in the SAME connection
---          that still holds the lock from STEP 0. In this case
---          the second GET_LOCK is a reentrant no-op (MySQL
---          returns 1 immediately because this session already
---          holds the lock) and the subsequent RELEASE_LOCK
---          below decrements the hold count — STEP 3.5 will be
---          the actual final release.
+--          that already holds one hold from STEP 0. The second
+--          GET_LOCK increments the hold count to 2. The
+--          RELEASE_LOCK below decrements it back to 1. STEP 3.5
+--          (which the operator MUST still run after a successful
+--          rollback) decrements it to 0 and actually releases
+--          the lock. If the operator skips STEP 3.5, the lock
+--          remains held until the connection closes — usually
+--          fine for a one-shot script, but if the connection
+--          is reused or kept alive for diagnostics, the lock
+--          will block future runs. The safe practice is to
+--          ALWAYS run STEP 3.5 after a rollback.
 --      (B) LATER ROLLBACK: the operator already ran STEP 3.5
 --          and the backfill connection is closed. In this case
 --          the lock is no longer held; this GET_LOCK acquires it
---          from scratch and the subsequent RELEASE_LOCK releases
---          it for real.
+--          from scratch (hold count = 1) and the subsequent
+--          RELEASE_LOCK decrements it to 0 (actually released).
 --    In both cases the operator MUST proceed only when the
 --    result is exactly 1.
 --
 --    GET_LOCK() can return three values:
---      1 — lock was acquired (or reentrantly held) by this connection
+--      1 — lock was acquired by this connection
 --      0 — lock is held by another connection (CONTINUE would race)
 --      NULL — lock acquisition errored (server-side fault, killed
 --             connection, etc.) — the lock state is unknown
@@ -915,21 +1030,54 @@ SELECT m.`id`, m.`hash`, m.`created_at`,
  WHERE b.`id` IS NULL
     OR b.`hash` <> m.`hash`
     OR b.`created_at` <> m.`created_at`;
+
+-- 5c. Sanity check #4 — the backup itself must have the EXPECTED
+--     (created_at, hash) pairs for every recognised migration that
+--     is IN the backup. This catches the failure mode where the
+--     backup table was created from a live ledger whose recorded
+--     hashes were already wrong; step-5b would faithfully restore
+--     the wrong hashes. The operator cross-checks every returned
+--     row against the expected-hash table above (the same one
+--     Check (d) used before the backfill). A non-empty result is
+--     a HARD STOP — do not COMMIT, even if step-5b was empty.
+SELECT `created_at`, `hash`
+  FROM `__drizzle_migrations_bak_YYYYMMDD`
+ WHERE `created_at` IN (
+   1781281837535, 1781282280110, 1781283386153, 1781547396467,
+   1781548732893, 1781782080434, 1781798470826, 1782814406325,
+   1782837034281, 1783972463571
+ )
+   AND `hash` NOT IN (
+   '814a08e40d7fc2bcfd458759d18319198ca8ae394f2fa15617a78678e9c9c93b',
+   '01402e1f8809449f98b61ee30d4e46c5468f9458f0529305014ead5982e1c787',
+   '875c3ad9c69c83450844d95ccdbb15e929bc920fd8daed4263d5a0c518bebc26',
+   '708acb0bb16a8d00b38c7f89c5c693272f86184421c6c8b4b81677572fc71429',
+   'd11cdfbadae6718dcbfc06ddc5e97d3463fa0987094c9af7dda8e50a23f10612',
+   'd60ad8c80c0018b3e74ea10a884551be7b2409640e34f2dbecba77ea1670fe3d',
+   'f581cfe32260fa9fcfca12ca15a55dae886f58643a8718132112571d12079231',
+   '7a4ed4738ceda7652a659548b9544df2838145a9b851d1ca8fa7212833760f22',
+   '0d05ea4012c62aca2436641cd77e82e75d2e9594b3cc3010ac486d57e06e4746',
+   'cc9224da756485e1e53515f21746ff4529f531de9570d17178e99f6bdb857c2b'
+ );
 --------------------------------- COPY ABOVE ---------------------------------
 
 ================================ PHASE 2 — COMMIT OR ROLLBACK ================================
 
-DO NOT paste phase 2 until you have read all three sanity-check results
-from phase 1: `bak_rows`, `live_rows`, and the full-row comparison
-in step 5b. ALL THREE must pass. Specifically:
+DO NOT paste phase 2 until you have read all FOUR sanity-check results
+from phase 1: `bak_rows`, `live_rows`, the full-row comparison in
+step 5b, AND the backup-hash check in step 5c. ALL FOUR must pass.
+Specifically:
   - bak_rows must be > 0 (the backup is not empty)
   - live_rows must equal bak_rows (no rows lost or gained)
   - the step-5b result must be empty (every row matches on
     id, hash, AND created_at — a count match alone is not enough)
+  - the step-5c result must be empty (every backup row whose
+    created_at is a recognised migration has the EXPECTED hash
+    — not just any hash that happened to be in the backup)
 If ANY of these fails, run the ROLLBACK block (not the COMMIT block).
-If all three pass, run the COMMIT block.
+If all four pass, run the COMMIT block.
 
-TO COMMIT (the safe, correct outcome — all three checks pass):
+TO COMMIT (the safe, correct outcome — all four checks pass):
 
 --------------------------------- COPY BELOW ---------------------------------
 COMMIT;
