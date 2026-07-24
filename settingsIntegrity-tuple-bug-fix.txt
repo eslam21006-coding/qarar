@@ -1,0 +1,447 @@
+================================================================================
+server/settingsIntegrity.ts — db.execute() TUPLE BUG: FIX + TEST-GAP ANALYSIS
+Date: 2026-07-22
+Branch: fix/settings-integrity-tuple-bug
+================================================================================
+
+SUMMARY
+-------
+Confirmed, root-caused, and fixed. `db.execute()` under drizzle-orm/mysql2
+returns the raw mysql2 `[rows, fieldPackets]` tuple for a SELECT, not a bare
+row array. Two functions in server/settingsIntegrity.ts iterated that tuple
+directly and produced a CONSTANT 4 phantom findings against any database,
+including a perfectly clean one.
+
+The audit also found the SAME bug class in a second file that was not part of
+the original report — server/t037Gate.ts — where it had silently disabled a
+production migration safety gate. That is fixed too.
+
+Verified end to end: diagnose-settings.ts and repair-settings.ts both now
+behave correctly on a clean dataset (0 findings, exit 0) and on a genuinely
+broken one (real findings with real column values, correct exit codes).
+
+No data was ever corrupted by this bug. See "BLAST RADIUS" below.
+
+
+================================================================================
+1. THE BUG
+================================================================================
+
+drizzle-orm/mysql2/session.cjs, MySql2PreparedQuery.execute():
+
+    if (!fields && !customResultMapper) {
+      const res = await client.query(rawQuery, params);   // mysql2 tuple
+      ...
+      return res;                                          // returned VERBATIM
+    }
+
+A raw `sql` fragment passed to `db.execute()` has no `fields` and no custom
+result mapper, so it takes that branch and the caller receives mysql2's
+`[rows, fieldPackets]` two-element tuple.
+
+The query-builder path (`db.select()...`) is a DIFFERENT branch — it has
+`fields`, so drizzle maps the driver rows onto real row objects itself. That
+distinction is the whole reason only some functions were affected.
+
+Consequence of iterating the tuple:
+
+    for (const row of result)   // visits EXACTLY 2 members, always:
+                                //   [0] = the row array
+                                //   [1] = the field-packet array
+
+Every property read off those two members is `undefined`. So:
+
+  - the finding count is a CONSTANT 2 per query, regardless of matched rows
+  - 0 matching rows still yields 2 "findings"
+  - userId / adAccountId / metaAccountId are all `undefined`
+
+Two affected queries × 2 phantom rows each = the exact "4 findings" that
+diagnose-settings.ts --all reported on production, all of them
+"undefined/undefined". It presents as bad *data* rather than as an error,
+which is why it survived so long.
+
+
+================================================================================
+2. FULL AUDIT — WHICH FUNCTIONS WERE AFFECTED
+================================================================================
+
+I checked every function in the file, not just the two named in the report,
+and then swept the whole repo for `.execute(`.
+
+server/settingsIntegrity.ts
+  findOrphaned ......................... AFFECTED  — db.execute(), fixed
+  findStranded ......................... AFFECTED  — db.execute(), fixed
+  findDuplicates ....................... CLEAN     — db.select() builder path
+  resolveCandidateIdentities ........... CLEAN     — db.select() builder path
+  hasSiblingIdentityWithSettings ....... CLEAN     — db.select() builder path
+  runDiagnostic ........................ CLEAN     — pure composition of the above
+
+findDuplicates deserves an explicit note because the report asked about it: it
+was NOT affected, but not by luck — it uses `db.select({...}).from(...)
+.groupBy(...).having(...)`, which is the mapped branch. Its `Number(r.count)`
+was already correct too (COUNT(*) is BIGINT and can arrive as a string). I
+added a test that drives it end to end anyway, so that a future rewrite to
+`db.execute()` fails loudly instead of shipping the bug again.
+
+Repo-wide sweep for `.execute(` found only one other production call site:
+
+server/t037Gate.ts .................... AFFECTED — see section 3.
+
+scripts/inspect-4-findings.ts already unwrapped correctly (that is how the bug
+was found in the first place).
+
+
+================================================================================
+3. SECOND, UNREPORTED INSTANCE: server/t037Gate.ts  [more severe]
+================================================================================
+
+This is the gate wired into `pnpm run db:push`. It is supposed to BLOCK a
+migration when the unique index is missing but funnelSettings still holds
+rows. It contained the same defect, twice:
+
+    const indexRows = await db.execute(sql`SELECT 1 ... LIMIT 1`);
+    const indexExists = (indexRows as unknown[]).length > 0;
+
+`.length` on the tuple is the constant 2. So `indexExists` was ALWAYS true and
+the gate ALWAYS returned "index_exists / allow: true". The safety check could
+not block anything, under any condition.
+
+The second defect sat on the unreachable branch below it:
+
+    const rowCount = Number((countRows as Array<{n: unknown}>)[0]?.n ?? 0);
+
+Slot 0 of the tuple is the row ARRAY, whose `.n` is undefined → `?? 0` → 0 →
+the gate would have declared a populated table "empty" and waved the push
+through. Both are fixed by the same unwrap.
+
+Severity note: this gate exists specifically to stop a unique-index migration
+landing on a table that still contains duplicate rows. Prior memory (obs 1293)
+records that production DOES have rows and lacks the index — i.e. this gate
+was expected to block there, and would not have.
+
+
+================================================================================
+4. WHY THE ORIGINAL SPEC-011 TEST SUITE DID NOT CATCH THIS
+================================================================================
+
+This was the part of the request that mattered most for trusting the rest of
+the suite, so I read both suites in full. The answer is different for each,
+and neither is "a mocked db.execute() that returned the wrong shape" in the
+way one might assume.
+
+--------------------------------------------------------------------------
+4a. server/settingsIntegrity.test.ts — NO MOCK AT ALL; THE CODE NEVER RAN
+--------------------------------------------------------------------------
+There was no fake `db.execute()` — faithful or otherwise. The suite never let
+a query execute. It tests only the graceful-degradation guard:
+
+    export async function findOrphaned(userIds) {
+      const db = await getDb();
+      if (!db) return [];        // <-- 100% of the suite's coverage stops HERE
+      ...
+      const rows = await db.execute(...)   // <-- never reached by any test
+      for (const row of rows) { ... }      // <-- never reached by any test
+    }
+
+With DATABASE_URL unset (local dev and CI), `getDb()` returns null and every
+predicate short-circuits before touching the driver. The suite's own comment
+states the intent plainly:
+
+    "The deep DB-bound predicates require a live MySQL/TiDB connection to
+     exercise faithfully ... The production run (T023/T034) is where the
+     predicates are exercised against real data; the contract here is the
+     shape of the return types, not the contents."
+
+Worse, the one test that could have run against a real DB opts OUT explicitly:
+
+    if (process.env.DATABASE_URL) {
+      return;                    // skips everything
+    }
+
+So the result-handling code below the `if (!db)` guard had ZERO coverage in
+BOTH configurations — with a DB and without one. The bug lived entirely inside
+that uncovered region. The suite was not wrong about anything it asserted; it
+simply asserted nothing about the code that broke.
+
+What the suite DOES genuinely cover, and can still be trusted for:
+  - the exported API surface exists
+  - the no-DB path returns safe empties and never throws
+  - the DamageFinding type shape
+  - the FR-029 network-exposure guard (static source inspection of routers.ts)
+    — this one is real, self-contained, and needs no DB.
+
+What it does NOT cover, and must not be read as covering:
+  - anything about SQL correctness
+  - anything about result parsing
+  - anything about the predicates' actual findings
+
+--------------------------------------------------------------------------
+4b. server/t037Gate.test.ts — A MOCK THAT ENCODED THE WRONG CONTRACT
+--------------------------------------------------------------------------
+This suite is the more instructive failure, and it IS the "over-simplified
+mock" case. It mocks the db handle:
+
+    function fakeDb(...resultSets: unknown[][]) {
+      const queue = [...resultSets];
+      return { execute: vi.fn(async () => queue.shift() ?? []) };
+    }
+
+    mocks.getDb.mockResolvedValue(fakeDb([{ 1: 1 }]));   // "index found"
+    mocks.getDb.mockResolvedValue(fakeDb([], [{ n: 3 }])); // "missing, 3 rows"
+
+It returns a BARE ROW ARRAY — a shape the real driver never produces for a
+SELECT. Under that mock the buggy code looks perfectly correct: `[].length > 0`
+is false, `[{1:1}].length > 0` is true, `[{n:3}][0].n` is 3. All 8 tests passed
+against a gate that could not block anything in production.
+
+This is the sharper lesson of the two: the suite did not merely miss the bug,
+it actively certified the wrong contract. A mock that is easier to write than
+the real shape will happily prove the wrong thing. I upgraded `fakeDb` to
+return the real tuple (section 5) and verified it now catches the defect.
+
+--------------------------------------------------------------------------
+4c. TRUST ASSESSMENT FOR THE REST OF SPEC 011's COVERAGE
+--------------------------------------------------------------------------
+- Pure-logic tests (repair-predicates / shouldMergeStranded, the FR-029
+  static guard, type-shape assertions) are unaffected by this class of
+  problem and remain trustworthy.
+- Any assertion about DB *results* in spec 011 rests on either (a) nothing,
+  because the guard short-circuited, or (b) a hand-rolled result mock. Those
+  should be treated as unverified until driven through the real driver.
+- Concrete rule going forward: never assert against a hand-written
+  `db.execute()` return value. Build the drizzle instance over a fake mysql2
+  pool instead, so the driver's own result handling is in the loop. That is
+  what the new test file does.
+
+
+================================================================================
+5. THE FIX
+================================================================================
+
+NEW: server/dbRows.ts
+    Single exported helper `unwrapRows<T>(result): T[]`, documenting the
+    driver behaviour at the point of use. Normalises all four shapes
+    `db.execute()` can return:
+      [rows, fieldPackets]   -> rows      (mysql2 SELECT — the bug)
+      rows[]                 -> rows      (already bare)
+      { rows: [...] }        -> rows      (other drizzle drivers)
+      ResultSetHeader        -> []        (non-SELECT: no rows)
+
+    Disambiguation is safe: a row object is never an array, so an array in
+    slot 0 unambiguously identifies the tuple.
+
+server/settingsIntegrity.ts
+    findOrphaned / findStranded now `unwrapRows(...)` the execute result
+    before iterating. The `as unknown as Array<...>` casts that had been
+    silencing TypeScript are gone — the row type now sits on the unwrap,
+    where it is actually true.
+
+server/t037Gate.ts
+    Both execute sites unwrapped; `indexExists` and `rowCount` are now real.
+
+server/t037Gate.test.ts
+    `fakeDb` upgraded to return the genuine `[rows, fieldPackets]` tuple,
+    with a comment explaining why the bare-array version was dangerous.
+
+scripts/inspect-4-findings.ts
+    Its private `unwrapRows` copy removed in favour of importing the shipped
+    one, so the inspector can never again disagree with the code it inspects.
+
+
+================================================================================
+6. REGRESSION TEST — server/settingsIntegrity.tuple.test.ts  (13 tests)
+================================================================================
+
+The requirement was a test that exercises the REAL tuple shape, not an
+over-simplified mock. Given that an over-simplified mock is exactly what let
+this through in t037Gate, the test does not hand-roll `db.execute()` at all.
+
+It builds a REAL drizzle-orm/mysql2 instance over a fake mysql2 POOL:
+
+    const pool = { query: async (q) => [rows, fieldPackets] };
+    const db = drizzle(pool as never);
+    vi.doMock("./db", () => ({ getDb: async () => db }));
+
+Only the wire is faked. drizzle's own MySql2PreparedQuery.execute() runs
+unmodified and produces the genuine tuple. Verified empirically first:
+
+    1 matching row  ->  db.execute() result length 2
+                    ->  naive for..of yields 2 iterations, fs_userId undefined
+
+Coverage:
+  - fixture fidelity: asserts the result IS a 2-tuple of arrays, and that the
+    buggy iteration really does produce 2 phantom rows from 1 real row. If
+    this ever fails, the fixture has stopped being faithful and every other
+    test in the file is worthless — the exact failure mode of the old suite.
+  - CLEAN dataset: findOrphaned/findStranded return [] (pre-fix: 2 and 2)
+  - CLEAN dataset: no finding ever carries undefined userId/adAccountId
+  - BROKEN dataset: exact findings with real values, incl. correct
+    repairable=true (has metaAccountId) vs false (null)
+  - count tracks input: drives 0, 1 and 5 rows and asserts the output follows
+    — the bug's signature was a count that never moved
+  - findDuplicates driven end to end through the builder path (pins that it
+    is and stays unaffected), incl. BIGINT-as-string count normalisation
+  - unwrapRows unit tests for all four shapes plus null/undefined
+
+VERIFIED THE TEST ACTUALLY FAILS PRE-FIX. I reverted settingsIntegrity.ts to
+the buggy iteration and re-ran:
+
+    x  CLEAN dataset > returns 0 findings
+    x  CLEAN dataset > never emits undefined userId/adAccountId
+    x  BROKEN dataset > reports exactly the damaged rows
+    x  BROKEN dataset > finding count tracks row count
+    Tests  4 failed | 9 passed
+
+The 9 that stayed green are the fidelity and findDuplicates tests — correct,
+since findDuplicates was never affected. Then restored the fix: 13/13 pass.
+
+Same check for the gate: reverting t037Gate.ts with the UPGRADED mock in
+place now fails 2 tests ("BLOCKS when index missing and rows exist",
+"ALLOWS when index missing but table empty") — the two it previously passed
+while broken.
+
+
+================================================================================
+7. END-TO-END VERIFICATION (requirements 2 and 3)
+================================================================================
+
+No local DATABASE_URL is available, so rather than approximate, I drove the
+REAL CLI scripts through the real driver over a fake wire. drizzle calls
+`mysql2.createPool` as a property lookup at call time, so patching the cached
+mysql2 module before server/db.ts builds its instance intercepts it cleanly.
+This runs the actual, unmodified diagnose-settings.ts and repair-settings.ts
+`main()` — real argv parsing, real predicates, real report formatting, real
+exit codes. (Harness was temporary and has been removed; it is ~150 lines and
+trivially reconstructable from this description.)
+
+7a. inspect-4-findings.ts equivalent — clean vs broken
+------------------------------------------------------
+This is the comparison inspect-4-findings.ts makes in its Sections 1 vs 2
+(shipped functions vs correctly-unwrapped raw rows). They now AGREE:
+
+  CLEAN:   findOrphaned -> 0, findStranded -> 0   (raw rows: 0, 0)  MATCH
+  BROKEN:  findOrphaned -> 2, findStranded -> 0   (raw rows: 2, 0)  MATCH
+
+Pre-fix the same clean dataset produced 2 and 2 against raw counts of 0 and 0
+— the mismatch the inspector was written to surface.
+
+7b. diagnose-settings.ts --email
+--------------------------------
+CLEAN dataset:
+    Findings:  orphaned: 0   stranded: 0   duplicated: 0
+    "Clean — no damage found for the requested identity."
+    exit 0                                                    CORRECT
+
+BROKEN dataset (2 orphans — one repairable, one not — plus 1 duplicate group):
+    Findings:  orphaned: 2   stranded: 0   duplicated: 1
+      [orphaned]   userId=u-live adAccountId=501 metaAccountId=act_900 REPAIRABLE
+      [orphaned]   userId=u-live adAccountId=502 metaAccountId=<none>  REPORT-ONLY
+      [duplicated] userId=u-live adAccountId=601 metaAccountId=act_777 count=2
+    exit 1                                                    CORRECT
+
+Real ids, real account ids, correct repairable/report-only split, correct
+count=2 from the BIGINT string.
+
+7c. repair-settings.ts --email (preview, default)
+-------------------------------------------------
+CLEAN dataset:
+    Planned steps: 0 — "Nothing to repair."   exit 0          CORRECT
+
+BROKEN dataset:
+    Planned steps: 3
+      [REPORT] re-link orphan: u-live/501 has metaAccountId=act_900 but no
+               matching adAccounts row
+      [REPORT] re-link orphan: u-live/502 carries no metaAccountId —
+               human review required
+      [WRITE]  consolidate duplicates: AUDIT + DELETE funnelSettings.id=62
+               (loser, 90/9) — winner keeps 100/10
+    2 step(s) declined — human review required.   exit 1      CORRECT
+
+The duplicate winner/loser selection by updatedAt is right, the audit-before-
+delete ordering is intact, and preview issued no writes.
+
+7d. Pre-fix behaviour, captured through the identical harness
+-------------------------------------------------------------
+For the record, on the CLEAN dataset before the fix:
+
+    Findings:  orphaned: 2   stranded: 2   duplicated: 0
+      [orphaned] userId=undefined adAccountId=undefined ... REPAIRABLE
+      [orphaned] userId=undefined adAccountId=undefined ... REPAIRABLE
+      [stranded] userId=undefined adAccountId=undefined ... REPAIRABLE
+      [stranded] userId=undefined adAccountId=undefined ... REPAIRABLE
+    exit 1
+
+    repair --preview: 4 steps, all "undefined/undefined", all declined
+
+That is a byte-for-byte reproduction of the production symptom, which
+confirms the root cause conclusively rather than by inference.
+
+
+================================================================================
+8. BLAST RADIUS — NO DATA WAS CORRUPTED
+================================================================================
+
+Worth stating explicitly, because "the repair script acted on garbage findings"
+is the obvious worry:
+
+- The phantom findings all had `userId: undefined, adAccountId: undefined`.
+- repair-settings.ts looks each finding up before writing. Every lookup on
+  `undefined` returns no rows, so every step fell through to REPORT-ONLY and
+  declined. Confirmed empirically in 7d: 4 findings -> 4 declined, 0 writes.
+- The one nominally repairable-looking classification (`repairable` was
+  computed as `undefined !== null`, i.e. true) still could not write, because
+  the adAccounts lookup for `metaAccountId=undefined` matched nothing.
+
+So the impact was false alarms and a non-zero exit code, not damage:
+  - diagnose-settings.ts exited 1 ("damage found") on healthy data
+  - t037Gate silently never blocked (the more serious exposure)
+
+
+================================================================================
+9. VERIFICATION RUN
+================================================================================
+
+  npx tsc --noEmit
+      No errors in server/, scripts/, or drizzle/.
+      (Pre-existing client/ errors only: @testing-library/react and
+       @testing-library/jest-dom are declared in package.json but absent from
+       the local node_modules. Unrelated to this change.)
+
+  Full server suite (31 files)
+      321 passed | 24 skipped | 0 failed
+      1 suite fails to boot: auth-flow.e2e.test.ts, which requires a live
+      DATABASE_URL. Environmental, pre-existing, unrelated.
+
+  Note on running tests locally: `pnpm test` currently cannot start at all,
+  because vitest.config.ts loads client/src/test/setup.ts, which imports the
+  missing @testing-library/jest-dom. This blocks the WHOLE suite, server tests
+  included — it is not specific to this change, but it does mean the suite is
+  effectively unrunnable locally until `pnpm install` is re-run. Worth fixing
+  separately.
+
+
+================================================================================
+10. FILES CHANGED
+================================================================================
+
+  NEW  server/dbRows.ts                      unwrapRows helper + rationale
+  NEW  server/settingsIntegrity.tuple.test.ts  13 regression tests
+  MOD  server/settingsIntegrity.ts           findOrphaned, findStranded
+  MOD  server/t037Gate.ts                    both execute sites (2nd instance)
+  MOD  server/t037Gate.test.ts               fakeDb now returns the real tuple
+  MOD  scripts/inspect-4-findings.ts         use shared helper, drop local copy
+
+
+================================================================================
+11. RECOMMENDED FOLLOW-UPS (not done here)
+================================================================================
+
+1. Re-run diagnose-settings.ts --all against production. The previous "4
+   findings" result is now known to be an artefact; the real state is
+   unknown and still unmeasured.
+2. Re-run the T037 gate against production. It has never actually evaluated
+   anything, and prior notes (obs 1293) suggest it should be blocking there.
+3. Restore the local node_modules (`pnpm install`) so `pnpm test` can run.
+4. Consider a lint rule or a codemod-style grep in CI banning bare
+   `db.execute(` results from being iterated without `unwrapRows`. Only three
+   call sites exist today; the rule is cheap and this bug class is silent.

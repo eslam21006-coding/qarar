@@ -1,0 +1,184 @@
+================================================================================
+T037 GATE — "funnelSettings does not exist yet" must ALLOW, not error
+================================================================================
+Date:    2026-07-24
+Branch:  fix/settings-integrity-tuple-bug
+Files:   server/t037Gate.ts, server/t037Gate.test.ts,
+         scripts/verify-t037-prerequisites.ts
+
+--------------------------------------------------------------------------------
+1. THE PROBLEM
+--------------------------------------------------------------------------------
+CI provisions a brand-new, completely empty database and then runs
+`pnpm run db:push`, whose FIRST step is the T037 gate
+(scripts/verify-t037-prerequisites.ts -> evaluateT037Gate).
+
+At that moment migrations have never run, so the funnelSettings table does
+not exist yet. The gate's second query is:
+
+    SELECT COUNT(*) AS n FROM funnelSettings
+
+Against a non-existent table that is not "0 rows" — it is an ERROR
+(MySQL ER_NO_SUCH_TABLE). The rejection propagated out of
+evaluateT037Gate, was caught by main().catch in the CLI wrapper, and
+turned into `exit 2` — blocking the migration chain in exactly the
+situation the gate should wave through.
+
+Semantically, "the table does not exist" is at least as safe as "the table
+exists and is empty": there are no rows that could violate the uniqueness
+the index will later enforce. Both must ALLOW.
+
+Note this defect only became reachable after the tuple-unwrapping fix
+earlier on this branch. Before that fix, `indexExists` was unconditionally
+true (`.length` read off the [rows, fieldPackets] tuple is a constant 2),
+so the gate returned "index_exists" and the COUNT(*) query was never
+issued at all. Fixing the tuple bug is what first let control reach the
+COUNT(*) line on an empty CI database.
+
+--------------------------------------------------------------------------------
+2. THE FIX
+--------------------------------------------------------------------------------
+server/t037Gate.ts
+
+(a) New exported predicate `isTableNotFoundError(error: unknown): boolean`.
+    Matches MySQL's missing-table condition under any of the three
+    identifiers the driver may set:
+        code    === "ER_NO_SUCH_TABLE"
+        errno   === 1146
+        sqlState=== "42S02"
+    and NOTHING else.
+
+(b) The COUNT(*) call is wrapped in try/catch. On catch:
+        if (!isTableNotFoundError(error)) throw error;   // still blocks
+        return { code: 0, allow: true, reason: "missing_table", ... };
+
+(c) New GateReason member "missing_table". A distinct reason rather than
+    reusing "empty_table" so operator output stays truthful — the message
+    says the table does not exist yet, and explains why that is safe.
+
+Everything else — connection failures, permission errors, timeouts,
+syntax errors — propagates exactly as before and still blocks. The gate's
+fail-closed posture is unchanged for every condition except this one.
+
+--------------------------------------------------------------------------------
+3. THE NON-OBVIOUS PART: drizzle DOES NOT RETHROW THE DRIVER ERROR
+--------------------------------------------------------------------------------
+The naive implementation — `if (error.code === "ER_NO_SUCH_TABLE")` on the
+caught value — would NEVER match in production.
+
+Verified in the installed drizzle-orm (0.44.6):
+    node_modules/drizzle-orm/mysql-core/session.cjs lines 50, 57, 68, 75,
+    90, 107 all do:
+        throw new DrizzleQueryError(queryString, params, e)
+    and DrizzleQueryError (node_modules/drizzle-orm/errors.cjs:35) sets
+    `this.cause = cause`.
+
+So what evaluateT037Gate actually catches is a DrizzleQueryError whose
+message is only "Failed query: ...\nparams: ..." — the mysql2 code/errno
+live one level down on `.cause`.
+
+`isTableNotFoundError` therefore walks the `cause` chain. The walk is
+bounded (MAX_CAUSE_DEPTH = 5) and short-circuits on a self-referential
+cause, so a cyclic or pathologically deep chain cannot spin.
+
+This is also why the new test constructs the error the way production
+delivers it (wrapped), not as a bare mysql2 error. A test that threw the
+bare error would have passed against a predicate that could never fire in
+production.
+
+--------------------------------------------------------------------------------
+4. TESTS ADDED (server/t037Gate.test.ts)
+--------------------------------------------------------------------------------
+The case the task asked for, plus the guards that keep the carve-out narrow:
+
+  1. "ALLOWS when funnelSettings does not exist at all"
+     information_schema query returns no index; COUNT(*) rejects with a
+     DrizzleQueryError wrapping ER_NO_SUCH_TABLE.
+     Asserts code 0, allow true, reason "missing_table".
+
+  2. "ALLOWS when the table is missing and the driver error is not wrapped"
+     Defence in depth — a bare mysql2 error is recognised too.
+
+  3. "still BLOCKS by propagating any error that is NOT 'table not found'"
+     An ECONNRESET wrapped the same way must still reject. Asserted by
+     error IDENTITY (rejects.toBe(thrown)), not by message text — the
+     drizzle wrapper's message says only "Failed query: ...", so a text
+     match would have passed for the wrong reason. (First draft of this
+     test used /ECONNRESET/ and failed; the assertion was the bug, not the
+     code.)
+
+  4. describe("isTableNotFoundError") — three unit tests:
+       - recognises code / errno / sqlState, wrapped and double-wrapped
+       - rejects undefined, null, a bare string, a plain Error,
+         ECONNREFUSED, ER_ACCESS_DENIED_ERROR (1045),
+         PROTOCOL_CONNECTION_LOST, errno 1146.5, SQLSTATE 42000
+       - terminates on a cyclic cause chain and on one buried below the
+         depth limit
+
+MUTATION CHECK (the tests actually test something):
+  Temporarily neutered the carve-out (`if (true || !isTableNotFound...)`)
+  -> exactly the two new missing-table tests FAIL (2 failed | 12 passed).
+  Restored -> 14/14 pass.
+
+--------------------------------------------------------------------------------
+5. VERIFICATION RESULTS
+--------------------------------------------------------------------------------
+npx tsc --noEmit
+    exit 0 — clean.
+
+npx vitest run server/t037Gate.test.ts
+    14 passed (14). Was 8 before this change; +6 new.
+
+npx vitest run   (full suite)
+    Test Files  1 failed | 41 passed | 2 skipped (44)
+    Tests       433 passed | 24 skipped (457)
+
+    The single failing FILE is server/auth-flow.e2e.test.ts, which fails
+    in beforeAll at line 22 ("Database connection failed") because
+    DATABASE_URL is not set in this local environment. It is pre-existing
+    and environmental — it fails before any gate code is reached and is
+    unrelated to this change (same failure was recorded on this branch
+    before these edits). Zero test failures otherwise.
+
+--------------------------------------------------------------------------------
+6. GATE BEHAVIOUR AFTER THIS CHANGE (six cases)
+--------------------------------------------------------------------------------
+Five outcomes decided by querying the live database:
+
+  1. Unique index already exists            -> ALLOW  (exit 0, index_exists)
+  2. Index missing, funnelSettings empty    -> ALLOW  (exit 0, empty_table)
+  3. funnelSettings does not exist yet      -> ALLOW  (exit 0, missing_table)  <- NEW
+  4. Index missing, funnelSettings HAS rows -> BLOCK  (exit 2, rows_without_index)
+  5. DB unreachable / unverifiable          -> BLOCK  (exit 2, db_unreachable)
+
+...plus one explicit opt-out, decided BEFORE any query is issued:
+
+  6. ALLOW_UNVERIFIED_DB_PUSH=1 was set     -> ALLOW  (exit 0, skipped_by_env)
+                                               ** prerequisites NOT verified **
+
+Case 6 is the only branch that allows the migration without checking
+anything, so the push can land on a table that still holds duplicate rows.
+It is deliberately explicit — a human types it, it shows up in a shell
+history, and no outage can set it — and is covered by two existing tests:
+one asserting it short-circuits before any DB call, one asserting that no
+other value ("true", "yes", "0", "") opens the gate. Never set it against
+a database that holds real data.
+
+The header docblock in scripts/verify-t037-prerequisites.ts was updated to
+match (it documented four numbered cases and mentioned the opt-out only in
+a separate prose section below the list; now all six are numbered together).
+
+--------------------------------------------------------------------------------
+7. WHAT WAS DELIBERATELY NOT DONE
+--------------------------------------------------------------------------------
+- The information_schema.statistics query was NOT wrapped. That table
+  always exists; a missing funnelSettings simply yields zero rows there,
+  which is already handled. Wrapping it would add a catch that can only
+  ever swallow a real error.
+- No generic "swallow DB errors" helper was introduced, and the predicate
+  was not put in server/dbRows.ts. It is gate-specific policy and belongs
+  next to the fail-closed reasoning it qualifies.
+- Postgres' undefined_table (42P01) is NOT matched. This project is
+  mysql2-only (server/db.ts imports drizzle-orm/mysql2); matching codes
+  for a driver that is not in use would be untested speculation.
+================================================================================

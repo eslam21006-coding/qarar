@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { adAccounts, funnelSettings, user as authUser } from "../drizzle/schema";
 import { getDb } from "./db";
+import { unwrapRows } from "./dbRows";
 
 /**
  * US11 / Spec 011 / T020 — shared query module for the diagnostic and
@@ -19,8 +20,25 @@ import { getDb } from "./db";
  * the repair uses to build its plan.
  */
 
+/**
+ * The kind of damage a `DamageFinding` describes.
+ *   - `orphaned` — `funnelSettings.adAccountId` no longer references a
+ *     live `adAccounts` row (the account was deleted, or the row was
+ *     re-keyed to a new account with a different internal id).
+ *   - `stranded` — `funnelSettings.userId` no longer references a
+ *     live `user` row (the user was deleted, or their identity
+ *     drifted and the new identity owns no record yet).
+ *   - `duplicated` — more than one `funnelSettings` row shares the
+ *     same `(userId, adAccountId)` pair.
+ */
 export type DamageFindingKind = "orphaned" | "stranded" | "duplicated";
 
+/**
+ * One row of the diagnostic output. Each finding names the user and
+ * the internal ad-account id the settings row currently references,
+ * plus the stable platform id (the recovery key — see FR-031) so
+ * the repair can decide whether the row is self-attributable.
+ */
 export interface DamageFinding {
   kind: DamageFindingKind;
   userId: string;
@@ -35,6 +53,13 @@ export interface DamageFinding {
   count: number;
 }
 
+/**
+ * The full result of `runDiagnostic` for one person — every user
+ * id that matched the resolution criteria, plus every finding
+ * observed across the three predicates (orphaned / stranded /
+ * duplicated). The caller is expected to render the report
+ * field-by-field; this interface is the canonical contract.
+ */
 export interface DiagnosticReport {
   /** All user ids that matched the resolution criteria. */
   userIds: string[];
@@ -89,7 +114,10 @@ export async function findOrphaned(
 
   // LEFT JOIN of funnelSettings → adAccounts on adAccountId. Rows
   // with `adAccounts.id IS NULL` are orphaned.
-  const rows = await db.execute(sql`
+  //
+  // `db.execute()` returns the mysql2 `[rows, fieldPackets]` tuple for a
+  // SELECT — it MUST be unwrapped before iteration (see ./dbRows).
+  const result = await db.execute(sql`
     SELECT fs.id AS fs_id,
            fs.userId AS fs_userId,
            fs.adAccountId AS fs_adAccountId,
@@ -99,14 +127,15 @@ export async function findOrphaned(
     WHERE fs.userId IN (${sql.join(userIds.map(id => sql`${id}`), sql`, `)})
       AND a.id IS NULL
   `);
-
-  const findings: DamageFinding[] = [];
-  for (const row of rows as unknown as Array<{
+  const rows = unwrapRows<{
     fs_id: number;
     fs_userId: string;
     fs_adAccountId: number;
     fs_metaAccountId: string | null;
-  }>) {
+  }>(result);
+
+  const findings: DamageFinding[] = [];
+  for (const row of rows) {
     findings.push({
       kind: "orphaned",
       userId: row.fs_userId,
@@ -142,7 +171,9 @@ export async function findStranded(
   // NULL` are stranded. We also detect "superseded by sibling
   // identity" via contact id equality — those are NOT stranded but
   // they ARE drift candidates the repair can re-attach (T031).
-  const rows = await db.execute(sql`
+  //
+  // Same tuple caveat as findOrphaned — unwrap before iterating.
+  const result = await db.execute(sql`
     SELECT fs.id AS fs_id,
            fs.userId AS fs_userId,
            fs.adAccountId AS fs_adAccountId,
@@ -152,14 +183,15 @@ export async function findStranded(
     WHERE fs.userId IN (${sql.join(userIds.map(id => sql`${id}`), sql`, `)})
       AND u.id IS NULL
   `);
-
-  const findings: DamageFinding[] = [];
-  for (const row of rows as unknown as Array<{
+  const rows = unwrapRows<{
     fs_id: number;
     fs_userId: string;
     fs_adAccountId: number;
     fs_metaAccountId: string | null;
-  }>) {
+  }>(result);
+
+  const findings: DamageFinding[] = [];
+  for (const row of rows) {
     findings.push({
       kind: "stranded",
       userId: row.fs_userId,

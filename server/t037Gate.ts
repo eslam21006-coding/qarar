@@ -15,16 +15,93 @@
  */
 import { sql } from "drizzle-orm";
 import { getDb } from "./db";
+import { unwrapRows } from "./dbRows";
 
+/**
+ * The name of the unique index the T037 gate exists to protect.
+ *
+ * The constraint lives only in `drizzle/0010_settings_unique_index.sql`
+ * (deliberately absent from `drizzle/meta/_journal.json`) and is
+ * applied by hand after the diagnose → repair → verify-clean cycle
+ * has run. The gate's `db:push` script (T037) refuses to proceed
+ * until this index is in place on a non-empty table.
+ */
 export const UNIQUE_INDEX_NAME = "uq_funnelSettings_user_account";
 
+/**
+ * The reason the gate returned the verdict it did. One value per
+ * branch of `evaluateT037Gate`, including the two BLOCK branches that
+ * existed as prose before the gate was tested end-to-end.
+ */
 export type GateReason =
   | "skipped_by_env"
   | "index_exists"
   | "empty_table"
+  | "missing_table"
   | "db_unreachable"
   | "rows_without_index";
 
+/**
+ * MySQL's "table doesn't exist" error, by every identifier the driver
+ * might surface it under: `ER_NO_SUCH_TABLE` / errno 1146 / SQLSTATE
+ * 42S02.
+ */
+const NO_SUCH_TABLE_CODE = "ER_NO_SUCH_TABLE";
+const NO_SUCH_TABLE_ERRNO = 1146;
+const NO_SUCH_TABLE_SQLSTATE = "42S02";
+
+/** How far down the `cause` chain to look before giving up. */
+const MAX_CAUSE_DEPTH = 5;
+
+/**
+ * Is this error specifically "the funnelSettings table does not exist"?
+ *
+ * WHY THIS IS NARROW
+ * ------------------
+ * The gate fails CLOSED on everything it cannot verify, so widening this
+ * predicate by even one error class would re-open the hole the gate
+ * exists to plug. It matches ONE condition — MySQL's ER_NO_SUCH_TABLE —
+ * and nothing else. A connection failure, a permissions error, a syntax
+ * error, or a timeout all still propagate and still block.
+ *
+ * WHY IT WALKS `cause`
+ * --------------------
+ * drizzle-orm does not rethrow the mysql2 error verbatim: every query
+ * path in `drizzle-orm/mysql-core/session.cjs` catches it and throws a
+ * `DrizzleQueryError` with the driver error attached as `cause`. Testing
+ * only the top-level error would therefore never match in production —
+ * the code/errno live one level down. The walk is depth-limited so a
+ * self-referential or adversarially deep chain cannot spin.
+ */
+export function isTableNotFoundError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth++) {
+    if (!current || typeof current !== "object") return false;
+    const e = current as {
+      code?: unknown;
+      errno?: unknown;
+      sqlState?: unknown;
+      cause?: unknown;
+    };
+    if (
+      e.code === NO_SUCH_TABLE_CODE ||
+      e.errno === NO_SUCH_TABLE_ERRNO ||
+      e.sqlState === NO_SUCH_TABLE_SQLSTATE
+    ) {
+      return true;
+    }
+    if (e.cause === current) return false; // self-referential chain
+    current = e.cause;
+  }
+  return false;
+}
+
+/**
+ * The verdict returned by `evaluateT037Gate`. `code` is the process
+ * exit code the caller should use; `allow` is a friendlier boolean
+ * for callers that don't need a numeric code; `reason` and `message`
+ * are the operator-facing explanation.
+ */
 export type GateVerdict = {
   /** Process exit code the caller should use. 0 = allow, 2 = block. */
   code: 0 | 2;
@@ -86,7 +163,11 @@ export async function evaluateT037Gate(
     };
   }
 
-  const indexRows = await db.execute(sql`
+  // `db.execute()` hands back the mysql2 `[rows, fieldPackets]` tuple for
+  // a SELECT. Reading `.length` off the tuple yields a constant 2, which
+  // made this gate report "index_exists" unconditionally — i.e. it never
+  // blocked anything. Unwrap first (see ./dbRows).
+  const indexResult = await db.execute(sql`
     SELECT 1
     FROM information_schema.statistics
     WHERE table_schema = DATABASE()
@@ -94,7 +175,7 @@ export async function evaluateT037Gate(
       AND index_name = ${UNIQUE_INDEX_NAME}
     LIMIT 1
   `);
-  const indexExists = (indexRows as unknown as unknown[]).length > 0;
+  const indexExists = unwrapRows(indexResult).length > 0;
 
   if (indexExists) {
     return {
@@ -107,13 +188,46 @@ export async function evaluateT037Gate(
     };
   }
 
-  const countRows = await db.execute(sql`
-    SELECT COUNT(*) AS n
-    FROM funnelSettings
-  `);
-  const rowCount = Number(
-    (countRows as unknown as Array<{ n: unknown }>)[0]?.n ?? 0,
-  );
+  // A brand-new database — CI provisions one before migrations have ever
+  // run — has no funnelSettings table at all, and `SELECT COUNT(*)` on a
+  // table that does not exist is an ERROR, not a zero. That state is
+  // exactly as safe as "table exists, zero rows": there are no rows for
+  // the unique index to collide with. Only ER_NO_SUCH_TABLE is caught
+  // here; every other failure (connection, permissions, timeout) still
+  // propagates and still blocks, because the gate must fail closed on
+  // anything it cannot verify.
+  //
+  // The information_schema query above needs no such guard —
+  // information_schema.statistics always exists, and a missing
+  // funnelSettings simply yields zero rows there.
+  let countResult: unknown;
+  try {
+    countResult = await db.execute(sql`
+      SELECT COUNT(*) AS n
+      FROM funnelSettings
+    `);
+  } catch (error) {
+    if (!isTableNotFoundError(error)) throw error;
+    return {
+      code: 0,
+      allow: true,
+      reason: "missing_table",
+      message:
+        "[verify-t037] PASS: funnelSettings does not exist yet on the live DB.\n" +
+        "          Nothing can violate the uniqueness constraint on a table\n" +
+        "          that holds no rows, so this is treated the same as an\n" +
+        "          empty table. The unique index can be added later by\n" +
+        "          manually applying drizzle/0010_settings_unique_index.sql.\n" +
+        "          db:push may proceed.\n",
+    };
+  }
+  // COUNT(*) is BIGINT and can arrive as a string depending on the driver
+  // build — Number() normalises both. Reading slot 0 of the *tuple* would
+  // have returned the row array, whose `.n` is undefined → 0 → the gate
+  // would have declared a populated table "empty" and waved the push
+  // through. Both defects are on this one line; both are fixed by the
+  // unwrap.
+  const rowCount = Number(unwrapRows<{ n: unknown }>(countResult)[0]?.n ?? 0);
 
   if (rowCount === 0) {
     return {
