@@ -141,17 +141,32 @@ npx vitest run   (full suite)
     before these edits). Zero test failures otherwise.
 
 --------------------------------------------------------------------------------
-6. GATE BEHAVIOUR AFTER THIS CHANGE (five cases)
+6. GATE BEHAVIOUR AFTER THIS CHANGE (six cases)
 --------------------------------------------------------------------------------
+Five outcomes decided by querying the live database:
+
   1. Unique index already exists            -> ALLOW  (exit 0, index_exists)
   2. Index missing, funnelSettings empty    -> ALLOW  (exit 0, empty_table)
   3. funnelSettings does not exist yet      -> ALLOW  (exit 0, missing_table)  <- NEW
   4. Index missing, funnelSettings HAS rows -> BLOCK  (exit 2, rows_without_index)
   5. DB unreachable / unverifiable          -> BLOCK  (exit 2, db_unreachable)
-  +  ALLOW_UNVERIFIED_DB_PUSH=1             -> ALLOW  (exit 0, skipped_by_env)
+
+...plus one explicit opt-out, decided BEFORE any query is issued:
+
+  6. ALLOW_UNVERIFIED_DB_PUSH=1 was set     -> ALLOW  (exit 0, skipped_by_env)
+                                               ** prerequisites NOT verified **
+
+Case 6 is the only branch that allows the migration without checking
+anything, so the push can land on a table that still holds duplicate rows.
+It is deliberately explicit — a human types it, it shows up in a shell
+history, and no outage can set it — and is covered by two existing tests:
+one asserting it short-circuits before any DB call, one asserting that no
+other value ("true", "yes", "0", "") opens the gate. Never set it against
+a database that holds real data.
 
 The header docblock in scripts/verify-t037-prerequisites.ts was updated to
-match (it documented four cases and numbered them; now five).
+match (it documented four numbered cases and mentioned the opt-out only in
+a separate prose section below the list; now all six are numbered together).
 
 --------------------------------------------------------------------------------
 7. WHAT WAS DELIBERATELY NOT DONE
