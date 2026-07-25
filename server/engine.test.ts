@@ -1090,6 +1090,59 @@ describe("T029 — deriveTargets monotonicity for appointment (US1 / FR-013 / SC
   });
 });
 
+// ===========================================================================
+// T044 — webinar vectors (contracts/derive-targets.md §8). Spec 012 / Phase 4
+// ships these here in T028-style: the spec is a contract, not a
+// coincidence of code order.
+// ===========================================================================
+
+describe("T044 — deriveTargets webinar vectors (US2 / contracts §8)", () => {
+  // Webinar spec sanity check (FR-006, SC-001-equivalent for webinar):
+  // showUpRate 25, closeRate 5, htoPrice 2000 →
+  // p = 0.25 × 0.05 = 0.0125; leadValue = 25.0; cplCeiling = 12.50;
+  // unitTarget = 12.50, source cpl_funnel_math.
+  const WEB_BASELINE: FunnelInputs = {
+    archetype: "webinar",
+    liveComponent: true,
+    aov: 0,
+    htoPrice: 2000,
+    htoConversionRate: 0,
+    frontEndRoas: 1,
+    arena: "broad",
+    showUpRate: 25,
+    closeRate: 5,
+  };
+
+  it("showUp 25 / close 5 × htoPrice 2000 → leadValue 25, cplCeiling 12.50, unitTarget 12.50, source cpl_funnel_math", () => {
+    const t = deriveTargets(WEB_BASELINE);
+    expect(t.leadValue).toBeCloseTo(25, 2);
+    expect(t.cplCeiling).toBeCloseTo(12.5, 2);
+    expect(t.unitTarget).toBeCloseTo(12.5, 2);
+    expect(t.unitTargetSource).toBe("cpl_funnel_math");
+  });
+
+  it("lowering showUp 25 → 15 lowers unitTarget (US2 AS2)", () => {
+    const base = deriveTargets(WEB_BASELINE).unitTarget!;
+    const lowered = deriveTargets({ ...WEB_BASELINE, showUpRate: 15 }).unitTarget!;
+    expect(lowered).toBeLessThan(base);
+    expect(lowered).toBeGreaterThan(0);
+  });
+
+  it("webinar: bookRate / showRate are ignored (FR-005 / FR-006)", () => {
+    // The appointment-only fields must not influence the webinar
+    // target. Stamping them in at non-zero values while the webinar
+    // rates are entered should not change the result.
+    const plain = deriveTargets(WEB_BASELINE);
+    const polluted = deriveTargets({
+      ...WEB_BASELINE,
+      bookRate: 99,
+      showRate: 99,
+    });
+    expect(polluted.unitTarget).toBe(plain.unitTarget);
+    expect(polluted.leadValue).toBe(plain.leadValue);
+  });
+});
+
 describe("T008 — runEngine verdict/rule/reason/action regression lock", () => {
   // Locking the four stable fields per object across the demo snapshot.
   // findings/promotion_note are excluded — they are display-only and not

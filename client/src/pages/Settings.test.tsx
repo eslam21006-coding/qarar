@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import { useState } from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act } from "react";
 
 const mocks = vi.hoisted(() => ({
   funnelGet: vi.fn(),
@@ -384,12 +384,14 @@ describe("Settings page (T008 / US1 / SC-001 / FR-001)", () => {
   // ===========================================================================
   // T032 — round-trip: save an appointment account with rates, switch
   // archetype away and back, and the rates are still present (FR-028a,
-  // SC-008, US1 AS8). The settingsFields.ts matrix keeps the fields in
-  // state but hides the inputs; on re-selection they hydrate from the
-  // stored row.
+  // SC-008, US1 AS8). The settingsFields.ts matrix hides the inputs
+  // when archetype ≠ appointment but the underlying form state still
+  // carries the rates — they re-appear when the user switches back.
   // =================================================================
   it("T032 — appointment rates survive an archetype switch (FR-028a / SC-008 / US1 AS8)", async () => {
-    // The server returns an appointment row with the three rates + htoPrice.
+    // A single fixture and a single mounted tree. The mock is stable
+    // across renders so the same row re-hydrates when we flip the
+    // archetype back.
     const APPT_ROW = {
       archetype: "appointment",
       liveComponent: false,
@@ -424,66 +426,124 @@ describe("Settings page (T008 / US1 / SC-001 / FR-001)", () => {
 
     const { container } = render(<Settings />);
 
-    // The appointment row hydrates the form — the three rates + htoPrice
-    // are visible as input values.
+    // Hydrate: the three rate inputs + htoPrice are present and carry
+    // the saved values.
     await waitFor(() => {
-      const values = Array.from(container.querySelectorAll("input")).map(
-        i => (i as HTMLInputElement).value
-      );
+      const inputs = Array.from(container.querySelectorAll("input"));
+      const values = inputs.map(i => (i as HTMLInputElement).value);
       expect(values).toContain("6");
       expect(values).toContain("70");
       expect(values).toContain("22");
       expect(values).toContain("2000");
     });
 
-    // Phase 2 — the user flips archetype to paid_lto. The server returns
-    // the appointment row again (the row hasn't been saved — this is the
-    // *next* read after the in-flight save). The rates are still stored;
-    // switching archetype only hides the inputs.
-    mocks.funnelGet.mockReturnValue({
-      data: {
-        status: "found",
-        settings: { ...APPT_ROW, archetype: "paid_lto" },
-        targets: {},
-      },
-      isLoading: false,
-      isError: false,
-    });
-    // (re-render via a no-op prop change — we re-render manually)
-    // We assert the contract through a second render: even when the
-    // server returns the row as paid_lto, the user can switch back and
-    // the rate fields still hold the saved values.
-    const next = render(<Settings />);
+    // Drive the archetype `<select>` through Radix Select's surface.
+    // Radix Select has no native `<select>` element here (no `name`
+    // prop and no surrounding `<form>`, so `isFormControl` is false
+    // after the trigger attaches). We drive the popover instead:
+    // open via `mouseDown` on the trigger (Radix's
+    // `useStableCallback` checks `event.button === 0 && pointerType ===
+    // "mouse"`; we stub `hasPointerCapture` on JSDOM and supply the
+    // pointerType through fireEvent.pointerDown). The popover content
+    // is portaled to `document.body`. We then click the option whose
+    // visible Arabic text matches the target value.
+    //
+    // Radix renders each option as `<div role="option">` WITHOUT
+    // `data-value`; identification is by visible Arabic text.
+    const ARABIC_LABEL: Record<"appointment" | "paid_lto" | "free_lead", string> = {
+      paid_lto: "أبيع منتجًا أو خدمة مباشرة",
+      free_lead: "أجمع بيانات عملاء مجانًا",
+      appointment: "أحجز استشارة مجانية",
+    };
+    const stubPointerCapture = (el: HTMLElement) => {
+      if (!el.hasPointerCapture) {
+        (el as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => false;
+      }
+      if (!el.releasePointerCapture) {
+        (el as unknown as { releasePointerCapture: () => void }).releasePointerCapture = () => undefined;
+      }
+      if (!(el as unknown as { scrollIntoView?: () => void }).scrollIntoView) {
+        (el as unknown as { scrollIntoView: () => void }).scrollIntoView = () => undefined;
+      }
+    };
+    const openArchetypeSelect = () => {
+      const trigger = container.querySelector(
+        'button[role="combobox"]'
+      ) as HTMLElement | null;
+      if (!trigger) throw new Error("archetype SelectTrigger not found");
+      stubPointerCapture(trigger);
+      // Radix listens for `onPointerDown` on the trigger and guards
+      // `event.button === 0 && event.pointerType === "mouse"`.
+      fireEvent.pointerDown(trigger, {
+        button: 0,
+        pointerType: "mouse",
+        pointerId: 1,
+        isPrimary: true,
+      });
+    };
+    const setArchetype = async (value: "appointment" | "paid_lto" | "free_lead") => {
+      openArchetypeSelect();
+      // The popover content is portaled — look both in the container
+      // and at the document body for the option element.
+      const needle = ARABIC_LABEL[value];
+      const findOption = (): HTMLElement | null => {
+        const scope: ParentNode =
+          (document.body as ParentNode) ?? (container as ParentNode);
+        const all = Array.from(scope.querySelectorAll('[role="option"]'));
+        return all.find(el => (el.textContent ?? "").includes(needle)) as
+          | HTMLElement
+          | null;
+      };
+      // Wait up to 1s for the popover content to render.
+      const start = Date.now();
+      let item: HTMLElement | null = null;
+      while (Date.now() - start < 1000) {
+        item = findOption();
+        if (item) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      if (!item) {
+        // Re-fire pointerdown one more time in case the first was lost.
+        openArchetypeSelect();
+        await new Promise(resolve => setTimeout(resolve, 50));
+        item = findOption();
+      }
+      if (!item) {
+        const allItems = Array.from(
+          (document.body ?? container).querySelectorAll('[role="option"]')
+        );
+        throw new Error(
+          `archetype option ${value} (looking for "${needle}") not found — popover items: ${allItems
+            .map(el => el.textContent)
+            .join(" | ")}`
+        );
+      }
+      stubPointerCapture(item);
+      // Radix SelectItem fires `handleSelect` on pointerDown + click.
+      // Both need the same guards as the trigger.
+      act(() => {
+        fireEvent.pointerDown(item!, {
+          button: 0,
+          pointerType: "mouse",
+          pointerId: 1,
+          isPrimary: true,
+        });
+        fireEvent.click(item!);
+      });
+    };
 
-    await waitFor(() => {
-      const values = Array.from(next.container.querySelectorAll("input")).map(
-        i => (i as HTMLInputElement).value
-      );
-      // paid_lto renders aov / frontEndRoas / htoConversionRate
-      // instead of the rate fields, but the underlying state still
-      // carries them — when the user flips back to appointment they
-      // are visible again.
-      expect(values).toContain("0");
-      expect(values).toContain("1");
-      expect(values).toContain("2000");
-    });
+    // Round-trip: appointment → paid_lto → appointment. The fixture
+    // doesn't change — same row re-hydrated — so any field that
+    // vanished on paid_lto MUST re-appear on appointment.
+    await setArchetype("paid_lto");
+    await setArchetype("appointment");
 
-    // Phase 3 — switch back to appointment. The rate fields re-hydrate.
-    // (We exercise the round-trip through a fresh render with the row
-    // now reporting archetype=appointment — the contract is the same
-    // because the form re-hydrates whenever `funnel.data` resolves to
-    // 'found'.)
-    next.unmount();
-    mocks.funnelGet.mockReturnValue({
-      data: { status: "found", settings: APPT_ROW, targets: {} },
-      isLoading: false,
-      isError: false,
-    });
-    const third = render(<Settings />);
+    // The contract: returning to appointment restores the three rate
+    // inputs AND the saved values 6 / 70 / 22. htoPrice 2000 is the
+    // shared anchor (visible in every archetype).
     await waitFor(() => {
-      const values = Array.from(third.container.querySelectorAll("input")).map(
-        i => (i as HTMLInputElement).value
-      );
+      const inputs = Array.from(container.querySelectorAll("input"));
+      const values = inputs.map(i => (i as HTMLInputElement).value);
       expect(values).toContain("6");
       expect(values).toContain("70");
       expect(values).toContain("22");

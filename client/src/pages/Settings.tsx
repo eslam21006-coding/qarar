@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { currencySymbol, money } from "@/lib/format";
 import {
+  ARCHETYPE_SELECTOR_HELPER,
   FIELD_COPY,
   closeRateLabel,
   htoUnderperformingLabel,
@@ -259,15 +260,27 @@ export default function Settings() {
   // Phase 6 T058 path renders an explicit not-enough-information state,
   // but for Phase 3 the preview handles its own empty state).
   const legacyValid = inputs.aov > 0 && inputs.frontEndRoas > 0;
+  // Spec 012 / T034 — appointment needs the three stage rates + htoPrice.
   const appointmentValid =
     (inputs.bookRate ?? 0) > 0 &&
     (inputs.showRate ?? 0) > 0 &&
     (inputs.closeRate ?? 0) > 0 &&
     inputs.htoPrice > 0;
+  // Phase 4 / T046 — webinar needs the two attendance rates + htoPrice
+  // (FR-006). Separate predicate because `showRate` / `bookRate` are
+  // appointment-only and `showUpRate` is webinar-only; reusing the
+  // appointment check would mark a webinar account with an empty
+  // `showRate` as invalid (the column doesn't exist for webinar).
+  const webinarValid =
+    (inputs.showUpRate ?? 0) > 0 &&
+    (inputs.closeRate ?? 0) > 0 &&
+    inputs.htoPrice > 0;
   const valid =
-    form.archetype === "appointment" || form.archetype === "webinar"
-      ? appointmentValid
-      : legacyValid;
+    form.archetype === "webinar"
+      ? webinarValid
+      : form.archetype === "appointment"
+        ? appointmentValid
+        : legacyValid;
   // For appointment / webinar the preview renders when the rates are
   // entered (the engine falls through to too_early otherwise, but the
   // preview's purpose is to show "what your target will become once you
@@ -464,9 +477,12 @@ export default function Settings() {
                 </Select>
                 {/* Spec 012 / T039 — paid-versus-free helper, short and
                     clear (FR-004). Any upfront payment → paid_lto; booking
-                    or attendance completely free → appointment / webinar. */}
+                    or attendance completely free → appointment / webinar.
+                    The dedicated ARCHETYPE_SELECTOR_HELPER constant
+                    carries this copy so the dropdown hint stays aligned
+                    with the visibility matrix in settingsFields.ts. */}
                 <p className="text-xs text-muted-foreground">
-                  {FIELD_COPY.archetype.hint}
+                  {ARCHETYPE_SELECTOR_HELPER}
                 </p>
               </div>
             </CardContent>
@@ -555,6 +571,7 @@ export default function Settings() {
                   placeholder={PLACEHOLDERS.bookRate}
                   onChange={v => set("bookRate", v)}
                   step="0.1"
+                  error={rateFieldError(form.bookRate)}
                 />
               )}
               {isFieldVisible("showRate", form.archetype) && (
@@ -565,6 +582,18 @@ export default function Settings() {
                   placeholder={PLACEHOLDERS.showRate}
                   onChange={v => set("showRate", v)}
                   step="0.1"
+                  error={rateFieldError(form.showRate)}
+                />
+              )}
+              {isFieldVisible("showUpRate", form.archetype) && (
+                <NumberField
+                  label={FIELD_COPY.showUpRate.label}
+                  hint={FIELD_COPY.showUpRate.hint}
+                  value={form.showUpRate}
+                  placeholder={PLACEHOLDERS.showUpRate}
+                  onChange={v => set("showUpRate", v)}
+                  step="0.1"
+                  error={rateFieldError(form.showUpRate)}
                 />
               )}
               {isFieldVisible("closeRate", form.archetype) && (
@@ -579,6 +608,7 @@ export default function Settings() {
                   }
                   onChange={v => set("closeRate", v)}
                   step="0.1"
+                  error={rateFieldError(form.closeRate)}
                 />
               )}
             </CardContent>
@@ -742,8 +772,13 @@ export default function Settings() {
                   {/* Funnel-math ceiling row. For free_lead (legacy)
                       AND for appointment / webinar (when the chain
                       yields a ceiling). The ceiling is null when no
-                      rates are entered; the row simply doesn't render. */}
+                      rates are entered; the row simply doesn't render.
+                      SC-014 — when funnel math is the source, the
+                      ceiling equals the judging target; we suppress
+                      the row rather than render two identical numbers. */}
                   {targets.cplCeiling !== null &&
+                    targets.unitTarget !== null &&
+                    targets.cplCeiling !== targets.unitTarget &&
                     (form.archetype === "free_lead" ||
                       form.archetype === "appointment" ||
                       form.archetype === "webinar") && (
@@ -836,6 +871,7 @@ function NumberField({
   onChange,
   step,
   placeholder,
+  error,
 }: {
   label: string;
   hint?: string;
@@ -843,6 +879,14 @@ function NumberField({
   onChange: (v: string) => void;
   step?: string;
   placeholder?: string;
+  /**
+   * Spec 012 / T040 / FR-009 — optional simple-Arabic validation
+   * message rendered beneath the input. The form value is still the
+   * raw user input (no fabricated zero); the error is purely
+   * informational and Save stays enabled so the user can submit a
+   * corrected value. Pass `undefined` (or omit) to suppress.
+   */
+  error?: string | null;
 }) {
   return (
     <div className="space-y-2">
@@ -857,10 +901,39 @@ function NumberField({
         onChange={e => onChange(e.target.value)}
         className="num"
         dir="ltr"
+        aria-invalid={error ? "true" : undefined}
       />
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      {error && (
+        <p
+          className="flex items-start gap-1 text-xs text-v-kill"
+          data-testid="numberfield-error"
+        >
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+          <span>{error}</span>
+        </p>
+      )}
     </div>
   );
+}
+
+/**
+ * Spec 012 / FR-009 — stage-rate validator. Returns a simple-Arabic
+ * message for the four rejected cases (FR-009) or `null` when the
+ * input is empty / valid. Zero is REJECTED — FR-009 forbids it
+ * because zero would silently drive the lead value to zero (the
+ * same trap the funnels.md investigation flagged). Negatives and
+ * values above 100 are also rejected.
+ */
+function rateFieldError(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return "أدخل رقمًا صحيحًا";
+  if (n < 0) return "لا يمكن أن تكون النسبة سالبة";
+  if (n === 0) return "لا يمكن أن تكون النسبة صفرًا — أدخل قيمة أكبر من صفر";
+  if (n > 100) return "النسبة يجب ألا تتجاوز 100";
+  return null;
 }
 
 function TargetRow({

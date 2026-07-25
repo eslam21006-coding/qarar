@@ -124,7 +124,7 @@ async function getFunnelForRun(
  * a private local copy because the cron is on its own (offline) path and
  * should not depend on tRPC-internal helpers.
  */
-function funnelSettingsToInputs(
+export function funnelSettingsToInputs(
   row: NonNullable<Awaited<ReturnType<typeof db.getFunnel>>>
 ): FunnelInputs {
   return {

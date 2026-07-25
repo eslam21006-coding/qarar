@@ -625,6 +625,44 @@ export function deriveTargets(
       unitTarget = null;
       unitTargetSource = null;
     }
+  } else if (f.archetype === "webinar") {
+    // Spec 012 / T046 — webinar funnel math (FR-006 / contracts/
+    // derive-targets.md §3). Two stage rates instead of three:
+    //   p        = (showUpRate/100) × (closeRate/100)
+    //   leadValue = p × htoPrice
+    //   cplCeiling = leadValue / 2
+    // Same priority chain as appointment (FR-016): cplMedian30 → funnel
+    // math → marketCplBenchmark → null. `fullBuyerValue` is the lead
+    // value (FR-015a) so the W6 / S2 ROAS rules fire from the same
+    // anchor the unit target uses (FR-026e).
+    const showUpRate = f.showUpRate;
+    const closeRate = f.closeRate;
+    if (
+      showUpRate != null &&
+      showUpRate > 0 &&
+      closeRate != null &&
+      closeRate > 0 &&
+      htoPrice > 0
+    ) {
+      const p = (showUpRate / 100) * (closeRate / 100);
+      leadValue = p * htoPrice;
+      cplCeiling = 0.5 * leadValue;
+    }
+    fullBuyerValue = leadValue;
+
+    if (baselines?.cplMedian30 && baselines.cplMedian30 > 0) {
+      unitTarget = baselines.cplMedian30;
+      unitTargetSource = "cpl_baseline";
+    } else if (cplCeiling !== null) {
+      unitTarget = cplCeiling;
+      unitTargetSource = "cpl_funnel_math";
+    } else if (marketCplBenchmark != null && marketCplBenchmark > 0) {
+      unitTarget = marketCplBenchmark;
+      unitTargetSource = "cpl_benchmark";
+    } else {
+      unitTarget = null;
+      unitTargetSource = null;
+    }
   }
 
   return {

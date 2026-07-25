@@ -1261,38 +1261,49 @@ function buildNoTargetResult(
   fired: Fired,
   archetype: FunnelInputs["archetype"]
 ): EngineResult {
-  const toRow = (o: NormalizedObject): EngineRow => ({
-    id: o.id,
-    name: o.name,
-    status: o.status,
-    level: o.level,
-    parentId: o.parentId,
-    campaignId: o.campaignId,
-    daily_budget: o.dailyBudget,
-    objective: o.objective ?? null,
-    spend_3d: round2(o.w3d.spend),
-    spend_today: round2(o.today.spend),
-    impressions_3d: o.w3d.impressions,
-    cpa_3d: o.w3d.cpa !== null ? round2(o.w3d.cpa) : null,
-    ctr_link: round2(o.w3d.ctrLink),
-    ctr_all: round2(o.w3d.ctrAll),
-    conversions_3d: o.w3d.conversions,
-    frequency_3d: round2(o.w3d.frequency),
-    spend_share_pct: o.spendSharePct !== null ? round2(o.spendSharePct) : null,
-    age_days: Math.round(o.ageDays * 10) / 10,
-    verdict: fired.verdict,
-    rule: fired.rule,
-    reason_ar: fired.reason,
-    action_ar: fired.action,
-    findings: [],
-    promotion_eligible: false,
-    promotion_note: null,
-    learning_phase: !!o.learningPhase || weeklyConversions(o, archetype) < 50,
-    roas_3d:
-      o.w3d.spend > 0 && o.w3d.conversionValue > 0
-        ? round2(o.w3d.conversionValue / o.w3d.spend)
-        : null,
-  });
+  const toRow = (o: NormalizedObject): EngineRow => {
+    // T025 / FR-031 — the row's `cpa_3d` and `conversions_3d` carry the
+    // figure the engine judged on (per-archetype). Mirror the main
+    // `toRow` so the no-target path produces the same per-row display
+    // values the judged path does. `effectiveConversions` returns
+    // `undefined` for appointment / webinar with a pre-separation
+    // snapshot (T026) — the engine below the gate never sees those
+    // rows, so this branch is unreachable for them.
+    const rowConv = effectiveConversions(o, archetype);
+    const rowCpa = effectiveCpa(o, archetype);
+    return {
+      id: o.id,
+      name: o.name,
+      status: o.status,
+      level: o.level,
+      parentId: o.parentId,
+      campaignId: o.campaignId,
+      daily_budget: o.dailyBudget,
+      objective: o.objective ?? null,
+      spend_3d: round2(o.w3d.spend),
+      spend_today: round2(o.today.spend),
+      impressions_3d: o.w3d.impressions,
+      cpa_3d: rowCpa !== null ? round2(rowCpa) : null,
+      ctr_link: round2(o.w3d.ctrLink),
+      ctr_all: round2(o.w3d.ctrAll),
+      conversions_3d: rowConv ?? 0,
+      frequency_3d: round2(o.w3d.frequency),
+      spend_share_pct: o.spendSharePct !== null ? round2(o.spendSharePct) : null,
+      age_days: Math.round(o.ageDays * 10) / 10,
+      verdict: fired.verdict,
+      rule: fired.rule,
+      reason_ar: fired.reason,
+      action_ar: fired.action,
+      findings: [],
+      promotion_eligible: false,
+      promotion_note: null,
+      learning_phase: !!o.learningPhase || weeklyConversions(o, archetype) < 50,
+      roas_3d:
+        o.w3d.spend > 0 && o.w3d.conversionValue > 0
+          ? round2(o.w3d.conversionValue / o.w3d.spend)
+          : null,
+    };
+  };
   const rows = snapshot.objects.map(toRow);
   const summary = buildSummary(rows, snapshot, targets);
   return { rows, summary, targets, currencySymbol: _currency };
