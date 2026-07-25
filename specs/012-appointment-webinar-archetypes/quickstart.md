@@ -163,7 +163,7 @@ All three must be green. Isolation coverage extends to the new columns (Principl
 npm run dev
 ```
 
-1. Settings → pick **أحجز مكالمات مع العملاء ثم أبيع في المكالمة**.
+1. Settings → pick **أحجز استشارة مجانية ثم أبيع بعدها**.
 2. Confirm the three rate boxes show their ranges as grey hints, and that AOV / return-multiple /
    high-ticket-conversion inputs are gone.
 3. Enter `6`, `70`, `22`, high-ticket price `2000`. Expect **9.24** in the max-cost-per-lead row.

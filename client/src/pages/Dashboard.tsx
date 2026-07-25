@@ -273,6 +273,8 @@ export default function Dashboard() {
           <DecisionTable
             rows={rows}
             series={series}
+            // FR-019d — propagate the absent target as null. The table and
+            // its cells explicitly guard against null (no fabricated zero).
             unitTarget={targets.unitTarget}
             actId={isDemo ? null : (accountExternalId ?? null)}
             accountId={accountId}

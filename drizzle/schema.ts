@@ -113,8 +113,13 @@ export const funnelSettings = mysqlTable("funnelSettings", {
   id: int("id").autoincrement().primaryKey(),
   userId: varchar("userId", { length: 36 }).notNull(),
   adAccountId: int("adAccountId").notNull(),
-  /** (أ) paid LTO < $67 / (ب) free lead magnet / (ج) direct call booking */
-  archetype: mysqlEnum("archetype", ["paid_lto", "free_lead", "direct_call"])
+  /** (أ) paid LTO < $67 / (ب) free lead magnet / (ج) appointment / (د) webinar */
+  archetype: mysqlEnum("archetype", [
+    "paid_lto",
+    "free_lead",
+    "appointment",
+    "webinar",
+  ])
     .default("paid_lto")
     .notNull(),
   liveComponent: boolean("liveComponent").default(false).notNull(),
@@ -122,6 +127,10 @@ export const funnelSettings = mysqlTable("funnelSettings", {
   ticketPrice: double("ticketPrice").default(0),
   aov: double("aov").default(0).notNull(),
   htoPrice: double("htoPrice").default(0).notNull(),
+  bookRate: double("bookRate"),
+  showRate: double("showRate"),
+  showUpRate: double("showUpRate"),
+  closeRate: double("closeRate"),
   /** % lead/buyer HTO conversion, e.g. 3 means 3% */
   htoConversionRate: double("htoConversionRate").default(0).notNull(),
   /** 1.0 / 0.65 / 0.5 / custom */

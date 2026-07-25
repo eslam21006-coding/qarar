@@ -219,3 +219,197 @@ being read by a consumer that did not know:
 the settings breakdown panel that FR-028b hides. **That trace should be re-run against the code as a
 P0 task rather than trusted from this note** — it was performed by grep, and the two failures above
 were both found only after reading the call sites.
+
+---
+
+## R8 — Re-trace of every `DerivedTargets` member to its consumers (T009)
+
+Re-run by **reading each call site in `server/engine.ts` and `client/src`**, not by grepping. The
+output is a member-by-member consumer map with the consequences this feature produces when the
+field changes shape (nullable, redefined, hidden). Line numbers are to the current tree
+(2026-07-25).
+
+### `unitTarget`
+
+**Server (`server/engine.ts`)**
+
+| Line | Function | Role of the value |
+|---|---|---|
+| 202 | `killRulesAdset` | bound to local `target`; used in K1 (`spend ≥ 2×target && conv = 0`), K2 (`spend ≥ 3×target && cpa > 1.5×target`), K6 (`killCpaGateMet(o, target)` ⇒ `spend ≥ 2×target`), K7 (`killCpaGateMet`) |
+| 301 | `starvedAdMatrix` | K5 high-efficiency check: `ad.w3d.cpa ≤ t.unitTarget` |
+| 316 | `starvedAdMatrix` | K5 parent-winning check: `parent.w3d.cpa ≤ t.unitTarget` |
+| 471 | `watchRules` | bound to local `target`; W1 (1×–1.5× band), W2 prior-good day uses `d.cpa ≤ target`, zero-result fallthrough uses `spend ≥ target && spend < 2×target` |
+| 574 | `continueRules` | bound to local `target`; S1 strict condition (`cpa ≤ target` for 3 consecutive days), S3 headroom (`cpa ≤ 0.8×target`), S2/S4 (`cpa ≤ target`), daily7 filter (`cpa ≤ target * 1.0`) |
+| 764 | `evaluateCampaign` | campaign gate: `spend < t.unitTarget ⇒ too_early GATE` |
+| 778 | `evaluateCampaign` | W5 trigger: `cpa ≤ 1.5×t.unitTarget` |
+| 806 | `evaluateCampaign` | campaign K1 zero-result: `spend ≥ 2×t.unitTarget` |
+| 845 | `evaluateAd` | forwarded to `gateVerdict(ad, t.unitTarget)` |
+| 855 | `evaluateAd` | ad-level K1 parity: `ad.w3d.spend ≥ 2×t.unitTarget` |
+| 859 | `evaluateAd` | reason text interpolation `${money(t.unitTarget)}` |
+| 887 | `evaluateAdset` | forwarded to `circuitBreaker(o, t.unitTarget)` — CB uses 2.5× and 1.5× multiples |
+| 891 | `evaluateAdset` | forwarded to `gateVerdict(o, t.unitTarget)` |
+
+**Client (`client/src`)**
+
+| Line | File | Role of the value |
+|---|---|---|
+| 255 | `pages/Dashboard.tsx` | primary cost-per-lead tile — `money(targets.unitTarget, currencySymbol)`. **Defect surface**: passing null reaches `money()` which returns `∞` (research R5). |
+| 276 | `pages/Dashboard.tsx` | forwarded into `<DecisionTable unitTarget={...} />` |
+| 297, 309 | `components/DecisionTable.tsx` | typed `unitTarget: number` prop; downstream `cpaCell({ target: unitTarget, ... })` (4 sites: 675, 684, 723, 731) |
+| 207, 209 | `pages/Settings.tsx` | re-derived on the client for live preview (`targetsInInput`, `targetsInAccount`) |
+
+**Consequence of making it `number | null`**: the entire server engine tree — every read above —
+must change shape. Doing that with a `JudgeableTargets` narrow inside the gate (T012/T015) is the
+only safe path; scattered `?? 0` would make `spend ≥ 2×target` universally true (research R3).
+
+### `unitTargetSource`
+
+**Server (`server/engine.ts`)**
+
+| Line | Function | Role of the value |
+|---|---|---|
+| 230 | `killRulesAdset` | K6 baseline choice: `unitTargetSource === "cpl_baseline" || "cpl_benchmark"` ⇒ use `target` itself as baseline; otherwise fall back to `baselines.cpaMedian30 ?? target` |
+
+**Client**: not consumed directly; only read by type-system code.
+
+**Consequence of adding `"cpl_funnel_math"` and `null`**: K6's branch must be widened (T067, the
+behaviour-preserving explicit join — otherwise `cpl_funnel_math` silently falls back to
+`cpaMedian30 ?? target`, which is correct by coincidence today and wrong as soon as the baseline
+differs from the funnel math). `null` only flows in via the no-target state (T058), which is short-
+circuited before reaching `killRulesAdset` by the gate guard.
+
+### `cplCeiling`
+
+**Server (`server/engine.ts`)**
+
+| Line | Function | Role of the value |
+|---|---|---|
+| 234 | `killRulesAdset` | K7 structural-loss condition: `t.cplCeiling !== null && cpa ≥ t.cplCeiling && killCpaGateMet(o, target)` |
+| 238 | `killRulesAdset` | K7 reason text interpolation `${money(t.cplCeiling)}` |
+
+**Client**
+
+| Line | File | Role |
+|---|---|---|
+| 581, 582 | `pages/Settings.tsx` | dual-currency and single-currency render of the ceiling row, gated on `form.archetype === "free_lead"` (line 575) |
+
+**Consequence**: the only engine consumer is K7, which already null-guards. The new archetypes
+need (a) `cplCeiling = 0.5 × leadValue` (not `0.7 ×`) so the displayed and acting numbers are
+identical (FR-026e), and (b) K7's action text to carry `DISCOVERY_CALL_URL` for the new
+archetypes (FR-026h). The client-side ceiling row guard on `free_lead` becomes the per-archetype
+"show when computable" logic in T042.
+
+### `fullBuyerValue`
+
+**Server (`server/engine.ts`)**
+
+| Line | Function | Role of the value |
+|---|---|---|
+| 534 | `watchRules` | W6 full-ROAS numerator: `(conversions * t.fullBuyerValue) / o.w3d.spend`; gate `fullRoas ≥ 2.0` |
+| 539 | `watchRules` | W6 reason text interpolation `${money(t.fullBuyerValue)}` |
+| 772 | `evaluateCampaign` | campaign full-ROAS numerator: `(conversions * t.fullBuyerValue) / spend` |
+| 792 | `evaluateCampaign` | campaign S2 reason text interpolation `${money(t.fullBuyerValue)}` |
+
+**Client**
+
+| Line | File | Role |
+|---|---|---|
+| 606, 607 | `pages/Settings.tsx` | dual/single currency render inside the "كيف حسبنا هذا الرقم؟" breakdown panel |
+
+**Consequence of making it `number | null`**: the same null-guard pattern used for `unitTarget`
+cannot apply here — `fullBuyerValue` flows through full-ROAS arithmetic, where a `null` arithmetic
+operand is a NaN, not a zero target. The only safe pattern is `if (t.fullBuyerValue === null) return
+null;` and SKIP the rule entirely (FR-015b). The engine code already has the structure to do this
+inside W6 and S2, but the new archetypes must set `fullBuyerValue = leadValue` (FR-015a) — and skip
+both rules while `leadValue === null`.
+
+### `leadValue`
+
+**Server**: no reads in `engine.ts` (it is only emitted). The settings preview reads it indirectly
+through `cplCeiling`.
+
+**Client**: not read directly — the settings preview surfaces `cplCeiling` (which derives from it)
+and the new archetypes will too.
+
+**Consequence**: `leadValue` is the source of truth for the funnel-math ceiling and the new
+`fullBuyerValue`. It must be `null` whenever any required rate is absent (FR-015b, FR-026f) — the
+shape is already nullable, the contract is to keep it null rather than fabricating `0`.
+
+### `effectiveCPA`
+
+**Server**: not consumed by the engine; only emitted in the output.
+
+**Client (`pages/Settings.tsx`)**
+
+| Line | Role |
+|---|---|
+| 549, 553, 557 | primary target row in the preview (dual-currency + single-currency variants) |
+| 628, 629 | suggested daily-budget band `${money(targets.effectiveCPA, sym)}–${money(1.5 × targets.effectiveCPA, sym)}` |
+
+**Consequence**: this is the field `paid_lto`'s primary row reads. For the new archetypes the
+primary row needs to switch to `unitTarget` (which may be null) — the panel needs a no-target
+fallback (T059) and the `effectiveCPA`/capped/`rawTargetCPA`/`maxCPA`/`fullBuyerValue` breakdown
+must be hidden (T041, FR-028b). Today's read sites stay valid for `paid_lto`; the new branch
+guards on archetype.
+
+### `rawTargetCPA`
+
+**Server**: not consumed.
+
+**Client (`pages/Settings.tsx`)**: lines 597–598, inside the breakdown `<details>` panel.
+
+**Consequence**: hidden for the new archetypes (FR-028b). The render path stays untouched for
+`paid_lto`; an archetype guard on the outer `<details>` (T041) is the only change.
+
+### `maxCPA`
+
+**Server**: not consumed.
+
+**Client (`pages/Settings.tsx`)**: lines 615–616, inside the breakdown `<details>` panel.
+
+**Consequence**: same as `rawTargetCPA` — hidden for the new archetypes.
+
+### `capped`
+
+**Server**: not consumed (the engine uses `rawTargetCPA > maxCPA` arithmetic in `deriveTargets`
+only; once `effectiveCPA` is computed, `capped` is just an output flag).
+
+**Client (`pages/Settings.tsx`)**: line 565, the "أرقامك تسمح بدفع أكثر للعميل" warning rendered
+only when `targets.capped` is true.
+
+**Consequence**: the `capped` warning is intrinsically a product-purchase concept. It must be
+hidden for the new archetypes (FR-028b). Today's render path stays valid for `paid_lto`/`free_lead`
+who can still produce capped outputs; the new archetypes' archetype guard (T041) makes it inert
+for them.
+
+### Summary table
+
+| Member | Server consumers | Client consumers | Nullability consequence |
+|---|---|---|---|
+| `unitTarget` | 13 sites in `engine.ts` (R3) | `Dashboard.tsx:255, 276`; `DecisionTable.tsx:297,309,675,684,723,731`; `Settings.tsx:207,209` (preview) | Compile-time narrow via `JudgeableTargets` (T012) — every rule reads the narrow type; absent ⇒ `too_early GATE` (T058) |
+| `unitTargetSource` | `engine.ts:230` (K6) | (none) | Widen the K6 baseline branch to include `"cpl_funnel_math"` (T067) |
+| `cplCeiling` | `engine.ts:234, 238` (K7) | `Settings.tsx:575–583` | Already nullable; K7 already null-guards; new archetypes need `0.5 × leadValue` (FR-026e) |
+| `fullBuyerValue` | `engine.ts:534, 539, 772, 792` (W6, S2) | `Settings.tsx:606–607` | Make nullable; skip W6/S2 when null (FR-015b); for new archetypes set `= leadValue` (FR-015a) |
+| `leadValue` | (none) | (indirect via `cplCeiling`) | Keep nullable; new archetypes compute from stage rates |
+| `effectiveCPA` | (none) | `Settings.tsx:549,553,557,628,629` | The new archetypes' primary row reads `unitTarget`, not `effectiveCPA` |
+| `rawTargetCPA` | (none) | `Settings.tsx:597–598` | Hidden for new archetypes (FR-028b) |
+| `maxCPA` | (none) | `Settings.tsx:615–616` | Hidden for new archetypes (FR-028b) |
+| `capped` | (none) | `Settings.tsx:565` | Hidden for new archetypes (FR-028b) |
+
+The grep-derived assumption that only `unitTarget`, `cplCeiling`, and `fullBuyerValue` had
+non-display consumers is correct **as far as it goes** — `rawTargetCPA`, `maxCPA`, `effectiveCPA`,
+`capped`, and `leadValue` have NO engine consumers. The hidden finding is more nuanced:
+
+1. **`Settings.tsx:575` gates the ceiling row on `archetype === "free_lead"`**, not on
+   `cplCeiling !== null`. The new archetypes will populate `cplCeiling` (a number); today's
+   boolean guard hides the row from them. T042 fixes the guard.
+2. **The dashboard target tile** (`Dashboard.tsx:255`) reads `targets.unitTarget` and forwards to
+   `money()`, which returns `∞` for null (R5). The plumbing path is `Dashboard → DecisionTable →
+   cpaCell` (4 sites) plus `cpaColorClass` — every one of those will need a null-tolerant branch.
+3. **The settings preview's `targetsInInput.effectiveCPA`** (line 549) — the live client preview —
+   also reaches `money()`. Today `effectiveCPA` is never null for `paid_lto`/`free_lead`, so this
+   is not exercised; with the new branch setting `unitTarget = cplCeiling`, the panel re-renders
+   for `appointment`/`webinar` against `unitTarget`, not `effectiveCPA`.
+
+The full TRACED set — including every client consumer — is now in this section, not in a
+follow-up grep.

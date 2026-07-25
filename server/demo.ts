@@ -374,6 +374,11 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
       ctrLinkMedian90: 1.7,
       cpmAvg14: 18.0,
       cpaMedian30: 39,
+      // Spec 012 — cplMedian30 (lead-based 30-day median). Demo snapshot
+      // carries the same legacy `conversions` count today; the lead-based
+      // median therefore equals the existing cpaMedian30. The split is
+      // computed by the daily cron for live accounts (research R4).
+      cplMedian30: 39,
       cpmNow: 18.5,
     },
     attributionStraddle: true,

@@ -860,3 +860,481 @@ describe("ISSUE-009 — runEngine forwards currencies into deriveTargets", () =>
     );
   });
 });
+
+// ===========================================================================
+// T007 / T008 — REGRESSION LOCKS for the free_lead + paid_lto fixtures.
+// Spec 012-appointment-webinar-archetypes: these must be green BEFORE any
+// change to shared/qarar.ts (T010–T014). They are the only proof that the
+// additive feature stayed additive — the spec's SC-005 / SC-010.
+// ===========================================================================
+
+describe("T007 — deriveTargets regression lock for free_lead + paid_lto", () => {
+  // The input matrix covers the cases the legacy code path is exercised
+  // against today: aov on/off the cap, with/without baselines, with/without
+  // benchmark. Each (archetype, fixture) pair snapshots every deriveTargets
+  // output field so any future change that drifts one is caught here.
+  const baselineAll = {
+    ctrLinkMedian90: 1.7,
+    cpmAvg14: 18,
+    cpaMedian30: 2.1,
+    cpmNow: 18,
+  } as const;
+  const baselineNoMedian = { ...baselineAll, cpaMedian30: null } as const;
+
+  const fixtures: ReadonlyArray<{
+    label: string;
+    f: FunnelInputs;
+    baselines?: typeof baselineAll | null;
+  }> = [
+    // paid_lto — unchanged shape: min(rawTargetCPA, maxCPA)
+    { label: "paid_lto · default", f: baseFunnel },
+    {
+      label: "paid_lto · roas 0.5 capped",
+      f: { ...baseFunnel, frontEndRoas: 0.5 },
+    },
+    {
+      label: "paid_lto · roas 0.65 uncapped",
+      f: { ...baseFunnel, frontEndRoas: 0.65 },
+    },
+    // free_lead — every source tier exercised
+    {
+      label: "free_lead · baseline source",
+      f: { ...baseFunnel, archetype: "free_lead" },
+      baselines: baselineAll,
+    },
+    {
+      label: "free_lead · benchmark source (no baseline)",
+      f: { ...baseFunnel, archetype: "free_lead", marketCplBenchmark: 4 },
+      baselines: baselineNoMedian,
+    },
+    {
+      label: "free_lead · effectiveCPA fallback (neither)",
+      f: { ...baseFunnel, archetype: "free_lead", marketCplBenchmark: null },
+      baselines: baselineNoMedian,
+    },
+  ];
+
+  for (const fx of fixtures) {
+    it(`free_lead/paid_lto deriveTargets snapshot — ${fx.label}`, () => {
+      const t = deriveTargets(fx.f, fx.baselines ?? null);
+      // Field-by-field equality. toMatchSnapshot() records every output
+      // member; any drift in rawTargetCPA, fullBuyerValue, maxCPA,
+      // effectiveCPA, capped, leadValue, cplCeiling, unitTarget, or
+      // unitTargetSource across the legacy archetypes fails the lock.
+      expect(t).toMatchSnapshot();
+    });
+  }
+});
+
+// ===========================================================================
+// T028 — deriveTargets appointment vectors (contracts/derive-targets.md §8).
+// Lock the spec's worked example and the rate-knockdown cases before
+// implementing the branch (T034) so the test is a contract, not a
+// coincidence of code order.
+// ===========================================================================
+
+describe("T028 — deriveTargets appointment vectors (US1 / SC-001)", () => {
+  // The spec's sanity check (FR-014): 6 / 70 / 22, htoPrice 2000.
+  // p = 0.06 × 0.70 × 0.22 = 0.00924; leadValue = 18.48;
+  // cplCeiling = 9.24; unitTarget = 9.24 (cpl_funnel_math).
+  const APPT_BASELINE: FunnelInputs = {
+    archetype: "appointment",
+    liveComponent: true,
+    aov: 0,
+    htoPrice: 2000,
+    htoConversionRate: 0,
+    frontEndRoas: 1,
+    arena: "broad",
+    bookRate: 6,
+    showRate: 70,
+    closeRate: 22,
+  };
+
+  it("6/70/22 × htoPrice 2000 → leadValue 18.48, cplCeiling 9.24, unitTarget 9.24, source cpl_funnel_math (SC-001)", () => {
+    const t = deriveTargets(APPT_BASELINE);
+    expect(t.leadValue).toBeCloseTo(18.48, 2);
+    expect(t.cplCeiling).toBeCloseTo(9.24, 2);
+    expect(t.unitTarget).toBeCloseTo(9.24, 2);
+    expect(t.unitTargetSource).toBe("cpl_funnel_math");
+  });
+
+  it("closeRate 11 (knockdown) → cplCeiling 4.62, unitTarget 4.62", () => {
+    const t = deriveTargets({ ...APPT_BASELINE, closeRate: 11 });
+    expect(t.leadValue).toBeCloseTo(9.24, 2);
+    expect(t.cplCeiling).toBeCloseTo(4.62, 2);
+    expect(t.unitTarget).toBeCloseTo(4.62, 2);
+    expect(t.unitTargetSource).toBe("cpl_funnel_math");
+  });
+
+  it("bookRate 3 (knockdown) → cplCeiling 4.62, unitTarget 4.62", () => {
+    const t = deriveTargets({ ...APPT_BASELINE, bookRate: 3 });
+    expect(t.leadValue).toBeCloseTo(9.24, 2);
+    expect(t.cplCeiling).toBeCloseTo(4.62, 2);
+    expect(t.unitTarget).toBeCloseTo(4.62, 2);
+    expect(t.unitTargetSource).toBe("cpl_funnel_math");
+  });
+
+  it("all rates 100, htoPrice 2000 → cplCeiling 1000 (arithmetic upper bound, contracts/derive-targets.md §8)", () => {
+    const t = deriveTargets({
+      ...APPT_BASELINE,
+      bookRate: 100,
+      showRate: 100,
+      closeRate: 100,
+    });
+    expect(t.leadValue).toBeCloseTo(2000, 2);
+    expect(t.cplCeiling).toBeCloseTo(1000, 2);
+    expect(t.unitTarget).toBeCloseTo(1000, 2);
+    expect(t.unitTargetSource).toBe("cpl_funnel_math");
+  });
+
+  it("any required rate missing → leadValue=null, cplCeiling=null, unitTarget=null (FR-015, FR-026f)", () => {
+    // closeRate missing — the chain is broken; the funnel-math source is
+    // skipped, NOT zero-substituted.
+    const t = deriveTargets({ ...APPT_BASELINE, closeRate: null });
+    expect(t.leadValue).toBeNull();
+    expect(t.cplCeiling).toBeNull();
+    expect(t.unitTarget).toBeNull();
+    expect(t.unitTargetSource).toBeNull();
+  });
+
+  it("htoPrice missing or 0 → funnel-math skipped (FR-015)", () => {
+    const t = deriveTargets({ ...APPT_BASELINE, htoPrice: 0 });
+    expect(t.leadValue).toBeNull();
+    expect(t.cplCeiling).toBeNull();
+    expect(t.unitTarget).toBeNull();
+    expect(t.unitTargetSource).toBeNull();
+  });
+});
+
+// ===========================================================================
+// T029 — monotonicity: lowering any single stage rate NEVER raises the
+// appointment target (FR-013, SC-002). The property holds for any
+// product-of-positive-factors expression by construction — this test
+// keeps that property honest.
+// ===========================================================================
+
+describe("T029 — deriveTargets monotonicity for appointment (US1 / FR-013 / SC-002)", () => {
+  const APPT_BASE: FunnelInputs = {
+    archetype: "appointment",
+    liveComponent: true,
+    aov: 0,
+    htoPrice: 2000,
+    htoConversionRate: 0,
+    frontEndRoas: 1,
+    arena: "broad",
+    bookRate: 8,
+    showRate: 75,
+    closeRate: 25,
+  };
+
+  // Helper: produces an `APPT_BASE` variant with `field` lowered to `value`
+  // (but never below the floor that keeps the rate > 0).
+  function lower(
+    field: "bookRate" | "showRate" | "closeRate" | "htoPrice",
+    value: number
+  ): FunnelInputs {
+    return { ...APPT_BASE, [field]: value };
+  }
+
+  it("lowering bookRate from 8 → 4 never raises unitTarget", () => {
+    const base = deriveTargets(APPT_BASE).unitTarget!;
+    const lowered = deriveTargets(lower("bookRate", 4)).unitTarget!;
+    expect(lowered).toBeLessThanOrEqual(base);
+    expect(lowered).toBeGreaterThan(0);
+  });
+
+  it("lowering showRate from 75 → 40 never raises unitTarget", () => {
+    const base = deriveTargets(APPT_BASE).unitTarget!;
+    const lowered = deriveTargets(lower("showRate", 40)).unitTarget!;
+    expect(lowered).toBeLessThanOrEqual(base);
+    expect(lowered).toBeGreaterThan(0);
+  });
+
+  it("lowering closeRate from 25 → 12 never raises unitTarget", () => {
+    const base = deriveTargets(APPT_BASE).unitTarget!;
+    const lowered = deriveTargets(lower("closeRate", 12)).unitTarget!;
+    expect(lowered).toBeLessThanOrEqual(base);
+    expect(lowered).toBeGreaterThan(0);
+  });
+
+  it("lowering htoPrice from 2000 → 1000 never raises unitTarget", () => {
+    const base = deriveTargets(APPT_BASE).unitTarget!;
+    const lowered = deriveTargets(lower("htoPrice", 1000)).unitTarget!;
+    expect(lowered).toBeLessThanOrEqual(base);
+    expect(lowered).toBeGreaterThan(0);
+  });
+
+  it("five rates × three lower-values each: target never rises (full sweep)", () => {
+    // Walks the full input matrix at low cardinality — a strong guard
+    // against any future code change that re-introduces the `÷ bookRate`
+    // shape (research R1) which INVERTS with bookRate.
+    const lowers: Record<string, number[]> = {
+      bookRate: [1, 4, 8],
+      showRate: [40, 60, 75],
+      closeRate: [12, 20, 25],
+      htoPrice: [500, 1000, 2000],
+    };
+    const baseline = deriveTargets(APPT_BASE).unitTarget!;
+    for (const [field, values] of Object.entries(lowers)) {
+      for (const v of values) {
+        const t = deriveTargets({ ...APPT_BASE, [field]: v }).unitTarget!;
+        // Strict inequality for `bookRate` / `showRate` / `closeRate`
+        // (they're multiplicative); non-strict for `htoPrice` (scaling
+        // the same product keeps the proportional relationship).
+        expect(
+          t,
+          `${field}=${v} raised target (was ${baseline}, now ${t})`,
+        ).toBeLessThanOrEqual(baseline);
+      }
+    }
+  });
+});
+
+describe("T008 — runEngine verdict/rule/reason/action regression lock", () => {
+  // Locking the four stable fields per object across the demo snapshot.
+  // findings/promotion_note are excluded — they are display-only and not
+  // part of the SC-010 contract. The locked fields are exactly what
+  // FR-026c / SC-010 promise to keep unchanged for free_lead + paid_lto.
+  const FREE_LEAD_FUNNEL: FunnelInputs = {
+    ...(DEMO_FUNNEL as FunnelInputs),
+    archetype: "free_lead",
+  };
+
+  function lockVerdicts(funnel: FunnelInputs, label: string) {
+    const result = runEngine(buildDemoSnapshot(), funnel);
+    const rows = result.rows.map(r => ({
+      id: r.id,
+      level: r.level,
+      verdict: r.verdict,
+      rule: r.rule,
+      reason_ar: r.reason_ar,
+      action_ar: r.action_ar,
+    }));
+    expect({ label, rows }).toMatchSnapshot();
+  }
+
+  it("paid_lto: every object verdict/rule/reason/action snapshot", () => {
+    lockVerdicts(DEMO_FUNNEL as FunnelInputs, "paid_lto");
+  });
+
+  it("free_lead: every object verdict/rule/reason/action snapshot", () => {
+    lockVerdicts(FREE_LEAD_FUNNEL, "free_lead");
+  });
+});
+
+// ===========================================================================
+// T027 — three states of leadConversions + cvr-from-leads assertion.
+// FR-035 (undefined ≠ 0), FR-034 (0 = real zero, ordinary rules),
+// FR-031 / SC-024 (cvr computed from leads for the new archetypes).
+// ===========================================================================
+
+describe("T027 — leadConversions three states for appointment / webinar", () => {
+  function buildAppointmentSnap(opts: {
+    leadConversions?: number;
+    purchaseConversions?: number;
+    spend3d: number;
+    impressions3d: number;
+    lpViews: number;
+    conversions3d: number;
+    ctrLink: number;
+  }) {
+    const snap = buildDemoSnapshot();
+    // Reset every object's w3d.conversions / cpa / leadConversions so we
+    // can stamp explicit values without inheriting demo defaults.
+    for (const o of snap.objects) {
+      o.w3d = {
+        spend: opts.spend3d,
+        impressions: opts.impressions3d,
+        reach: opts.impressions3d,
+        frequency: 1.2,
+        clicks: Math.round(opts.impressions3d * (opts.ctrLink / 100)),
+        linkClicks: Math.round(opts.impressions3d * (opts.ctrLink / 100)),
+        ctrAll: opts.ctrLink,
+        ctrLink: opts.ctrLink,
+        cpm: 18,
+        cpc: 1.5,
+        conversions: opts.conversions3d,
+        conversionValue: opts.conversions3d * 50,
+        lpViews: opts.lpViews,
+        cpa: opts.conversions3d > 0 ? opts.spend3d / opts.conversions3d : null,
+      };
+      // The optional fields are intentionally left absent when undefined
+      // so the pre-separation path is exercised.
+      if (opts.leadConversions !== undefined) {
+        o.w3d.leadConversions = opts.leadConversions;
+      } else {
+        delete o.w3d.leadConversions;
+      }
+      if (opts.purchaseConversions !== undefined) {
+        o.w3d.purchaseConversions = opts.purchaseConversions;
+      } else {
+        delete o.w3d.purchaseConversions;
+      }
+    }
+    return snap;
+  }
+
+  const APPT_FUNNEL: FunnelInputs = {
+    archetype: "appointment",
+    liveComponent: true,
+    aov: 0, // not used for appointment; hide all product-purchase inputs
+    htoPrice: 2000,
+    htoConversionRate: 0,
+    frontEndRoas: 1.0,
+    arena: "broad",
+    // Funnel math: p = 0.06 × 0.70 × 0.22 = 0.00924;
+    // leadValue = 18.48; cplCeiling = 9.24; unitTarget = 9.24
+    bookRate: 6,
+    showRate: 70,
+    closeRate: 22,
+  };
+
+  it("leadConversions === undefined → not measurable, too_early GATE (FR-035)", () => {
+    const snap = buildAppointmentSnap({
+      // leadConversions omitted → pre-separation snapshot
+      spend3d: 50,
+      impressions3d: 3000,
+      lpViews: 200,
+      conversions3d: 0,
+      ctrLink: 1.7,
+    });
+    const result = runEngine(snap, APPT_FUNNEL);
+    // No object should be judged with kill/watch/continue/rescue.
+    const judged = result.rows.filter(
+      r =>
+        r.verdict === "kill" ||
+        r.verdict === "watch" ||
+        r.verdict === "continue" ||
+        r.verdict === "rescue"
+    );
+    expect(judged.length).toBe(0);
+    for (const r of result.rows) {
+      expect(r.verdict, `${r.id} verdict should be too_early`).toBe("too_early");
+      expect(r.rule, `${r.id} rule should be GATE`).toBe("GATE");
+    }
+  });
+
+  it("leadConversions === 0 → ordinary zero-result path (FR-034), object IS judged", () => {
+    const snap = buildAppointmentSnap({
+      leadConversions: 0,
+      purchaseConversions: 0,
+      spend3d: 50, // 50 >= 2×9.24 = 18.48 → K1 zero-result
+      impressions3d: 3000,
+      lpViews: 200,
+      conversions3d: 0,
+      ctrLink: 1.7,
+    });
+    // Strip the demo's cplMedian30 (=39) so tier 2 (cpl_funnel_math)
+    // produces the 9.24 target used by the K1 condition above.
+    snap.baselines.cplMedian30 = null;
+    const result = runEngine(snap, APPT_FUNNEL);
+    // K1 must fire — leadConversions=0 with spend≥2×target.
+    const k1s = result.rows.filter(r => r.rule === "K1");
+    expect(k1s.length).toBeGreaterThan(0);
+  });
+
+  it("leadConversions > 0 → ordinary judgement path; cvr computed from leads (SC-024)", () => {
+    const snap = buildAppointmentSnap({
+      leadConversions: 200,
+      purchaseConversions: 2,
+      spend3d: 500, // cpa_lead = 500/200 = 2.5 — way under target
+      impressions3d: 8000,
+      lpViews: 1000,
+      // legacy `conversions` is the sales count (2) — must NOT be used
+      // as the cvr denominator for the new archetype (SC-024).
+      conversions3d: 2,
+      ctrLink: 2.6, // > median 1.7 — triggers "ad innocent" check
+    });
+    const result = runEngine(snap, APPT_FUNNEL);
+    // Page CVR (leads/lpViews) = 200/1000 = 20% — well above BOTH the
+    // 2% product-purchase floor (Phase 2 default) and the 15% lead-
+    // generation floor (Phase 7, FR-026a, T064). If cvr were (sales /
+    // lpViews) = 2/1000 = 0.2%, the page would be flagged weak. We
+    // assert that NO row receives the W3 "ad innocent, page weak"
+    // finding — the strong-page signal comes from leads (SC-024).
+    for (const r of result.rows) {
+      const weakPage = r.findings.some(
+        f =>
+          f.step === 5 &&
+          /صفحة|عرض|الصفح/.test(f.text_ar) &&
+          /لا تقنع|الصفح|ضعف/.test(f.text_ar)
+      );
+      expect(weakPage, `${r.id} should NOT be flagged weak (cvr=20%)`).toBe(
+        false
+      );
+    }
+  });
+});
+
+// ===========================================================================
+// T033 — appointment account carrying STALE `aov` and `htoConversionRate`
+// from a previous archetype receives no W6 / S2 verdict that references
+// those hidden figures (FR-015a, SC-018, US1 AS11). The full customer
+// value for appointment is the lead value, not a number built from
+// `aov` / `htoConversionRate`.
+// ===========================================================================
+
+describe("T033 — appointment stale-input no-verdict (US1 / FR-015a / SC-018)", () => {
+  // The appointment account carries stale 47 / 4% from a previous
+  // `paid_lto` save — the engine must NOT consult those figures when
+  // computing full customer value. With complete stage rates the
+  // funnel math gives a unitTarget of 9.24 (matches T028). If the engine
+  // naively substituted the stale aov=47, the legacy fullBuyerValue
+  // formula would yield 47 + 3500 × 0.04 = 187 and a maxCPA of 93.5 —
+  // a different number, a different W6 / S2 message.
+  const APPT_WITH_STALE: FunnelInputs = {
+    archetype: "appointment",
+    liveComponent: true,
+    aov: 47, // stale from paid_lto
+    htoPrice: 2000,
+    htoConversionRate: 4, // stale from paid_lto
+    frontEndRoas: 1,
+    arena: "broad",
+    bookRate: 6,
+    showRate: 70,
+    closeRate: 22,
+  };
+
+  function reasonTextMentionsStale(result: EngineResult): boolean {
+    // Any row whose reason_ar or action_ar numerically contains $47 or
+    // $187 (= aov + htoPrice × stale 0.04) would mean the engine used the
+    // stale figures. (Money formatter renders "47" without decimals when
+    // n >= 100 or with a single decimal — both $47 and $47.00 appear.)
+    const money47 = /(\$|د\.إ|ر\.س|ج\.م|£|€|د\.ك|ر\.ق|د\.ب|ر\.ع)47(\.0+)?\b/;
+    // The stale formula would compute fullBuyerValue = 47 + 3500*0.04 = 187.
+    // But htoPrice here is 2000, so 47 + 2000*0.04 = 127 — also stale.
+    // We assert neither value appears.
+    const money127 = /(\$|د\.إ|ر\.س|ج\.م|£|€|د\.ك|ر\.ق|د\.ب|ر\.ع)127(\.0+)?\b/;
+    return result.rows.some(
+      r => money47.test(r.reason_ar) || money127.test(r.reason_ar)
+    );
+  }
+
+  it("unitTarget = 9.24 (lead value, not 47-stale derived value)", () => {
+    // The demo snapshot ships with cplMedian30 = 39 (Phase 1 sets it to
+    // mirror cpaMedian30). Strip it so tier 2 (cpl_funnel_math) fires
+    // and we can prove the unit target comes from the new stage rates.
+    const snap = buildDemoSnapshot();
+    snap.baselines.cplMedian30 = null;
+    const result = runEngine(snap, APPT_WITH_STALE);
+    expect(result.targets.unitTarget).toBeCloseTo(9.24, 2);
+    expect(result.targets.unitTargetSource).toBe("cpl_funnel_math");
+  });
+
+  it("fullBuyerValue = leadValue (18.48) — NOT derived from stale aov/htoConversionRate (FR-015a)", () => {
+    const snap = buildDemoSnapshot();
+    const result = runEngine(snap, APPT_WITH_STALE);
+    // For appointment, fullBuyerValue MUST equal leadValue (the conversion
+    // event is the lead). 18.48 is the lead value; 47/4 stale would yield
+    // a different number.
+    expect(result.targets.fullBuyerValue).toBeCloseTo(18.48, 2);
+  });
+
+  it("no verdict text carries the stale $47 / $127 figure (US1 AS11 / SC-018)", () => {
+    const snap = buildDemoSnapshot();
+    const result = runEngine(snap, APPT_WITH_STALE);
+    // No reason_ar / action_ar should carry a money() of the stale
+    // aov/htoConversionRate-derived figures.
+    expect(reasonTextMentionsStale(result)).toBe(false);
+  });
+});

@@ -7,6 +7,11 @@
  *   2. results === 0 / cpa null (zero conversions)          → "—"  red iff kill, else neutral
  *   3. otherwise                                            → money(cpa) per target
  *
+ * Spec 012 — `target` is `number | null` (FR-019d). When null we cannot
+ * colour the cell good/bad because there is no threshold to compare
+ * against. SC-022 requires cost-per-result cells to be LEFT UNCOLOURED
+ * in that state.
+ *
  * The previous "kill+0 results ⇒ ∞" branch is GONE — null/zero-conversion
  * always renders an em dash, never "∞" and never "0".
  */
@@ -19,7 +24,12 @@ export interface CpaCellInput {
   cpa: number | null;
   /** True when the row has not met the gate threshold (e.g. pre-gate under-data). */
   preGate?: boolean;
-  target: number;
+  /**
+   * Cost-per-result target the engine judged on. `null` means no target
+   * is determinable yet (FR-019). Cells render uncoloured in that state
+   * (SC-022) — no fabricated zero, no good/bad shading.
+   */
+  target: number | null;
   /** Hotfix T2: account currency symbol. Defaults to "$" for backward compat. */
   currency?: string;
 }
@@ -41,7 +51,9 @@ export function cpaCell(input: CpaCellInput): CpaCellOutput {
     const color = verdict === "kill" ? cpaColorClass(null, target) : "";
     return { value: "—", className: `font-bold ${color}`.trim() };
   }
-  // 3. CPA present — money(cpa) with target-relative color
+  // 3. CPA present — money(cpa) with target-relative color. When the
+  // target is null we render uncoloured (SC-022) rather than fabricating
+  // a comparison baseline.
   return {
     value: money(cpa, currency),
     className: `font-bold ${cpaColorClass(cpa, target)}`,

@@ -76,6 +76,13 @@ from the user's own funnel stage rates instead of a borrowed formula or a hand-w
   is the lead, so one conversion is worth exactly what one lead is worth. It is absent when the stage
   rates are incomplete, and the two rules that read it do not fire while it is absent.
 
+- Q: Which funnels belong under the new archetypes rather than `paid_lto`? → **A: The new
+  `appointment` and `webinar` options are free-only.** A paid webinar, challenge, masterclass, or
+  consultation already belongs under `paid_lto`, with the upfront payment recorded as average order
+  value. The selector labels and helper line must make the distinction explicit: if the customer pays
+  anything to book or attend, choose the direct paid option; if booking or attendance is completely
+  free and payment happens only later, choose one of the new options.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Appointment funnel owner gets a real lead-cost target (Priority: P1)
@@ -338,8 +345,12 @@ confirm no numeric target is shown anywhere and an explicit not-enough-informati
   it; the change MUST fail loudly rather than silently drop or reinterpret data if any such record
   is encountered.
 - **FR-004**: The settings archetype dropdown MUST present both new options in simple Arabic,
-  consistent in phrasing with the two existing options. Proposed wording: `appointment` →
-  "أحجز مكالمات مع العملاء ثم أبيع في المكالمة"; `webinar` → "أدعو الناس إلى ندوة مجانية ثم أبيع بعدها".
+  consistent in phrasing with the two existing options. The labels MUST distinguish upfront-paid
+  funnels from free-entry funnels: `paid_lto` → "أبيع منتجًا أو خدمة مباشرة، أو أقدم فعالية أو استشارة مدفوعة";
+  `appointment` → "أحجز استشارة مجانية ثم أبيع بعدها"; `webinar` →
+  "أدعو الناس إلى فعالية مجانية: ندوة أو تحدٍّ أو ماستر كلاس، ثم أبيع بعدها". A short helper line
+  MUST explain that any upfront payment belongs under `paid_lto`, while completely free booking or
+  attendance followed by a later sale belongs under one of the two new options.
 
 #### Funnel inputs
 

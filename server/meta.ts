@@ -238,13 +238,21 @@ function emptyWindow(): WindowMetrics {
   };
 }
 
-const CONVERSION_ACTION_TYPES = [
+const PURCHASE_ACTION_TYPES = [
   "omni_purchase",
   "purchase",
   "offsite_conversion.fb_pixel_purchase",
+];
+const LEAD_ACTION_TYPES = [
   "lead",
   "offsite_conversion.fb_pixel_lead",
 ];
+// Derived from the two split lists so the legacy ordering is preserved
+// EXACTLY (contracts/conversion-measurement.md §2). FR-032/SC-025 require
+// `free_lead` and `paid_lto` to keep today's selection unchanged; this
+// concatenation produces an identical array — bit-for-bit — to the pre-
+// split literal that lived at `meta.ts:241`.
+const CONVERSION_ACTION_TYPES = [...PURCHASE_ACTION_TYPES, ...LEAD_ACTION_TYPES];
 
 function pickAction(actions: any[] | undefined, types: string[]): number {
   if (!actions) return 0;
@@ -268,11 +276,22 @@ export function parseInsightsRow(row: any): WindowMetrics {
   w.ctrLink = parseFloat(row.inline_link_click_ctr) || 0;
   w.cpm = parseFloat(row.cpm) || 0;
   w.cpc = parseFloat(row.cpc) || 0;
+  // FR-030 / SC-025 — `conversions` is unchanged for `paid_lto`/`free_lead`
+  // (legacy ordering, same action_types). The split lists are used only by
+  // the two new fields below; the legacy field keeps today's selection so
+  // the existing archetypes are bit-identical to the pre-feature output.
   w.conversions = pickAction(row.actions, CONVERSION_ACTION_TYPES);
+  // FR-030 — capture lead-type and purchase-type counts separately. These
+  // are READ ONLY by `appointment` / `webinar` (FR-031). They are
+  // undefined when the snapshot predates the split (research R6, FR-035).
+  w.leadConversions = pickAction(row.actions, LEAD_ACTION_TYPES);
+  w.purchaseConversions = pickAction(row.actions, PURCHASE_ACTION_TYPES);
   w.lpViews = pickAction(row.actions, ["landing_page_view"]);
   w.conversionValue = pickAction(row.action_values, CONVERSION_ACTION_TYPES);
   w.videoViews3s = pickAction(row.actions, ["video_view"]);
   w.thruplays = pickAction(row.video_thruplay_watched_actions, ["video_view"]);
+  // `w.cpa` continues to derive from `w.conversions` (legacy contract).
+  // Archetype-aware cpa derivation lives in the engine (FR-031).
   w.cpa = w.conversions > 0 ? w.spend / w.conversions : null;
   return w;
 }
@@ -1204,7 +1223,7 @@ async function fetchBaselines(
     }
   })();
 
-  const cpaP = (async (): Promise<number[]> => {
+  const cpaP = (async (): Promise<{ cpaValues: number[]; cplValues: number[] }> => {
     try {
       const json = await graphGet(
         `/${accountId}/insights`,
@@ -1216,23 +1235,40 @@ async function fetchBaselines(
         },
         signal,
       );
-      return (json.data ?? [])
-        .map((r: any) => {
-          const conv = pickAction(r.actions, CONVERSION_ACTION_TYPES);
-          const spend = parseFloat(r.spend) || 0;
-          return conv > 0 ? spend / conv : NaN;
-        })
-        .filter((v: number) => Number.isFinite(v));
+      // FR-033 / research R4 — the lead-based 30-day median is computed
+      // from the SAME `last_30d` Graph response that already produces
+      // `cpaMedian30`. No new request; the actions array already carries
+      // every action type and the lead entries are being discarded today.
+      // Two median computations over the same per-day rows, sharing one
+      // network round trip.
+      const rows = (json.data ?? []) as any[];
+      const cpaValues: number[] = [];
+      const cplValues: number[] = [];
+      for (const r of rows) {
+        const spend = parseFloat(r.spend) || 0;
+        const conv = pickAction(r.actions, CONVERSION_ACTION_TYPES);
+        const leads = pickAction(r.actions, LEAD_ACTION_TYPES);
+        // Mirror the existing `conv > 0 ? spend / conv : NaN` +
+        // `.filter(Number.isFinite)` shape (legacy contract, contracts/
+        // conversion-measurement.md §6).
+        cpaValues.push(conv > 0 ? spend / conv : NaN);
+        cplValues.push(leads > 0 ? spend / leads : NaN);
+      }
+      return {
+        cpaValues: cpaValues.filter((v: number) => Number.isFinite(v)),
+        cplValues: cplValues.filter((v: number) => Number.isFinite(v)),
+      };
     } catch {
-      return [];
+      return { cpaValues: [], cplValues: [] };
     }
   })();
 
-  const [ctrValues, cpm, cpaValues] = await Promise.all([ctrP, cpmP, cpaP]);
+  const [ctrValues, cpm, cpaResult] = await Promise.all([ctrP, cpmP, cpaP]);
   return {
     ctrLinkMedian90: median(ctrValues),
     cpmAvg14: cpm.cpmAvg14,
-    cpaMedian30: median(cpaValues),
+    cpaMedian30: median(cpaResult.cpaValues),
+    cplMedian30: median(cpaResult.cplValues),
     cpmNow: cpm.cpmNow,
   };
 }

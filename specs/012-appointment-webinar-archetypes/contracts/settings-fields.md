@@ -9,10 +9,10 @@ first-person phrasing of the other two:
 
 | Value | Arabic label |
 |---|---|
-| `paid_lto` | أبيع منتجًا رخيصًا أولًا ثم أعرض منتجًا غاليًا *(unchanged)* |
+| `paid_lto` | **أبيع منتجًا أو خدمة مباشرة، أو أقدم فعالية أو استشارة مدفوعة** |
 | `free_lead` | أجمع بيانات عملاء مجانًا ثم أبيع منتجًا غاليًا *(unchanged)* |
-| `appointment` | **أحجز مكالمات مع العملاء ثم أبيع في المكالمة** |
-| `webinar` | **أدعو الناس إلى ندوة مجانية ثم أبيع بعدها** |
+| `appointment` | **أحجز استشارة مجانية ثم أبيع بعدها** |
+| `webinar` | **أدعو الناس إلى فعالية مجانية: ندوة أو تحدٍّ أو ماستر كلاس، ثم أبيع بعدها** |
 
 `FIELD_COPY.archetype.hint` (`settingsFields.ts:31-34`) lists the options inline and must be updated
 to match, or it will still advertise the retired option.

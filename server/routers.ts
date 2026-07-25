@@ -34,7 +34,7 @@ import { and, eq, gt, like, sql } from "drizzle-orm";
 import { auditLog } from "../drizzle/auth-schema";
 import crypto from "crypto";
 
-function funnelToInputs(f: NonNullable<Awaited<ReturnType<typeof db.getFunnel>>>): FunnelInputs {
+export function funnelToInputs(f: NonNullable<Awaited<ReturnType<typeof db.getFunnel>>>): FunnelInputs {
   return {
     archetype: f.archetype,
     liveComponent: f.liveComponent,
@@ -53,12 +53,21 @@ function funnelToInputs(f: NonNullable<Awaited<ReturnType<typeof db.getFunnel>>>
     // Batch 2 / ISSUE-009 — carrier for runEngine() → deriveTargets().
     // type is `string | null`; stored column is nullable (data-model.md §1).
     inputCurrency: f.inputCurrency,
+    // Spec 012 — stage rates for the appointment / webinar archetypes.
+    // Optional on the row (DB columns are nullable, no default — FR-008);
+    // cast through unknown to keep the funnelSettings shape decoupled from
+    // the FunnelInputs surface (the row type is owned by Drizzle, the
+    // FunnelInputs type is owned by shared/qarar.ts).
+    bookRate: (f as unknown as { bookRate?: number | null }).bookRate ?? null,
+    showRate: (f as unknown as { showRate?: number | null }).showRate ?? null,
+    showUpRate: (f as unknown as { showUpRate?: number | null }).showUpRate ?? null,
+    closeRate: (f as unknown as { closeRate?: number | null }).closeRate ?? null,
   };
 }
 
 const funnelInputSchema = z.object({
   adAccountId: z.number(),
-  archetype: z.enum(["paid_lto", "free_lead", "direct_call"]),
+  archetype: z.enum(["paid_lto", "free_lead", "appointment", "webinar"]),
   liveComponent: z.boolean(),
   offerDescription: z.string().max(2000).optional().nullable(),
   ticketPrice: z.number().min(0).optional().nullable(),
@@ -86,6 +95,15 @@ const funnelInputSchema = z.object({
     })
     .optional()
     .nullable(),
+  // Spec 012 / FR-009 — stage rates for appointment / webinar. Strictly
+  // greater than 0 (a zero rate is rejected at entry, never silently
+  // reinterpreted as "unanswered" — research R3) and ≤ 100. The
+  // asymmetry with `htoConversionRate`'s `.min(0)` is intentional and
+  // documented in contracts/settings-fields.md §7.
+  bookRate: z.number().gt(0).max(100).optional().nullable(),
+  showRate: z.number().gt(0).max(100).optional().nullable(),
+  showUpRate: z.number().gt(0).max(100).optional().nullable(),
+  closeRate: z.number().gt(0).max(100).optional().nullable(),
   // US11 / Spec 011 / T015 — explicit "start fresh" intent. The client
   // sets this to true ONLY after the user confirmed "start fresh" from
   // the failure-state UI. The server then re-checks for an existing row

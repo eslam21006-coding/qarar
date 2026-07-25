@@ -36,9 +36,18 @@ export function pct(n: number | null | undefined, digits = 2): string {
   return `${n.toFixed(digits)}%`;
 }
 
-/** CPA cell color relative to target. */
-export function cpaColorClass(cpa: number | null, target: number): string {
+/**
+ * CPA cell color relative to target.
+ *
+ * Spec 012 / SC-022 — when `target` is null we cannot compare the cell
+ * against any threshold (no target is determinable yet, FR-019). Returns
+ * an empty class so the cell is rendered uncoloured, NOT a misleading
+ * "good" or "bad" shade. A fabricated zero here would miscolor every
+ * cell as good (`cpa <= 0` is universally false) — research R5.
+ */
+export function cpaColorClass(cpa: number | null, target: number | null): string {
   if (cpa === null) return "text-v-kill"; // ∞ — zero conversions
+  if (target === null) return ""; // FR-019 — no target; leave uncoloured
   if (cpa <= target) return "text-v-continue";
   if (cpa <= 1.5 * target) return "text-v-watch";
   return "text-v-kill";

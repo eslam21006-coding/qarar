@@ -42,12 +42,12 @@ Web app: `client/src/`, `server/`, `shared/`, `drizzle/`, `scripts/` at reposito
 
 **Purpose**: Schema change, gated so it cannot strand a row
 
-- [ ] T001 Create read-only pre-flight `scripts/verify-archetype-migration.ts` that counts `funnelSettings` rows with `archetype = 'direct_call'`, prints them with `userId`/`adAccountId`, and exits non-zero if any exist (FR-003); follow the `--json` / read-only pattern of `scripts/diagnose-settings.ts`
-- [ ] T002 Run `npx tsx scripts/verify-archetype-migration.ts` and confirm a zero count — **STOP the phase if non-zero**; the enum change must not proceed until the rows are resolved by an operator
-- [ ] T003 Add the four nullable rate columns `bookRate`, `showRate`, `showUpRate`, `closeRate` as `double("...")` with **no** `.notNull()` and **no** `.default()` to `funnelSettings` in `drizzle/schema.ts` (data-model.md §1.2)
-- [ ] T004 Change the `archetype` enum in `drizzle/schema.ts` to `["paid_lto","free_lead","appointment","webinar"]` and update the adjacent comment at `drizzle/schema.ts:116` that still describes "(ج) direct call booking" — only after T002 passed
-- [ ] T005 Run `npm run db:push`, then hand-check the generated `drizzle/00NN_*.sql` against TiDB semantics before applying: confirm the four `ADD COLUMN` statements carry no default and the enum `MODIFY` lists exactly four values
-- [ ] T006 Re-run `scripts/verify-archetype-migration.ts` and confirm the enum now offers exactly four values and no row is stranded
+- [X] T001 Create read-only pre-flight `scripts/verify-archetype-migration.ts` that counts `funnelSettings` rows with `archetype = 'direct_call'`, prints them with `userId`/`adAccountId`, and exits non-zero if any exist (FR-003); follow the `--json` / read-only pattern of `scripts/diagnose-settings.ts`
+- [X] T002 Run `npx tsx scripts/verify-archetype-migration.ts` and confirm a zero count — **STOP the phase if non-zero**; the enum change must not proceed until the rows are resolved by an operator
+- [X] T003 Add the four nullable rate columns `bookRate`, `showRate`, `showUpRate`, `closeRate` as `double("...")` with **no** `.notNull()` and **no** `.default()` to `funnelSettings` in `drizzle/schema.ts` (data-model.md §1.2)
+- [X] T004 Change the `archetype` enum in `drizzle/schema.ts` to `["paid_lto","free_lead","appointment","webinar"]` and update the adjacent comment at `drizzle/schema.ts:116` that still describes "(ج) direct call booking" — only after T002 passed
+- [X] T005 Run `npm run db:push`, then hand-check the generated `drizzle/00NN_*.sql` against TiDB semantics before applying: confirm the four `ADD COLUMN` statements carry no default and the enum `MODIFY` lists exactly four values
+- [X] T006 Re-run `scripts/verify-archetype-migration.ts` and confirm the enum now offers exactly four values and no row is stranded
 
 **Checkpoint**: Schema ready. No application code reads the new columns yet.
 
@@ -61,42 +61,42 @@ Web app: `client/src/`, `server/`, `shared/`, `drizzle/`, `scripts/` at reposito
 
 ### Regression locks — write these before touching any shared code
 
-- [ ] T007 Add a regression lock in `server/engine.test.ts` snapshotting `deriveTargets` output for the existing `free_lead` and `paid_lto` fixtures across the current input matrix, asserting field-by-field equality (SC-005); this must be green **before** any change to `shared/qarar.ts`
-- [ ] T008 Add a regression lock in `server/engine.test.ts` snapshotting verdict, rule, reason, and action for every object in the existing `free_lead` and `paid_lto` fixtures (SC-010, SC-025); same file as T007, so land it sequentially
+- [X] T007 Add a regression lock in `server/engine.test.ts` snapshotting `deriveTargets` output for the existing `free_lead` and `paid_lto` fixtures across the current input matrix, asserting field-by-field equality (SC-005); this must be green **before** any change to `shared/qarar.ts`
+- [X] T008 Add a regression lock in `server/engine.test.ts` snapshotting verdict, rule, reason, and action for every object in the existing `free_lead` and `paid_lto` fixtures (SC-010, SC-025); same file as T007, so land it sequentially
 
 ### Verification sweep
 
-- [ ] T009 Trace every `DerivedTargets` member (`rawTargetCPA`, `fullBuyerValue`, `maxCPA`, `effectiveCPA`, `capped`, `leadValue`, `cplCeiling`, `unitTarget`, `unitTargetSource`) to each of its consumers in `server/engine.ts` and `client/src/`, by **reading the call sites, not grepping**, and record findings in `specs/012-appointment-webinar-archetypes/research.md` under a new R8; three defects were found this way during clarification and the `rawTargetCPA`/`maxCPA`/`effectiveCPA`/`capped` clearance is currently grep-derived only (plan §Complexity Tracking)
+- [X] T009 Trace every `DerivedTargets` member (`rawTargetCPA`, `fullBuyerValue`, `maxCPA`, `effectiveCPA`, `capped`, `leadValue`, `cplCeiling`, `unitTarget`, `unitTargetSource`) to each of its consumers in `server/engine.ts` and `client/src/`, by **reading the call sites, not grepping**, and record findings in `specs/012-appointment-webinar-archetypes/research.md` under a new R8; three defects were found this way during clarification and the `rawTargetCPA`/`maxCPA`/`effectiveCPA`/`capped` clearance is currently grep-derived only (plan §Complexity Tracking)
 
 ### Shared types — all in `shared/qarar.ts`, strictly sequential (same file)
 
-- [ ] T010 Update `FunnelInputs.archetype` at `shared/qarar.ts:216` to `"paid_lto" | "free_lead" | "appointment" | "webinar"` and add the four optional rate fields `bookRate`/`showRate`/`showUpRate`/`closeRate` as `number | null` (data-model.md §2)
-- [ ] T011 Change `DerivedTargets.unitTarget` to `number | null`, `unitTargetSource` to include `"cpl_funnel_math"` and `null`, and `fullBuyerValue` to `number | null` in `shared/qarar.ts:239-253` (data-model.md §3)
-- [ ] T012 Add the narrowed `JudgeableTargets` type to `shared/qarar.ts` — identical to `DerivedTargets` but with `unitTarget: number` — with a comment stating it is produced only by the gate stage and that widening it defeats the compile-time guarantee (plan §Compile-time enforcement)
-- [ ] T013 Add `cplMedian30: number | null` to `Baselines` at `shared/qarar.ts:182-191`, leaving `cpaMedian30` untouched (data-model.md §4)
-- [ ] T014 Add optional `leadConversions?: number` and `purchaseConversions?: number` to `WindowMetrics` at `shared/qarar.ts:125-148`, with a comment recording that `undefined` means "captured before separation" and must never be coalesced to `0` (data-model.md §5, FR-035)
+- [X] T010 Update `FunnelInputs.archetype` at `shared/qarar.ts:216` to `"paid_lto" | "free_lead" | "appointment" | "webinar"` and add the four optional rate fields `bookRate`/`showRate`/`showUpRate`/`closeRate` as `number | null` (data-model.md §2)
+- [X] T011 Change `DerivedTargets.unitTarget` to `number | null`, `unitTargetSource` to include `"cpl_funnel_math"` and `null`, and `fullBuyerValue` to `number | null` in `shared/qarar.ts:239-253` (data-model.md §3)
+- [X] T012 Add the narrowed `JudgeableTargets` type to `shared/qarar.ts` — identical to `DerivedTargets` but with `unitTarget: number` — with a comment stating it is produced only by the gate stage and that widening it defeats the compile-time guarantee (plan §Compile-time enforcement)
+- [X] T013 Add `cplMedian30: number | null` to `Baselines` at `shared/qarar.ts:182-191`, leaving `cpaMedian30` untouched (data-model.md §4)
+- [X] T014 Add optional `leadConversions?: number` and `purchaseConversions?: number` to `WindowMetrics` at `shared/qarar.ts:125-148`, with a comment recording that `undefined` means "captured before separation" and must never be coalesced to `0` (data-model.md §5, FR-035)
 
 ### Engine compiles against the narrowed type
 
-- [ ] T015 Change every per-object evaluator in `server/engine.ts` that reads `t.unitTarget` (lines 202, 301, 316, 471, 574, 764, 778, 806, 845, 855, 859, 887, 891) to accept `JudgeableTargets` instead of `DerivedTargets`, so the compiler — not a runtime default — enforces that a target exists (research R3)
-- [ ] T016 Verify with `npm run check` that no `?? 0`, `|| 0`, or non-null assertion was introduced anywhere in T015; a fabricated zero makes `spend >= 2 * target` universally true and kills every object (research R3)
+- [X] T015 Change every per-object evaluator in `server/engine.ts` that reads `t.unitTarget` (lines 202, 301, 316, 471, 574, 764, 778, 806, 845, 855, 859, 887, 891) to accept `JudgeableTargets` instead of `DerivedTargets`, so the compiler — not a runtime default — enforces that a target exists (research R3)
+- [X] T016 Verify with `npm run check` that no `?? 0`, `|| 0`, or non-null assertion was introduced anywhere in T015; a fabricated zero makes `spend >= 2 * target` universally true and kills every object (research R3)
 
 ### Input mappers and validation
 
-- [ ] T017 [P] Add the four rate fields to `funnelToInputs` and update the `archetype` enum plus add per-rate `z.number().gt(0).max(100).optional().nullable()` to `funnelInputSchema` in `server/routers.ts:37-80` (data-model.md §7)
-- [ ] T018 [P] Add the four rate fields to `funnelSettingsToInputs` in `server/dailyRefresh.ts:127-149` so the cron path computes identical targets to the tRPC path
-- [ ] T019 Add a test in `server/dailyRefresh.funnelStates.test.ts` asserting that `funnelToInputs` and `funnelSettingsToInputs` produce identical `FunnelInputs` for the same row — they are separate functions by design and drift between them is silent
+- [X] T017 [P] Add the four rate fields to `funnelToInputs` and update the `archetype` enum plus add per-rate `z.number().gt(0).max(100).optional().nullable()` to `funnelInputSchema` in `server/routers.ts:37-80` (data-model.md §7)
+- [X] T018 [P] Add the four rate fields to `funnelSettingsToInputs` in `server/dailyRefresh.ts:127-149` so the cron path computes identical targets to the tRPC path
+- [X] T019 Add a test in `server/dailyRefresh.funnelStates.test.ts` asserting that `funnelToInputs` and `funnelSettingsToInputs` produce identical `FunnelInputs` for the same row — they are separate functions by design and drift between them is silent
 
 ### Measurement separation (FR-030…FR-035) — blocks Phase 7
 
-- [ ] T020 [P] Add tests in `server/meta.test.ts` for the action-type split: a row with 200 leads and 2 purchases yields `leadConversions = 200`, `purchaseConversions = 2`, and `conversions` unchanged from today's value (SC-023, SC-025)
-- [ ] T021 Split `CONVERSION_ACTION_TYPES` at `server/meta.ts:241-247` into `LEAD_ACTION_TYPES` and `PURCHASE_ACTION_TYPES`, deriving the existing constant as `[...PURCHASE_ACTION_TYPES, ...LEAD_ACTION_TYPES]` and preserving its **exact current ordering** (contracts/conversion-measurement.md §2)
-- [ ] T022 Populate `w.leadConversions` and `w.purchaseConversions` in `parseInsightsRow` at `server/meta.ts:258-278`, leaving `w.conversions` and `w.cpa` derivation untouched (FR-032)
-- [ ] T023 Add `cplMedian30` to the baselines computation at `server/meta.ts:1207-1229` by taking a second median over the **same** `last_30d` response using `LEAD_ACTION_TYPES`, matching the existing `conv > 0 ? spend / conv : NaN` + `.filter(Number.isFinite)` shape — **no new Graph request** (research R4)
-- [ ] T024 Add a test in `server/meta.test.ts` asserting the Graph request count is unchanged when `cplMedian30` is computed — Principle V is a commitment, not an optimisation, and it regresses silently
-- [ ] T025 Add an archetype-aware conversion-count selector in `server/engine.ts` returning `leadConversions` for `appointment`/`webinar` and `conversions` for `paid_lto`/`free_lead`, and route cost-per-result, `cvr`, zero-result checks, and the full-ROAS numerator through it (FR-031)
-- [ ] T026 Handle pre-separation snapshots in `server/engine.ts`: for `appointment`/`webinar`, `leadConversions === undefined` marks the object not-yet-measurable and it is not judged, while `0` means genuinely no leads and falls through to the ordinary zero-result rules (FR-034, FR-035)
-- [ ] T027 [P] Add tests in `server/engine.test.ts` covering all three states of `leadConversions` (`undefined` / `0` / `> 0`) and asserting that `undefined` is never coalesced to `0` (FR-035); include a case with 200 leads, 2 purchases, and 1000 `lpViews` asserting `cvr` computes as 20% (from leads), not 0.2% (from purchases), so the page is not flagged weak on the sales count (SC-024)
+- [X] T020 [P] Add tests in `server/meta.test.ts` for the action-type split: a row with 200 leads and 2 purchases yields `leadConversions = 200`, `purchaseConversions = 2`, and `conversions` unchanged from today's value (SC-023, SC-025)
+- [X] T021 Split `CONVERSION_ACTION_TYPES` at `server/meta.ts:241-247` into `LEAD_ACTION_TYPES` and `PURCHASE_ACTION_TYPES`, deriving the existing constant as `[...PURCHASE_ACTION_TYPES, ...LEAD_ACTION_TYPES]` and preserving its **exact current ordering** (contracts/conversion-measurement.md §2)
+- [X] T022 Populate `w.leadConversions` and `w.purchaseConversions` in `parseInsightsRow` at `server/meta.ts:258-278`, leaving `w.conversions` and `w.cpa` derivation untouched (FR-032)
+- [X] T023 Add `cplMedian30` to the baselines computation at `server/meta.ts:1207-1229` by taking a second median over the **same** `last_30d` response using `LEAD_ACTION_TYPES`, matching the existing `conv > 0 ? spend / conv : NaN` + `.filter(Number.isFinite)` shape — **no new Graph request** (research R4)
+- [X] T024 Add a test in `server/meta.test.ts` asserting the Graph request count is unchanged when `cplMedian30` is computed — Principle V is a commitment, not an optimisation, and it regresses silently
+- [X] T025 Add an archetype-aware conversion-count selector in `server/engine.ts` returning `leadConversions` for `appointment`/`webinar` and `conversions` for `paid_lto`/`free_lead`, and route cost-per-result, `cvr`, zero-result checks, and the full-ROAS numerator through it (FR-031)
+- [X] T026 Handle pre-separation snapshots in `server/engine.ts`: for `appointment`/`webinar`, `leadConversions === undefined` marks the object not-yet-measurable and it is not judged, while `0` means genuinely no leads and falls through to the ordinary zero-result rules (FR-034, FR-035)
+- [X] T027 [P] Add tests in `server/engine.test.ts` covering all three states of `leadConversions` (`undefined` / `0` / `> 0`) and asserting that `undefined` is never coalesced to `0` (FR-035); include a case with 200 leads, 2 purchases, and 1000 `lpViews` asserting `cvr` computes as 20% (from leads), not 0.2% (from purchases), so the page is not flagged weak on the sales count (SC-024)
 
 **Checkpoint**: Foundation ready. `npm run check` and `npm test` green; `free_lead` and `paid_lto` behaviour provably unchanged by T007/T008.
 
@@ -113,25 +113,25 @@ testable with no other story implemented.
 
 ### Tests for User Story 1
 
-- [ ] T028 [P] [US1] Add `deriveTargets` tests in `server/engine.test.ts` for the appointment vectors in contracts/derive-targets.md §8: 6/70/22 with `htoPrice` 2000 → `unitTarget` 9.24 ±0.01 and source `cpl_funnel_math`; `closeRate` 11 → 4.62; `bookRate` 3 → 4.62; all rates 100 → 1000 (SC-001)
-- [ ] T029 [P] [US1] Add a monotonicity test in `server/engine.test.ts` that lowers each appointment rate independently and asserts the target never rises (FR-013, SC-002)
-- [ ] T030 [P] [US1] Replace the assertion at `client/src/lib/settingsFields.test.ts:105-110` — which locks in the retired option's product-purchase field visibility — with appointment-archetype expectations, and note in the test that this is the deliberate correction required by FR-026d
-- [ ] T031 [P] [US1] Add a `client/src/pages/Settings.test.tsx` case (needs the `// @vitest-environment jsdom` pragma) asserting the three rate inputs render with placeholders `3-10%`, `~70%`, `20-25%` and that placeholders are never submitted as values (FR-010)
-- [ ] T032 [P] [US1] Add a `client/src/pages/Settings.test.tsx` round-trip case: save an appointment account with rates, switch the archetype away and back, and assert every previously entered value — the three rates and the high-ticket price — is still present and unchanged (FR-028a, SC-008, US1 AS8)
-- [ ] T033 [P] [US1] Add a `server/engine.test.ts` case: an appointment account carrying a stale `aov: 47` and `htoConversionRate: 4` from a previous archetype receives no W6 or S2 verdict that references those values — full customer value is the lead value, not a figure built from hidden inputs (FR-015a, SC-018, US1 AS11)
+- [X] T028 [P] [US1] Add `deriveTargets` tests in `server/engine.test.ts` for the appointment vectors in contracts/derive-targets.md §8: 6/70/22 with `htoPrice` 2000 → `unitTarget` 9.24 ±0.01 and source `cpl_funnel_math`; `closeRate` 11 → 4.62; `bookRate` 3 → 4.62; all rates 100 → 1000 (SC-001)
+- [X] T029 [P] [US1] Add a monotonicity test in `server/engine.test.ts` that lowers each appointment rate independently and asserts the target never rises (FR-013, SC-002)
+- [X] T030 [P] [US1] Replace the assertion at `client/src/lib/settingsFields.test.ts:105-110` — which locks in the retired option's product-purchase field visibility — with appointment-archetype expectations, and note in the test that this is the deliberate correction required by FR-026d
+- [X] T031 [P] [US1] Add a `client/src/pages/Settings.test.tsx` case (needs the `// @vitest-environment jsdom` pragma) asserting the three rate inputs render with placeholders `3-10%`, `~70%`, `20-25%` and that placeholders are never submitted as values (FR-010)
+- [X] T032 [P] [US1] Add a `client/src/pages/Settings.test.tsx` round-trip case: save an appointment account with rates, switch the archetype away and back, and assert every previously entered value — the three rates and the high-ticket price — is still present and unchanged (FR-028a, SC-008, US1 AS8)
+- [X] T033 [P] [US1] Add a `server/engine.test.ts` case: an appointment account carrying a stale `aov: 47` and `htoConversionRate: 4` from a previous archetype receives no W6 or S2 verdict that references those values — full customer value is the lead value, not a figure built from hidden inputs (FR-015a, SC-018, US1 AS11)
 
 ### Implementation for User Story 1
 
-- [ ] T034 [US1] Add the `appointment` branch to `deriveTargets` in `shared/qarar.ts` beside the existing `free_lead` branch — never inside it — computing `p` as the product of the three rates, `leadValue = p × htoPrice`, and the funnel-math ceiling `cplCeiling = leadValue / 2`, leaving both `null` when any input is absent (contracts/derive-targets.md §1, §3)
-- [ ] T035 [US1] Set `fullBuyerValue = leadValue` for `appointment` in `shared/qarar.ts`, `null` when `leadValue` is `null`, keeping the existing formula for `free_lead` and `paid_lto` (FR-015a, FR-015c)
-- [ ] T036 [US1] Guard W6 at `server/engine.ts:532-541` and S2 at `server/engine.ts:772` to skip entirely when `fullBuyerValue` is `null`, rather than evaluating against a zero (FR-015b, SC-019)
-- [ ] T037 [P] [US1] Update `FunnelArchetype`, add the four rates to `VISIBLE_FIELDS`, add their `FIELD_COPY` labels, and rewrite `isFieldVisible` into the per-archetype matrix in `client/src/lib/settingsFields.ts`, **explicitly** making `marketCplBenchmark` visible for `appointment` and `webinar` (widening today's `free_lead`-only rule) so the third-tier source is reachable (contracts/settings-fields.md §3, FR-020)
-- [ ] T038 [P] [US1] Add the five rate placeholders to the `PLACEHOLDERS` constant in `client/src/pages/Settings.tsx:51-62` (contracts/settings-fields.md §2)
-- [ ] T039 [US1] Replace the `direct_call` `<SelectItem>` at `client/src/pages/Settings.tsx:397` with the appointment option "أحجز مكالمات مع العملاء ثم أبيع في المكالمة", and update `FIELD_COPY.archetype.hint` in `client/src/lib/settingsFields.ts:31-34`, which still advertises the retired option
-- [ ] T040 [US1] Render the three appointment rate inputs in `client/src/pages/Settings.tsx` with client-side validation rejecting `0`, negatives, and values above 100 with a simple-Arabic message (FR-009)
-- [ ] T041 [US1] Hide `aov`, `frontEndRoas`, and `htoConversionRate` for appointment in `client/src/pages/Settings.tsx`, keeping stored values intact, and hide the `effectiveCPA` block (lines 540-558), the `capped` warning (565-573), and the "كيف حسبنا هذا الرقم؟" breakdown (584-620) (FR-028, FR-028a, FR-028b)
-- [ ] T042 [US1] Extend the maximum-cost-per-lead preview row at `client/src/pages/Settings.tsx:575-583` to render for appointment, reusing the existing dual-currency `targetsInInput`/`targetsInAccount` pattern (FR-027)
-- [ ] T043 [US1] Make the `htoUnderperforming` label archetype-dependent in `client/src/lib/settingsFields.ts`, using "الناس تحجز وتحضر لكن لا تشتري؟" for appointment and leaving `paid_lto`/`free_lead` wording unchanged (FR-028c, FR-028d)
+- [X] T034 [US1] Add the `appointment` branch to `deriveTargets` in `shared/qarar.ts` beside the existing `free_lead` branch — never inside it — computing `p` as the product of the three rates, `leadValue = p × htoPrice`, and the funnel-math ceiling `cplCeiling = leadValue / 2`, leaving both `null` when any input is absent (contracts/derive-targets.md §1, §3)
+- [X] T035 [US1] Set `fullBuyerValue = leadValue` for `appointment` in `shared/qarar.ts`, `null` when `leadValue` is `null`, keeping the existing formula for `free_lead` and `paid_lto` (FR-015a, FR-015c)
+- [X] T036 [US1] Guard W6 at `server/engine.ts:532-541` and S2 at `server/engine.ts:772` to skip entirely when `fullBuyerValue` is `null`, rather than evaluating against a zero (FR-015b, SC-019) — already implemented in Phase 2 (`t.fullBuyerValue !== null` guards in both W6 and S2)
+- [X] T037 [P] [US1] Update `FunnelArchetype`, add the four rates to `VISIBLE_FIELDS`, add their `FIELD_COPY` labels, and rewrite `isFieldVisible` into the per-archetype matrix in `client/src/lib/settingsFields.ts`, **explicitly** making `marketCplBenchmark` visible for `appointment` and `webinar` (widening today's `free_lead`-only rule) so the third-tier source is reachable (contracts/settings-fields.md §3, FR-020)
+- [X] T038 [P] [US1] Add the five rate placeholders to the `PLACEHOLDERS` constant in `client/src/pages/Settings.tsx:51-62` (contracts/settings-fields.md §2) — appointment + webinar share three placeholders (`bookRate`, `showRate`/`showUpRate`, `closeRate`)
+- [X] T039 [US1] Replace the `direct_call` `<SelectItem>` at `client/src/pages/Settings.tsx:397` with the free-appointment option "أحجز استشارة مجانية ثم أبيع بعدها", broaden the `paid_lto` label to "أبيع منتجًا أو خدمة مباشرة، أو أقدم فعالية أو استشارة مدفوعة", add the short paid-versus-free selector helper, and update `FIELD_COPY.archetype.hint` in `client/src/lib/settingsFields.ts:31-34`, which still advertises the retired option
+- [X] T040 [US1] Render the three appointment rate inputs in `client/src/pages/Settings.tsx` with client-side validation rejecting `0`, negatives, and values above 100 with a simple-Arabic message (FR-009) — server-side zod (`z.number().gt(0).max(100)`) was already in place from Phase 2; the placeholder text now drives client-side validation visual state
+- [X] T041 [US1] Hide `aov`, `frontEndRoas`, and `htoConversionRate` for appointment in `client/src/pages/Settings.tsx`, keeping stored values intact, and hide the `effectiveCPA` block (lines 540-558), the `capped` warning (565-573), and the "كيف حسبنا هذا الرقم؟" breakdown (584-620) (FR-028, FR-028a, FR-028b)
+- [X] T042 [US1] Extend the maximum-cost-per-lead preview row at `client/src/pages/Settings.tsx:575-583` to render for appointment, reusing the existing dual-currency `targetsInInput`/`targetsInAccount` pattern (FR-027)
+- [X] T043 [US1] Make the `htoUnderperforming` label archetype-dependent in `client/src/lib/settingsFields.ts`, using "الناس تحجز وتحضر لكن لا تشتري؟" for appointment and leaving `paid_lto`/`free_lead` wording unchanged (FR-028c, FR-028d)
 
 **Checkpoint**: US1's Independent Test passes and this is the MVP — **except** US1 AS9 (the 8% page flagged weak via the 15% floor), which depends on the threshold work in Phase 7 and is intentionally not delivered here. Until Phase 7 lands, appointment pages are judged on the inherited product-purchase floor.
 
@@ -153,7 +153,7 @@ confirm the settings page shows a maximum-cost-per-lead figure matching the funn
 ### Implementation for User Story 2
 
 - [ ] T046 [US2] Extend the `deriveTargets` branch in `shared/qarar.ts` to cover `webinar`, computing `p` as the product of `showUpRate` and `closeRate` (contracts/derive-targets.md §3)
-- [ ] T047 [US2] Add the webinar `<SelectItem>` "أدعو الناس إلى ندوة مجانية ثم أبيع بعدها" to `client/src/pages/Settings.tsx`
+- [ ] T047 [US2] Add the free-event webinar `<SelectItem>` "أدعو الناس إلى فعالية مجانية: ندوة أو تحدٍّ أو ماستر كلاس، ثم أبيع بعدها" to `client/src/pages/Settings.tsx`
 - [ ] T048 [US2] Add webinar to the visibility matrix in `client/src/lib/settingsFields.ts` — `showUpRate` and `closeRate` visible, `bookRate` hidden — and add the webinar `closeRate` label "من كل 100 حاضر، كم واحدًا يشتري؟ (%)" with placeholder `1-8%` (contracts/settings-fields.md §2, §3)
 - [ ] T049 [US2] Render the two webinar rate inputs in `client/src/pages/Settings.tsx` and set the webinar `htoUnderperforming` wording to "الناس تحضر الندوة لكن لا تشتري؟" (FR-028d)
 
