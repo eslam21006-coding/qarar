@@ -250,7 +250,7 @@ describe("Dashboard (spec 012) — no '∞' rendering on null targets (SC-021)",
     };
   }
 
-  it("unitTarget=null → target tile renders '—', the rendered DOM contains no '∞'", () => {
+  it("unitTarget=null → target tile renders 'لم يتحدد بعد' (FR-019b), the rendered DOM contains no '∞'", () => {
     mocks.dash.data = makeSnapshotWithUnitTarget(null);
     mocks.dash.isLoading = false;
     const { container } = render(<Dashboard />);
@@ -260,8 +260,9 @@ describe("Dashboard (spec 012) — no '∞' rendering on null targets (SC-021)",
     //   (a) the rendered DOM as a whole contains no "∞" (the
     //       money() default we must never leak), and
     //   (b) the closest enclosing div of the target label contains
-    //       "—" — proving the value sibling rendered the explicit
-    //       sentinel rather than falling through to `money(null)`.
+    //       the "لم يتحدد بعد" phrase (FR-019b) — proving the value
+    //       sibling rendered the explicit "not yet determined" copy
+    //       rather than falling through to `money(null)` (which is "∞").
     const allText = container.textContent ?? "";
     expect(
       allText.includes("∞"),
@@ -271,8 +272,8 @@ describe("Dashboard (spec 012) — no '∞' rendering on null targets (SC-021)",
     // (b) Climb from the target-label node to its containing div.
     // The Stat component (Dashboard.tsx) wraps label + value in a
     // single <div class="min-w-[84px] shrink-0"> — the assertion
-    // narrows the "—" check to that exact tile rather than the
-    // whole document (where other stats also render "—"). Use
+    // narrows the phrase check to that exact tile rather than the
+    // whole document (where other stats render "—"). Use
     // .parentElement (not .closest("div")) because the label node
     // itself is a div — closest() would return it.
     const labelEl = Array.from(container.querySelectorAll("div")).find(el =>
@@ -288,7 +289,7 @@ describe("Dashboard (spec 012) — no '∞' rendering on null targets (SC-021)",
       "target tile has no enclosing parent element"
     ).toBeTruthy();
     const tileText = tileRoot?.textContent ?? "";
-    expect(tileText).toContain("—");
+    expect(tileText).toContain("لم يتحدد بعد");
     expect(tileText).not.toContain("∞");
     expect(tileText).toContain("هدف تكلفة العميل");
   });

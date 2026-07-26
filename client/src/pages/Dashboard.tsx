@@ -261,7 +261,12 @@ export default function Dashboard() {
           />
           <Stat
             label="هدف تكلفة العميل"
-            value={targets.unitTarget === null ? "—" : money(targets.unitTarget, currencySymbol)}
+            // FR-019b — a null target means the user still has to enter funnel
+            // numbers; render the distinct "not yet determined" phrase, NOT a
+            // plain "—". The dash is reserved for "still measuring" states (the
+            // 30-day-median tile above). money()'s null default "∞" must never
+            // reach this tile (FR-019c / SC-021).
+            value={targets.unitTarget === null ? "لم يتحدد بعد" : money(targets.unitTarget, currencySymbol)}
             cls="text-primary"
           />
         </div>

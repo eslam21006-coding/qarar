@@ -1,0 +1,273 @@
+================================================================================
+SELF-REVIEW — PR #25 (spec 012: appointment/webinar archetypes)
+Fresh audit against live code + CI. Nothing trusted from prior sessions
+or Minimax's summary — every claim below re-verified this run.
+================================================================================
+Date:            2026-07-26
+Branch:          feature/free-lead-no-aov  (NOTE: not a 012-named branch)
+PR:              #25 → base main, state OPEN, mergeable MERGEABLE
+HEAD:            7ec79ac  (local == origin, 0 ahead / 0 behind — reads reflect this exact code)
+Base for diff:   main
+Auditor stance:  adversarial; green checkmarks distrusted per project history.
+
+Commits under review (on top of the analyze commit bf0e792):
+  18190b3  feat(012): appointment archetype MVP (Phase 1-3)
+  497175a  fix(012): resolve 8 CodeRabbit review threads   ] Minimax's
+  79c0214  fix(012): 8 CodeRabbit cleanups for Phase 3/4    ]  CodeRabbit
+  7ec79ac  test(012): pin '—' rendering to target tile      ]  fixes
+
+--------------------------------------------------------------------------------
+VERDICT: NOT clean. One real CodeRabbit thread is OPEN (contradicts the green
+badge), the local test suite exits 1 (environmental, CI is green), and the
+prior "Phase 1-3 only" framing is materially inaccurate — Phases 4/5/6 have
+shipped. None of these is a correctness regression in the spec-012 math, and
+the production migration/ledger dependency is intact. Details below, item by
+item, with the discrepancies called out plainly.
+================================================================================
+
+
+1. CODERABBIT — LIVE STATUS (pulled fresh via GraphQL this run)
+--------------------------------------------------------------------------------
+   PR status badge:  CodeRabbit = SUCCESS,  CI 'test' = SUCCESS
+   ACTUAL THREADS:   TOTAL 15 | RESOLVED 14 | **OPEN 1**
+
+   >>> DISCREPANCY: the green "CodeRabbit SUCCESS" badge is MISLEADING.
+       Exactly the failure mode flagged in the task prompt — a SUCCESS status
+       with a real thread still open. Do NOT read the badge as "clean."
+
+   THE OPEN THREAD (coderabbitai, Major, "Data Integrity & Integration"):
+     Path:  drizzle/0010_curly_patch.sql : line 5
+     Title: "Gate the ENUM shrink on the zero-row check"
+     Claim: L5 drops `direct_call` from the archetype enum; if any rows still
+            use it, MySQL can fail the MODIFY COLUMN or coerce data to ''.
+            Asks: keep the preflight/backfill ahead of this migration, and
+            don't ship drizzle/schema.ts's narrowed enum until the DB is on it.
+
+   IS THE OPEN THREAD VALID?  Partly yes — see item 5. It is NOT a false
+   positive: the archetype preflight is a standalone script and is NOT wired
+   into the deploy path. It is LOW real-world risk because production already
+   applied this migration by hand with a confirmed zero direct_call count, but
+   the defense-in-depth gap the thread describes is genuine and unresolved.
+
+   The 14 resolved threads (all coderabbitai) span Settings.tsx (FR-004 helper
+   wiring, FR-009 range message, SC-014 duplicate ceiling row), Settings.test
+   (T032 real archetype switch), Dashboard (∞ guard), engine.ts, meta.ts,
+   settingsFields.ts, dailyRefresh test, and derive-targets.md. All show
+   "Addressed in commit 497175a / later" and are marked resolved on GitHub.
+
+
+2. SCOPE DRIFT vs main
+--------------------------------------------------------------------------------
+   39 files changed, +7043 / -325.  Programmatic check for any file OUTSIDE the
+   spec-012 surface (archetype/funnel-math/settings/migration/measurement/
+   absent-target) returned EMPTY. No unrelated files.
+
+   Minimax's 3 fix commits touched ONLY spec-012 files:
+     settingsFields.ts, Dashboard.tsx, Dashboard.swr.test.tsx, Settings.tsx,
+     Settings.test.tsx, dailyRefresh.ts, dailyRefresh.funnelStates.test.ts,
+     engine.ts, engine.test.ts, meta.ts, qarar.ts, contracts/derive-targets.md.
+   Nothing unrelated was introduced by the CodeRabbit-comment fixes.
+
+   Incidental changes checked and cleared as in-scope:
+     - server/demo.ts (+cplMedian30: 39)         → research R4, demo snapshot
+     - server/daily7Slice.test.ts (+lead/purchaseConversions: 0) → FR-030 fixture
+     - server/t037Gate.test.ts (substring "0010" → exact tag)    → migration
+       collision handling; verified STRICTLY STRICTER, so the gate is not
+       weakened (exact-match passes fewer strings than substring).
+     - client/src/lib/cellFormat.ts + .test.ts (NEW)             → implements
+       FR-019d/SC-022 (absent-target cell = "—", never ∞). It extends the
+       PRE-EXISTING spec-007 contract cpa-column.md; the extraction into a
+       pure, unit-tested helper is a reasonable way to land FR-019d. In scope.
+
+   >>> ONE SCOPE NOTE (not drift, but an expansion vs my original spec):
+       A new clarification was added on-branch — appointment/webinar are now
+       "FREE-only" (spec.md Clarifications, FR-004). The paid_lto label was
+       broadened to "أبيع منتجًا أو خدمة مباشرة، أو أقدم فعالية أو استشارة مدفوعة"
+       and the two new options relabelled as explicitly free
+       ("أحجز استشارة مجانية…", "أدعو الناس إلى فعالية مجانية…"). This is within
+       the archetype-definition scope and CodeRabbit-driven (FR-004 helper),
+       but it is a real addition beyond the spec as originally written. Flagged
+       for awareness, not as a problem.
+
+
+3. CORE MATH — RE-VERIFIED FRESH (fix commits DID touch qarar.ts + engine.ts)
+--------------------------------------------------------------------------------
+   Test:  server/engine.test.ts:953
+     "6/70/22 × htoPrice 2000 → leadValue 18.48, cplCeiling 9.24,
+      unitTarget 9.24, source cpl_funnel_math (SC-001)"
+     assertions: cplCeiling toBeCloseTo(9.24, 2); unitTarget toBeCloseTo(9.24, 2)
+
+   Ran this run:
+     npx vitest run server/engine.test.ts            → 93/93 PASS, exit 0
+     npx vitest run server/engine.test.ts -t "9.24"  → 2/2 PASS, exit 0
+   The worked example holds AFTER Minimax's changes. Monotonicity (T029) and
+   the leadValue=18.48 chain also present and green.
+
+
+4. paid_lto / free_lead BYTE-IDENTICAL — RE-VERIFIED FRESH
+--------------------------------------------------------------------------------
+   Regression locks live in server/engine.test.ts (T007 block @ line 865+) and a
+   committed snapshot server/__snapshots__/engine.test.ts.snap (389 lines, 10
+   paid_lto/free_lead references).
+
+   Ran this run:
+     npx vitest run server/engine.test.ts -t "regression lock" → 8/8 PASS, exit 0
+   The fix commits touched engine.ts and qarar.ts, so this fresh pass is
+   load-bearing — and it is green. paid_lto and free_lead are unaffected
+   (SC-005 / SC-010 hold). Snapshot file is committed and did not drift.
+
+
+5. MIGRATION LEDGER / PRODUCTION-STATE DEPENDENCY — INTACT
+--------------------------------------------------------------------------------
+   Question: did the CodeRabbit fixes touch 0010_curly_patch.sql, its journal
+   entry, or anything conflicting with the ledger backfill applied to prod?
+
+   ANSWER: NO. The 3 fix commits touched ZERO drizzle/ files (verified:
+   `git diff --name-only 18190b3 HEAD -- drizzle/` is empty). 0010_curly_patch.sql,
+   drizzle/meta/_journal.json (idx 10, tag 0010_curly_patch, when 1784961631032),
+   and 0010_snapshot.json are byte-unchanged since the MVP commit 18190b3.
+
+   LEDGER HASH MATCH (the thing that actually matters for prod):
+     migration-0010-collision-fix.txt pins the production ledger row to
+       SHA-256 5422234c66b41288f052438aa82fde1b7782551f050afd08ac7f04da50cf0aca
+       LF byte length 443.
+     Committed git blob (what deploy checks out on Linux):
+       git show HEAD:drizzle/0010_curly_patch.sql | sha256sum
+       = 5422234c...50cf0aca, 443 bytes  → EXACT MATCH. ✓
+     No conflict with the applied ledger backfill.
+
+   >>> LIVE TRAP (documented in the notes, re-confirmed this run):
+       The WORKING COPY on disk is CRLF — 447 bytes, sha256 601eae25… — which
+       does NOT match the ledger hash. This is the exact Windows-checkout
+       artifact migration-0010-collision-fix.txt warns about. It is harmless to
+       deploy (deploy consumes the LF git blob, and `git diff` shows the file
+       clean via autocrlf normalization), BUT anyone who hashes the local file
+       for the ledger would compute the WRONG value. Use the committed blob's
+       hash (5422234c…), never the working copy's.
+
+   >>> OPEN-THREAD SUBSTANCE (item 1's open finding, assessed here):
+       `scripts/verify-archetype-migration.ts` (the zero-direct_call preflight,
+       T001) is NOT wired into `npm run db:push`. db:push runs
+       verify-t037-prerequisites.ts + drizzle-kit generate + migrate. So on a
+       FRESH environment, 0010_curly_patch.sql's enum shrink (statement 5) runs
+       WITHOUT the archetype preflight. Production is safe (already applied by
+       hand at zero direct_call rows), but the guard CodeRabbit asks for is
+       genuinely absent from the automated path. HIGH-priority to note per the
+       task framing, LOW actual risk given prod state. This is why the thread
+       is legitimately still open — not a badge glitch.
+
+
+6. FULL SUITE + tsc — FRESH RUN, REAL NUMBERS
+--------------------------------------------------------------------------------
+   tsc:   npx tsc --noEmit           → EXIT 0, clean, zero errors.
+
+   tests: npm test (vitest run)      → EXIT 1
+     Test Files:  1 failed | 41 passed | 2 skipped   (44)
+     Tests:       480 passed | 24 skipped            (504)
+
+   >>> The single failing FILE is server/auth-flow.e2e.test.ts:
+       Error: "Database connection failed" (auth-flow.e2e.test.ts:22).
+       - It is an auth E2E suite, UNRELATED to spec 012.
+       - It is UNTOUCHED by this branch (not in the diff vs main).
+       - It fails because this local environment has no DATABASE_URL / no
+         reachable DB. CI's 'test' check = SUCCESS (2026-07-26T11:08, real DB).
+       => Environmental, NOT a spec-012 regression.
+
+   >>> HONESTY NOTE on a prior signal: the background wrapper that launched the
+       suite reported "exit code 0". That was the wrapper's LAST command
+       (a tee/tail pipeline), NOT npm test. The REAL npm test exit is 1
+       (captured PIPESTATUS). Anyone reading only the wrapper notification would
+       have wrongly concluded the suite was fully green. It is green EXCEPT the
+       env-only e2e file.
+
+
+7. PHASE DEFERRAL — DOES IT STILL DEFER PHASE 4–8?
+--------------------------------------------------------------------------------
+   >>> DISCREPANCY WITH THE CHECKPOINT REPORT. mvp-checkpoint-report.txt frames
+       the branch as "Phase 1 + Phase 2 + Phase 3 (appointment)". The current
+       tree has moved well past that:
+
+     PHASE 4 (webinar) — SHIPPED, not deferred.
+       - shared/qarar.ts:628  `else if (f.archetype === "webinar")` full funnel
+         math branch (comment "Phase 4 / T046").
+       - settingsFields.ts: showUpRate visible for webinar, webinar closeRate
+         label + placeholder "15-30%"/"1-8%", webinar htoUnderperforming wording
+         (comments "Phase 4 / T048").
+       - Settings.tsx: webinar SelectItem + showUpRate input wired into form
+         state / hydrate / save payload (comment "Phase 4 / T046").
+
+     PHASE 5 (priority chain + dual preview) — LARGELY SHIPPED.
+       - marketCplBenchmark widened to appointment/webinar (FR-020, tier 3).
+       - Dual ceiling row present; the SC-014 "same number twice" bug CodeRabbit
+         found at Settings.tsx:804 is RESOLVED (guarded on cplCeiling != unitTarget).
+
+     PHASE 6 (honest no-target) — MECHANICALLY SHIPPED, copy deferred.
+       - engine.ts:1124 no-target GATE → too_early/GATE when unitTarget === null
+         (had to ship: a nullable unitTarget is reachable in shipped appointment
+         scope, so this is a PREREQUISITE, not scope creep).
+       - cellFormat.ts + DecisionTable: absent-target cells render "—", never ∞.
+       - Dashboard tile guards null → "—".
+       - NOTE: the T058 copy refinement is deferred, and the Dashboard tile uses
+         a plain em dash "—", NOT the FR-019b proposed phrase "لم يتحدد بعد".
+         Satisfies SC-021 (no ∞/number) but is a MINOR SPEC DEVIATION from
+         FR-019b's intent (a phrase signalling "waiting on you", distinct from a
+         generic missing-data dash).
+
+     PHASE 7 (thresholds/anchors) — CORRECTLY DEFERRED. ✓
+       - Weak-page floor still `archetype === "free_lead" ? cvr < 15 : cvr < 2`
+         at engine.ts:271, 373, 618, 838 — appointment/webinar retain the 2%
+         product-purchase floor. Matches the checkpoint's US1-AS9-deferred claim.
+         This is the one phase the checkpoint describes accurately.
+
+     PHASE 8 (polish) — PARTIAL (isolation coverage, demo, superseded notes
+       present in various tasks; not separately audited here).
+
+   ANSWER TO ITEM 7: No — the branch does NOT cleanly defer Phase 4-8. Phase 4
+   (webinar) and Phase 5 shipped; Phase 6's absent-target plumbing shipped
+   (necessarily); only Phase 7 and most of Phase 8 remain deferred. Whether that
+   happened in the MVP commit or Minimax's fixes, the "Phase 1-3" label on the
+   checkpoint understates the current scope. Not inherently wrong — the extra
+   work is tested and CI-green — but the prior claim does not match reality and
+   is called out here per instruction.
+
+
+================================================================================
+SUMMARY OF DISCREPANCIES vs PRIOR CLAIMS (stated plainly)
+================================================================================
+  D1  CodeRabbit badge SUCCESS, but 1 Major thread OPEN on the production
+      migration (enum-shrink not gated on the preflight in the deploy path).
+      The badge is unreliable, exactly as warned.  [item 1, 5]
+  D2  Local `npm test` exits 1 (auth-flow.e2e, DB-connection, env-only). A
+      background wrapper had reported "exit 0" — that was the wrapper, not the
+      test run. CI is green with a real DB.  [item 6]
+  D3  "Phase 1-3 only" is inaccurate: Phase 4 (webinar) + Phase 5 shipped, and
+      Phase 6 null-handling shipped. Only Phase 7 (+most of 8) is deferred. [item 7]
+  D4  Dashboard no-target tile renders "—", not FR-019b's "لم يتحدد بعد". Minor
+      spec deviation; SC-021 still satisfied.  [item 7]
+  D5  Working-copy 0010_curly_patch.sql is CRLF (hash 601eae25, 447B) ≠ committed
+      LF (5422234c, 443B). Documented Windows artifact; deploy uses the LF blob
+      which matches the prod ledger. Trap only if someone hashes the local file. [item 5]
+
+CONFIRMED-GOOD (re-verified fresh, not carried over):
+  G1  tsc --noEmit clean (exit 0).  [item 6]
+  G2  9.24 worked-example passes after the fix commits.  [item 3]
+  G3  paid_lto/free_lead regression locks (8 tests + committed snapshot) pass. [item 4]
+  G4  Migration file/journal/snapshot untouched by the fix commits; committed
+      hash == production ledger hash exactly. No ledger conflict.  [item 5]
+  G5  No out-of-scope files; Minimax's fixes stayed entirely on spec-012 surface. [item 2]
+  G6  Phase 7 thresholds correctly deferred (2% floor retained).  [item 7]
+  G7  CI 'test' check SUCCESS on a real DB; PR MERGEABLE; local HEAD == remote. [items 1,6]
+
+RECOMMENDATION BEFORE GATE REVIEW
+  - Resolve or explicitly accept the open CodeRabbit thread (D1). Either wire
+    verify-archetype-migration.ts into the deploy preflight, or record a written
+    decision that prod is already migrated at zero direct_call rows and fresh
+    envs are covered by the standalone script. Do not merge on the green badge
+    alone.
+  - Correct the checkpoint report's "Phase 1-3" scope statement (D3) so the gate
+    reviewer sees the true surface (Phases 4-6 present).
+  - Decide FR-019b copy (D4): ship "لم يتحدد بعد" or amend the spec to accept "—".
+  - No action needed on D2 (env) or D5 (documented artifact) beyond awareness.
+================================================================================
+END OF SELF-REVIEW
+================================================================================
