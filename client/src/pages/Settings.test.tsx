@@ -424,6 +424,17 @@ describe("Settings page (T008 / US1 / SC-001 / FR-001)", () => {
       dashboard: { get: { invalidate: vi.fn() } },
     });
 
+    // JSDOM has no `Element.prototype.scrollIntoView`. Radix Select calls it
+    // on the *currently selected* option when the popover opens (a different
+    // element than the one we click), so without this stub the open() path
+    // throws an unhandled "scrollIntoView is not a function" error inside a
+    // passive effect — which can corrupt the React tree between the two
+    // archetype switches below. Stub it on the prototype once.
+    if (!(Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView) {
+      (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView =
+        () => undefined;
+    }
+
     const { container } = render(<Settings />);
 
     // Hydrate: the three rate inputs + htoPrice are present and carry
@@ -519,15 +530,15 @@ describe("Settings page (T008 / US1 / SC-001 / FR-001)", () => {
         );
       }
       stubPointerCapture(item);
-      // Radix SelectItem fires `handleSelect` on pointerDown + click.
-      // Both need the same guards as the trigger.
+      // Radix SelectItem (react-select v2) commits a selection on `onClick`
+      // ONLY when its internal pointerType ref is not "mouse" (default
+      // "touch"), and on `onPointerUp` only when it IS "mouse". The prior
+      // helper fired pointerDown({pointerType:"mouse"}) which flipped the ref
+      // to "mouse" and made the following click a NO-OP — so the archetype
+      // never actually changed and the round-trip was never exercised. Fire a
+      // plain click (ref stays "touch") so `handleSelect` runs → onValueChange
+      // + the popover closes.
       act(() => {
-        fireEvent.pointerDown(item!, {
-          button: 0,
-          pointerType: "mouse",
-          pointerId: 1,
-          isPrimary: true,
-        });
         fireEvent.click(item!);
       });
     };
@@ -536,6 +547,18 @@ describe("Settings page (T008 / US1 / SC-001 / FR-001)", () => {
     // doesn't change — same row re-hydrated — so any field that
     // vanished on paid_lto MUST re-appear on appointment.
     await setArchetype("paid_lto");
+    // Prove the intermediate state actually changed: the appointment rate
+    // inputs (6 / 22) must be GONE on paid_lto. Without this, a select that
+    // silently failed to switch (Radix/JSDOM quirk) would leave the form on
+    // appointment and the final assertions would still pass — the round trip
+    // would be unproven.
+    await waitFor(() => {
+      const values = Array.from(container.querySelectorAll("input")).map(
+        i => (i as HTMLInputElement).value
+      );
+      expect(values).not.toContain("6");
+      expect(values).not.toContain("22");
+    });
     await setArchetype("appointment");
 
     // The contract: returning to appointment restores the three rate

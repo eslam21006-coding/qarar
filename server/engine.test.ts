@@ -877,6 +877,7 @@ describe("T007 — deriveTargets regression lock for free_lead + paid_lto", () =
     ctrLinkMedian90: 1.7,
     cpmAvg14: 18,
     cpaMedian30: 2.1,
+    cplMedian30: null,
     cpmNow: 18,
   } as const;
   const baselineNoMedian = { ...baselineAll, cpaMedian30: null } as const;
@@ -1359,7 +1360,11 @@ describe("T033 — appointment stale-input no-verdict (US1 / FR-015a / SC-018)",
     // We assert neither value appears.
     const money127 = /(\$|د\.إ|ر\.س|ج\.م|£|€|د\.ك|ر\.ق|د\.ب|ر\.ع)127(\.0+)?\b/;
     return result.rows.some(
-      r => money47.test(r.reason_ar) || money127.test(r.reason_ar)
+      r =>
+        money47.test(r.reason_ar) ||
+        money127.test(r.reason_ar) ||
+        money47.test(r.action_ar) ||
+        money127.test(r.action_ar)
     );
   }
 

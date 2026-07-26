@@ -1,0 +1,58 @@
+Migration 0010 collision fix
+
+Date: 2026-07-25 UTC
+Migration: drizzle/0010_curly_patch.sql
+
+Finding
+-------
+The five statements in drizzle/0010_curly_patch.sql were already applied directly to production. The migration file must remain unchanged in the repository for fresh environments. Production only needs a Drizzle ledger row so drizzle-kit migrate skips the already-applied migration.
+
+Hash verification
+-----------------
+Drizzle hashes the complete raw SQL file bytes with SHA-256, including statement-breakpoint markers and the final newline. The deploy checkout used by Manus/Linux uses the committed LF encoding. The Windows working copy was verified as CRLF and produced a different byte hash, so it must not be used for the production ledger value.
+
+Expected committed/deploy encoding: UTF-8, LF line endings, no BOM
+LF byte length: 443
+SHA-256: 5422234c66b41288f052438aa82fde1b7782551f050afd08ac7f04da50cf0aca
+
+The migration journal entry uses created_at 1784961631032, which is later than the current production highest value 1783972463571 and matches drizzle/meta/_journal.json for tag 0010_curly_patch.
+
+Operator procedure
+------------------
+Run the backup statement first. It creates a complete point-in-time copy of the ledger and does not modify the live ledger or any application table.
+
+If this exact backup table already exists, do not drop it and do not reuse it blindly. Stop and validate that backup against the live ledger using the prior ledger-backfill runbook before taking a fresh backup with a new date-specific name.
+
+BACKUP SQL (run first)
+----------------------
+CREATE TABLE `__drizzle_migrations_bak_20260725` AS SELECT * FROM `__drizzle_migrations`;
+
+Then run the insert statement. It is self-protecting: if a row already exists with created_at 1784961631032, it inserts nothing. It records only the migration hash and timestamp; the database supplies the ledger row id.
+
+INSERT SQL (run second)
+-----------------------
+INSERT INTO `__drizzle_migrations` (`hash`, `created_at`)
+SELECT '5422234c66b41288f052438aa82fde1b7782551f050afd08ac7f04da50cf0aca', 1784961631032
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM `__drizzle_migrations`
+  WHERE `created_at` = 1784961631032
+);
+
+Read-only verification after the insert
+----------------------------------------
+SELECT `id`, `hash`, `created_at`
+FROM `__drizzle_migrations`
+WHERE `created_at` = 1784961631032;
+
+Expected: exactly one row with hash 5422234c66b41288f052438aa82fde1b7782551f050afd08ac7f04da50cf0aca and created_at 1784961631032.
+
+Safety statement
+----------------
+Creating the backup reads __drizzle_migrations and writes only the new backup table. The INSERT writes only one bookkeeping row to __drizzle_migrations. It does not touch funnelSettings, users, snapshots, ad data, or any other application table, and it does not run the five migration statements. It therefore does not alter or risk application table data; it only tells Drizzle that these already-applied statements have been accounted for on this production database.
+
+Do not modify drizzle/0010_curly_patch.sql, delete it, or remove its journal entry. Fresh environments still need the migration SQL to run normally.
+
+Review status
+-------------
+Prepared for operator review only. No production SQL was executed by this session. No commit or push was performed.

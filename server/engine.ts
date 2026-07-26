@@ -592,12 +592,19 @@ function watchRules(
     if (days.length >= 3) {
       const lastDay = days[days.length - 1];
       const prior = days.slice(-4, -1);
+      // T025 — day-level CPA/conversions must follow the archetype-aware
+      // selectors, otherwise appointment/webinar judge a purchase CPA
+      // against a lead-based target here.
+      const lastDayCpa = effectiveDailyCpa(lastDay, archetype);
       const lastBad =
-        lastDay.conversions === 0 ||
-        (lastDay.cpa !== null && lastDay.cpa > 1.5 * target);
+        effectiveDailyConversions(lastDay, archetype) === 0 ||
+        (lastDayCpa !== null && lastDayCpa > 1.5 * target);
       const priorGood =
         prior.length >= 2 &&
-        prior.every(d => d.cpa !== null && d.cpa <= target);
+        prior.every(d => {
+          const dCpa = effectiveDailyCpa(d, archetype);
+          return dCpa !== null && dCpa <= target;
+        });
       if (lastBad && priorGood) {
         return {
           verdict: "watch",
@@ -704,7 +711,13 @@ function continueRules(
   const days = o.daily7.filter(d => d.spend > 0);
   if (days.length >= 3) {
     const last3 = days.slice(-3);
-    threeDaysUnder = last3.every(d => d.cpa !== null && d.cpa <= target * 1.0);
+    // T025 — archetype-aware daily CPA: appointment/webinar compare a
+    // per-day cost-per-lead against the CPL target, legacy archetypes keep
+    // the purchase-based `d.cpa`.
+    threeDaysUnder = last3.every(d => {
+      const dCpa = effectiveDailyCpa(d, archetype);
+      return dCpa !== null && dCpa <= target * 1.0;
+    });
   }
 
   if (cpaAtOrUnder && threeDaysUnder && beatsMedian) {
@@ -1380,6 +1393,32 @@ function effectiveDailyConversions(
     return d.leadConversions;
   }
   return d.conversions;
+}
+
+/**
+ * Mirror of `effectiveCpa` for `DailyMetrics` (T025 / FR-031). The per-day
+ * gating rules (W2 "one bad day", S1's `threeDaysUnder`) compare a daily
+ * cost against the lead-based `target`. For appointment / webinar the
+ * legacy `d.cpa` is a cost-per-PURCHASE, so those sites must synthesize a
+ * cost-per-LEAD from `d.leadConversions` — otherwise a purchase CPA is
+ * judged against a CPL target (the exact unit mismatch `effectiveCpa`
+ * removed at the 3-day level). Legacy archetypes keep `d.cpa` unchanged,
+ * so their behaviour is byte-identical.
+ *
+ * Returns `null` when there is no usable count (pre-separation snapshot,
+ * captured zero, or no spend) — the same "no cpa" signal the callers
+ * already branch on.
+ */
+function effectiveDailyCpa(
+  d: { spend: number; cpa: number | null; leadConversions?: number },
+  archetype: FunnelInputs["archetype"]
+): number | null {
+  if (archetype === "appointment" || archetype === "webinar") {
+    const conv = d.leadConversions;
+    if (conv === undefined || conv === 0 || d.spend <= 0) return null;
+    return d.spend / conv;
+  }
+  return d.cpa;
 }
 
 function round2(n: number): number {

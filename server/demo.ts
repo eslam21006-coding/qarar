@@ -31,6 +31,15 @@ function W(p: Partial<WindowMetrics>): WindowMetrics {
     if (!p.lpViews) w.lpViews = Math.round(w.linkClicks * 0.85);
   }
   w.cpa = w.conversions > 0 ? w.spend / w.conversions : null;
+  // Spec 012 (FR-030/FR-035): the demo is a POST-separation snapshot. Mirror
+  // the purchase-based `conversions` into the lead/purchase split so
+  // appointment/webinar demo runs follow the normal judgement path instead
+  // of the pre-separation GATE forever. Only fill when the caller did not
+  // set an explicit count (an explicit `0` is a real captured zero and is
+  // preserved). Legacy archetypes ignore these fields (SC-025), so their
+  // demo verdicts are unchanged.
+  if (w.leadConversions === undefined) w.leadConversions = w.conversions;
+  if (w.purchaseConversions === undefined) w.purchaseConversions = w.conversions;
   return w;
 }
 

@@ -55,13 +55,19 @@ one remains unjournalled, applied by hand via
 `scripts/apply-migrations.mjs drizzle/0010_settings_unique_index.sql`. Test
 `server/t037Gate.test.ts` passes 14/14 with this tightening.
 
-**External application status**: The migration has been **generated and committed to
-`drizzle/0010_curly_patch.sql` and to `drizzle/meta/_journal.json`** in this branch, but it
-**has NOT been applied to the production database** by this work. The deploy procedure is the
-standard `npm run db:push` invocation, which runs `scripts/verify-t037-prerequisites.ts`
-(which BLOCKS on a non-empty `funnelSettings` table without the unique index) followed by
-`drizzle-kit generate && drizzle-kit migrate`. The pre-flight enforces the gate; the auto-generated
-migration is then applied. No operator action is required beyond the standard deploy.
+**External application status**: The migration is **generated and committed to
+`drizzle/0010_curly_patch.sql` and to `drizzle/meta/_journal.json`** (journal idx 10, tag
+`0010_curly_patch`, `when` 1784961631032) in this branch. On the **production database this
+migration was already applied by hand** — at zero `direct_call` rows, so the enum shrink was
+safe — and its `__drizzle_migrations` ledger row was backfilled to match the committed LF blob
+(SHA-256 `5422234c…50cf0aca`, 443 bytes). This is the verified production state documented in
+`pr-spec012-self-review.txt` §5 and the runbook `migration-0010-collision-fix.txt`.
+Consequently **no migration action is required against production**. On any OTHER (fresh /
+non-prod) environment the standard `npm run db:push` applies it: it runs
+`scripts/verify-t037-prerequisites.ts` (which BLOCKS on a non-empty `funnelSettings` table
+without the unique index) followed by `drizzle-kit generate && drizzle-kit migrate`. Note: the
+archetype zero-`direct_call` preflight `scripts/verify-archetype-migration.ts` is NOT yet wired
+into `db:push` (tracked as a follow-up); production was guarded manually at apply time.
 
 ---
 
@@ -154,13 +160,17 @@ $ npm run check
 ```
 $ npm test
  Test Files  1 failed | 41 passed | 2 skipped (44)
-      Tests  475 passed | 24 skipped | 1 failed (499)
+      Tests  480 passed | 24 skipped (504)
 ```
 
-The single failing test is `server/auth-flow.e2e.test.ts` — an E2E test that **fails on the
-clean tree before any of this work**, requires `DATABASE_URL` to be set, and is documented in
-the prior session summary. It is unrelated to spec 012. The 24 skipped tests are
-pre-existing skips for tests gated on database presence.
+(Single captured `npm test` run — the same one reported in `pr-spec012-self-review.txt` §6.
+The counts reconcile: 480 passed + 24 skipped = 504 total; no test CASE fails.)
+
+The single failing FILE is `server/auth-flow.e2e.test.ts` — an E2E suite that **fails on the
+clean tree before any of this work** because it requires a live `DATABASE_URL` ("Database
+connection failed"), so it errors during setup and contributes zero passing/failing test cases
+to the totals above. It is unrelated to spec 012 and is documented in the prior session summary.
+The 24 skipped tests are pre-existing skips for tests gated on database presence.
 
 | Suite                              | Tests | Status |
 |------------------------------------|-------|--------|

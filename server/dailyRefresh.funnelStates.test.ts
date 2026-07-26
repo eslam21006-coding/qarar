@@ -538,19 +538,26 @@ describe("T019 — funnelToInputs and funnelSettingsToInputs parity", () => {
       geoTiers: string[] | null;
     }> = {}
   ) {
+    // Use an explicit `=== undefined` check for every nullable override —
+    // `??` would treat an explicit `null` as "absent" and substitute the
+    // default, so `buildRow({ bookRate: null })` would silently become `6`
+    // and the null-mapping cases (webinar) would never be exercised.
     return {
       ...realSettingsRow("u-parity", 99),
       archetype: overrides.archetype ?? "appointment",
-      marketCplBenchmark: overrides.marketCplBenchmark ?? 7.5,
-      inputCurrency: overrides.inputCurrency ?? "AED",
-      geoTiers: overrides.geoTiers ?? ["tier1", "tier2"],
+      marketCplBenchmark:
+        overrides.marketCplBenchmark === undefined ? 7.5 : overrides.marketCplBenchmark,
+      inputCurrency:
+        overrides.inputCurrency === undefined ? "AED" : overrides.inputCurrency,
+      geoTiers:
+        overrides.geoTiers === undefined ? ["tier1", "tier2"] : overrides.geoTiers,
       // Spec 012 — stage rates. Stamped through unknown to keep the row
       // shape decoupled from FunnelInputs / drizzle types.
       ...({
-        bookRate: overrides.bookRate ?? 6,
-        showRate: overrides.showRate ?? 70,
-        showUpRate: overrides.showUpRate ?? null,
-        closeRate: overrides.closeRate ?? 22,
+        bookRate: overrides.bookRate === undefined ? 6 : overrides.bookRate,
+        showRate: overrides.showRate === undefined ? 70 : overrides.showRate,
+        showUpRate: overrides.showUpRate === undefined ? null : overrides.showUpRate,
+        closeRate: overrides.closeRate === undefined ? 22 : overrides.closeRate,
       } as unknown as Record<string, unknown>),
     } as any;
   }
