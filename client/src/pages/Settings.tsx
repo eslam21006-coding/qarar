@@ -261,11 +261,18 @@ export default function Settings() {
   // but for Phase 3 the preview handles its own empty state).
   const legacyValid = inputs.aov > 0 && inputs.frontEndRoas > 0;
   // Spec 012 / T034 — appointment needs the three stage rates + htoPrice.
+  // FR-009 — block Save when any rate fails the out-of-range validator
+  // (zero / negative / non-finite / > 100). `rateFieldError("")` is
+  // `null`, so an empty form value is treated as "not yet entered"
+  // and lands in the existing > 0 nullish branch.
   const appointmentValid =
     (inputs.bookRate ?? 0) > 0 &&
     (inputs.showRate ?? 0) > 0 &&
     (inputs.closeRate ?? 0) > 0 &&
-    inputs.htoPrice > 0;
+    inputs.htoPrice > 0 &&
+    rateFieldError(form.bookRate) === null &&
+    rateFieldError(form.showRate) === null &&
+    rateFieldError(form.closeRate) === null;
   // Phase 4 / T046 — webinar needs the two attendance rates + htoPrice
   // (FR-006). Separate predicate because `showRate` / `bookRate` are
   // appointment-only and `showUpRate` is webinar-only; reusing the
@@ -274,7 +281,9 @@ export default function Settings() {
   const webinarValid =
     (inputs.showUpRate ?? 0) > 0 &&
     (inputs.closeRate ?? 0) > 0 &&
-    inputs.htoPrice > 0;
+    inputs.htoPrice > 0 &&
+    rateFieldError(form.showUpRate) === null &&
+    rateFieldError(form.closeRate) === null;
   const valid =
     form.archetype === "webinar"
       ? webinarValid
@@ -473,6 +482,7 @@ export default function Settings() {
                     <SelectItem value="paid_lto">أبيع منتجًا أو خدمة مباشرة، أو أقدم فعالية أو استشارة مدفوعة</SelectItem>
                     <SelectItem value="free_lead">أجمع بيانات عملاء مجانًا ثم أبيع منتجًا غاليًا</SelectItem>
                     <SelectItem value="appointment">أحجز استشارة مجانية ثم أبيع بعدها</SelectItem>
+                    <SelectItem value="webinar">أدعو الناس إلى فعالية مجانية: ندوة أو تحدٍّ أو ماستر كلاس، ثم أبيع بعدها</SelectItem>
                   </SelectContent>
                 </Select>
                 {/* Spec 012 / T039 — paid-versus-free helper, short and

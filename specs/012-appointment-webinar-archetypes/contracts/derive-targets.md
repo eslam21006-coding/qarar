@@ -9,7 +9,7 @@ deriveTargets(f: FunnelInputs, baselines?, inputCurrency?, accountCurrency?): De
 
 ## 1. Branch placement
 
-`shared/qarar.ts:476-491` currently holds a single `if (f.archetype === "free_lead") { … }`. The new
+The `deriveTargets` function in `shared/qarar.ts` holds a single `if (f.archetype === "free_lead") { … }`. The new
 branch sits **beside** it, not inside it:
 
 ```text
@@ -93,7 +93,14 @@ to `target`. It is made explicit so the correctness does not depend on that coin
 
 1. `unitTarget` is `null` **iff** `unitTargetSource` is `null`.
 2. For `appointment`/`webinar`, `unitTargetSource` is never `"effective_cpa"`.
-3. `unitTarget > 0` whenever it is non-null.
+3. For `appointment` / `webinar`: `unitTarget > 0` whenever it is non-null.
+   `paid_lto` and `free_lead` may legitimately yield `unitTarget === 0`
+   (or anything in `[0, ∞)`) because their `unitTarget` is
+   `effectiveCPA`, which is `min(rawTargetCPA, maxCPA)`. `rawTargetCPA`
+   is `aov / frontEndRoas` and `maxCPA` is `(aov + htoPrice × htoConversionRate/100) / 2`;
+   if `aov === 0` the entire chain is zero. This is the inherited legacy
+   shape — the new archetypes' priority chain never falls through to
+   `effectiveCPA` (invariant #2) so they never reach `0` from there.
 4. `cplCeiling` non-null **iff** `leadValue` non-null **iff** `fullBuyerValue` non-null (new
    archetypes only).
 5. For identical inputs, every `free_lead` and `paid_lto` field is bit-identical before and after

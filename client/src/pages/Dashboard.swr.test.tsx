@@ -221,3 +221,66 @@ describe("Dashboard (round-12 Part A) — stale-while-revalidate gating", () => 
     });
   });
 });
+
+// ===========================================================================
+// Spec 012 / SC-021 / FR-019c — the target tile MUST NOT render "∞"
+// (money()'s silent default for null/undefined inputs) when
+// unitTarget is null. The tile must render "—" as the Arabic phrase
+// sentinel. We snapshot the rendered text content of the container to
+// catch any literal "∞" that might leak through the chain of
+// `value={money(…)}`-style call sites on Dashboard.tsx.
+// ===========================================================================
+
+describe("Dashboard (spec 012) — no '∞' rendering on null targets (SC-021)", () => {
+  beforeEach(() => {
+    mocks.dash.data = undefined;
+    mocks.dash.isLoading = true;
+    mocks.dash.isError = false;
+    mocks.dash.error = null;
+    mocks.dash.isFetching = false;
+    mocks.refresh.isPending = false;
+    mocks.refresh.mutate.mockReset();
+    mocks.utils.dashboard.get.invalidate.mockReset();
+  });
+
+  function makeSnapshotWithUnitTarget(unitTarget: number | null) {
+    return {
+      ...READY_SNAPSHOT,
+      result: { ...READY_SNAPSHOT.result, targets: { unitTarget } },
+    };
+  }
+
+  it("unitTarget=null → target tile renders '—', the rendered DOM contains no '∞'", () => {
+    mocks.dash.data = makeSnapshotWithUnitTarget(null);
+    mocks.dash.isLoading = false;
+    const { container } = render(<Dashboard />);
+    // The dashboard renders through several layers; the simplest
+    // assertion is to scan the entire rendered text for the silent
+    // "∞" sentinel. SC-021 mandates zero occurrences. The textContent
+    // scan covers every visible node; we deliberately keep the
+    // stub-heavy harness so we exercise the Dashboard's own tile
+    // without pulling in the full engine.
+    const allText = container.textContent ?? "";
+    expect(
+      allText.includes("∞"),
+      `rendered DOM contained "∞": ${allText}`
+    ).toBe(false);
+    // The target label is fixed; the absence of an "∞" means the
+    // target value must have used the explicit em-dash branch.
+    expect(allText).toContain("هدف تكلفة العميل");
+  });
+
+  it("unitTarget=42 → target tile renders a money-formatted number, still no '∞'", () => {
+    mocks.dash.data = makeSnapshotWithUnitTarget(42);
+    mocks.dash.isLoading = false;
+    const { container } = render(<Dashboard />);
+    const allText = container.textContent ?? "";
+    expect(
+      allText.includes("∞"),
+      `rendered DOM contained "∞": ${allText}`
+    ).toBe(false);
+    // Money-formatted 42 with currency "$" → "$42". The exact rendering
+    // is money()/num()/pct()-driven; we only assert "∞"-never-rendered.
+    expect(allText).toContain("$42");
+  });
+});

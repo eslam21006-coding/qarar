@@ -234,6 +234,15 @@ function emptyWindow(): WindowMetrics {
   return {
     spend: 0, impressions: 0, reach: 0, frequency: 0, clicks: 0, linkClicks: 0,
     ctrAll: 0, ctrLink: 0, cpm: 0, cpc: 0, conversions: 0, conversionValue: 0,
+    // Spec 012 / FR-030/FR-035 — the lead/purchase split lives here too.
+    // Initialising both to 0 means a freshly built snapshot (no rows in
+    // the Graph response, or any path that calls `emptyWindow` before a
+    // real fetch) presents the "captured zero" state, NOT the
+    // pre-separation `undefined` discriminator that would incorrectly
+    // route appointment / webinar accounts through the not-yet-
+    // measurable gate (`preSeparationGate`).
+    leadConversions: 0,
+    purchaseConversions: 0,
     lpViews: 0, cpa: null, videoViews3s: 0, thruplays: 0,
   };
 }

@@ -250,9 +250,20 @@ export default function Dashboard() {
           />
           <Stat
             label="متوسط تكلفة العميل (30 يوم)"
-            value={money(summary.baselines.cpaMedian30 ?? undefined, currencySymbol)}
+            // SC-021 — money()'s silent default for null is "∞".
+            // Guard so a missing 30-day baseline renders "—",
+            // not the misleading "you may pay anything" sentinel.
+            value={
+              summary.baselines.cpaMedian30 == null
+                ? "—"
+                : money(summary.baselines.cpaMedian30, currencySymbol)
+            }
           />
-          <Stat label="هدف تكلفة العميل" value={money(targets.unitTarget, currencySymbol)} cls="text-primary" />
+          <Stat
+            label="هدف تكلفة العميل"
+            value={targets.unitTarget === null ? "—" : money(targets.unitTarget, currencySymbol)}
+            cls="text-primary"
+          />
         </div>
       </div>
 
