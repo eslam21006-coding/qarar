@@ -254,20 +254,43 @@ describe("Dashboard (spec 012) — no '∞' rendering on null targets (SC-021)",
     mocks.dash.data = makeSnapshotWithUnitTarget(null);
     mocks.dash.isLoading = false;
     const { container } = render(<Dashboard />);
-    // The dashboard renders through several layers; the simplest
-    // assertion is to scan the entire rendered text for the silent
-    // "∞" sentinel. SC-021 mandates zero occurrences. The textContent
-    // scan covers every visible node; we deliberately keep the
-    // stub-heavy harness so we exercise the Dashboard's own tile
-    // without pulling in the full engine.
+    // SC-021 / FR-019c — when `unitTarget === null` the target tile
+    // must render "—" as the explicit Arabic "not yet determined"
+    // sentinel. We assert this at TWO levels:
+    //   (a) the rendered DOM as a whole contains no "∞" (the
+    //       money() default we must never leak), and
+    //   (b) the closest enclosing div of the target label contains
+    //       "—" — proving the value sibling rendered the explicit
+    //       sentinel rather than falling through to `money(null)`.
     const allText = container.textContent ?? "";
     expect(
       allText.includes("∞"),
       `rendered DOM contained "∞": ${allText}`
     ).toBe(false);
-    // The target label is fixed; the absence of an "∞" means the
-    // target value must have used the explicit em-dash branch.
-    expect(allText).toContain("هدف تكلفة العميل");
+
+    // (b) Climb from the target-label node to its containing div.
+    // The Stat component (Dashboard.tsx) wraps label + value in a
+    // single <div class="min-w-[84px] shrink-0"> — the assertion
+    // narrows the "—" check to that exact tile rather than the
+    // whole document (where other stats also render "—"). Use
+    // .parentElement (not .closest("div")) because the label node
+    // itself is a div — closest() would return it.
+    const labelEl = Array.from(container.querySelectorAll("div")).find(el =>
+      (el.textContent ?? "").trim() === "هدف تكلفة العميل"
+    );
+    expect(
+      labelEl,
+      "target-tile label 'هدف تكلفة العميل' not found"
+    ).toBeTruthy();
+    const tileRoot = labelEl?.parentElement;
+    expect(
+      tileRoot,
+      "target tile has no enclosing parent element"
+    ).toBeTruthy();
+    const tileText = tileRoot?.textContent ?? "";
+    expect(tileText).toContain("—");
+    expect(tileText).not.toContain("∞");
+    expect(tileText).toContain("هدف تكلفة العميل");
   });
 
   it("unitTarget=42 → target tile renders a money-formatted number, still no '∞'", () => {
