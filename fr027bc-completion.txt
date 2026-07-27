@@ -67,8 +67,11 @@ hardcoded copies to import it:
   - server/engine.ts       (K7 / W5 / diagnosis CTAs — 4 sites)
   - client/src/pages/Upgrade.tsx
   - client/src/pages/Settings.tsx  (new)
-Value is identical to before (https://eslamsalah.com/team-discovery-call), so
-no runtime/behaviour change — just no more drift risk from divergent hardcodes.
+The URL value is unchanged for the existing engine (K7 / W5 / diagnosis) and
+Upgrade surfaces, so those have no runtime/behaviour change. Settings.tsx is the
+newly added consumer — its CTA is new runtime behaviour and points at the same
+shared URL. Consolidating the three files onto one exported constant eliminates
+drift between all listed consumers.
 
 
 TESTS (requirement #4 — SC-026 actually implemented and passing)
@@ -87,10 +90,12 @@ Settings.test.tsx: 11 passed (7 pre-existing + 4 new).
 VERIFICATION
 --------------------------------------------------------------------------------
 tsc --noEmit : clean (exit 0)
-npm test     : 484 passed | 24 skipped (508)  [was 480 before this work — +4
-               new SC-026 cases]. The only failing FILE is the env-only
-               server/auth-flow.e2e.test.ts (requires DATABASE_URL), unchanged
-               and unrelated to this work.
+npm test     : 484 passed | 24 skipped (508), EXCLUDING the env-only
+               server/auth-flow.e2e.test.ts file (requires DATABASE_URL, so it
+               errors during setup and contributes no passing/failing cases to
+               those totals). That file is unchanged and unrelated to this work;
+               with it, `npm test` exits non-zero (1 failed FILE). The 484/508
+               figures are +4 vs the 480 baseline (the new SC-026 cases).
 
 
 FILES CHANGED

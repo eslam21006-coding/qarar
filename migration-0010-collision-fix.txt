@@ -27,10 +27,27 @@ BACKUP SQL (run first)
 ----------------------
 CREATE TABLE `__drizzle_migrations_bak_20260725` AS SELECT * FROM `__drizzle_migrations`;
 
-Then run the insert statement. It is self-protecting: if a row already exists with created_at 1784961631032, it inserts nothing. It records only the migration hash and timestamp; the database supplies the ledger row id.
+Then run the conflict pre-check, and only if it returns zero rows run the insert. The insert records only the migration hash and timestamp; the database supplies the ledger row id.
 
-INSERT SQL (run second)
------------------------
+CONFLICT PRE-CHECK (run second — abort if it returns ANY row)
+-------------------------------------------------------------
+A ledger row with this created_at but a DIFFERENT hash means the production
+ledger disagrees with the committed migration. In that case the NOT-EXISTS
+insert below would silently do nothing, verification would still find "a row",
+and production would remain out of sync (the next drizzle-kit migrate may fail
+or attempt unsafe reconciliation). So check for a conflicting row first and STOP
+if any is returned — do not run the insert; escalate instead.
+
+SELECT `id`, `hash`, `created_at`
+FROM `__drizzle_migrations`
+WHERE `created_at` = 1784961631032
+  AND `hash` <> '5422234c66b41288f052438aa82fde1b7782551f050afd08ac7f04da50cf0aca';
+
+Expected: zero rows. If any row is returned, ABORT — the ledger already holds a
+conflicting entry for this timestamp and must be reconciled by hand.
+
+INSERT SQL (run third — only if the pre-check returned zero rows)
+----------------------------------------------------------------
 INSERT INTO `__drizzle_migrations` (`hash`, `created_at`)
 SELECT '5422234c66b41288f052438aa82fde1b7782551f050afd08ac7f04da50cf0aca', 1784961631032
 WHERE NOT EXISTS (
