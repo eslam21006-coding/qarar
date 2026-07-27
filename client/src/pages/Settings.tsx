@@ -21,7 +21,12 @@ import {
   type FunnelArchetype,
 } from "@/lib/settingsFields";
 import { trpc } from "@/lib/trpc";
-import { deriveTargets, SUPPORTED_CURRENCIES, type FunnelInputs } from "@shared/qarar";
+import {
+  deriveTargets,
+  DISCOVERY_CALL_URL,
+  SUPPORTED_CURRENCIES,
+  type FunnelInputs,
+} from "@shared/qarar";
 import {
   AlertTriangle,
   ArrowRight,
@@ -295,6 +300,22 @@ export default function Settings() {
   // preview's purpose is to show "what your target will become once you
   // save this" — that calculation can still run with the in-form rates).
   const previewReady = valid;
+
+  // FR-027b / FR-027c / SC-026 — offer-level bottleneck signal. When the
+  // funnel-math ceiling is computable (stage rates entered) AND the user's own
+  // market cost-per-lead benchmark sits ABOVE that ceiling, the account is
+  // paying more per lead than its funnel can support: an OFFER problem, not an
+  // ad problem. We compare the benchmark against the ceiling directly (both in
+  // the user's INPUT currency via `targetsInInput`, so no conversion drift
+  // enters the comparison) — this fires at settings-entry time, before any
+  // real spend history exists, catching a broken funnel before ad budget is
+  // wasted. This is a settings-surface message only: no engine rule code, no
+  // change to the fixed verdict vocabulary.
+  const overCeiling =
+    (form.archetype === "appointment" || form.archetype === "webinar") &&
+    targetsInInput.cplCeiling !== null &&
+    inputs.marketCplBenchmark != null &&
+    inputs.marketCplBenchmark > targetsInInput.cplCeiling;
 
   const save = trpc.funnel.save.useMutation({
     onSuccess: data => {
@@ -802,6 +823,37 @@ export default function Settings() {
                         }
                       />
                     )}
+                  {/* FR-027b / FR-027c / SC-026 — over-ceiling offer-level
+                      message + discovery-call route. Reuses the EXACT CTA
+                      treatment the funnel signal uses on the dashboard
+                      (`account_funnel_cta`): a primary bordered card, a bold
+                      simple-Arabic offer-problem message worded like K7 / W5
+                      ("the problem is the offer/funnel, not the ads"), and the
+                      shared "احجز مكالمة تشخيصية مجانية" button routing to
+                      DISCOVERY_CALL_URL. Settings-surface only — no rule code,
+                      no verdict. */}
+                  {overCeiling && (
+                    <div
+                      data-testid="over-ceiling-cta"
+                      className="rounded-lg border-2 border-primary/40 bg-primary/5 p-4"
+                    >
+                      <p className="text-sm font-bold leading-relaxed">
+                        تكلفة العميل المحتمل في السوق أعلى مما يسمح به الفانل
+                        الحالي — أنت تدفع لكل عميل محتمل أكثر مما يتحمّله عرضك.
+                        المشكلة في العرض أو الأسعار أو مسار التحويل، وليست في
+                        الإعلانات.
+                      </p>
+                      <Button asChild className="mt-3 font-bold">
+                        <a
+                          href={DISCOVERY_CALL_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          احجز مكالمة تشخيصية مجانية
+                        </a>
+                      </Button>
+                    </div>
+                  )}
                   {/* FR-028b — the "كيف حسبنا هذا الرقم؟" breakdown
                       panel explains the product-purchase intermediate
                       figures. It is hidden for appointment / webinar

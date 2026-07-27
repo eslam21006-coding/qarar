@@ -438,6 +438,16 @@ export function median(values: number[]): number | null {
 /** Attribution model change date (March 2026) */
 export const ATTRIBUTION_CHANGE_DATE = "2026-03-01";
 
+/**
+ * Discovery-call destination (Principle VII). Single source of truth shared by
+ * every "the offer/funnel is the problem, book a call" outcome: the engine's
+ * K7 / W5 / diagnosis CTAs (`server/engine.ts`), the access-denied upgrade
+ * screen (`client/src/pages/Upgrade.tsx`), and the Settings over-ceiling
+ * message (FR-027c). Import this rather than re-hardcoding the URL so the four
+ * surfaces can never drift.
+ */
+export const DISCOVERY_CALL_URL = "https://eslamsalah.com/team-discovery-call";
+
 // ---------- Currency conversion (Batch 2 / ISSUE-009) ----------
 // Frozen, shared table. No external/network rate source (constitution).
 // Pivots through USD: amount / rate[from] * rate[to].

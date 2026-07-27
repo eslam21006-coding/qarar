@@ -2,9 +2,10 @@
 
 **Date**: 2026-07-25 (scope corrected 2026-07-26 after PR #25 self-audit)
 **Scope (as actually shipped in PR #25)**: Phase 1 (migration) + Phase 2 (foundational) +
-Phase 3 (US1 — appointment) + Phase 4 (US2 — webinar) + Phase 5 (US3 — priority chain, minus the
-FR-027b/c over-ceiling message) + the null-target handling portion of Phase 6 (US4). **Only Phase 7
-(threshold/anchor widening) remains cleanly deferred; Phase 8 is partial.**
+Phase 3 (US1 — appointment) + Phase 4 (US2 — webinar) + Phase 5 (US3 — priority chain, including
+the FR-027b/c over-ceiling message + discovery-call route) + the null-target handling portion of
+Phase 6 (US4). **Only Phase 7 (threshold/anchor widening) remains cleanly deferred; Phase 8 is
+partial.**
 **Branch**: `feature/free-lead-no-aov` · **PR**: #25 → `main`
 **Checkpoint**: US1 (appointment) and US2 (webinar) Independent Tests pass — except **US1 AS9 /
 US2 AS7** (the 8% page flagged weak via the 15% lead-generation floor), which are gated on Phase 7
@@ -232,12 +233,22 @@ The 24 skipped tests are pre-existing skips for tests gated on database presence
 - **Phase 4 (US2 — webinar)** — SHIPPED. `webinar` branch in `deriveTargets`
   (`shared/qarar.ts:628`), the webinar `<SelectItem>`, `showUpRate` field rendering, and the
   webinar `closeRate` label + placeholder are all present and tested.
-- **Phase 5 (US3 — priority chain)** — LARGELY SHIPPED. The three-tier chain is live;
+- **Phase 5 (US3 — priority chain)** — SHIPPED. The three-tier chain is live;
   `marketCplBenchmark` is visible for appointment/webinar (tier-3 reachable, FR-020); the
   dual-row ceiling preview renders with the SC-014 guard `cplCeiling !== unitTarget`
-  (`client/src/pages/Settings.tsx:789-791`).
-  **Remaining (not yet shipped):** the FR-027b/c over-ceiling message ("you pay more per lead
-  than your funnel supports") and its discovery-call route are NOT yet on the settings surface.
+  (`client/src/pages/Settings.tsx`). The **FR-027b/c over-ceiling message + discovery-call
+  route** now ship on the settings surface (`Settings.tsx`, `overCeiling` predicate): when an
+  appointment/webinar account's `marketCplBenchmark` exceeds the funnel-math `cplCeiling`, a
+  simple-Arabic offer-level message ("you pay more per lead than your funnel supports — the
+  problem is the offer/funnel, not the ads") renders with the shared `DISCOVERY_CALL_URL`
+  discovery-call button, reusing the dashboard funnel-CTA treatment. SC-026 is covered by 4
+  tests in `Settings.test.tsx` ("FR-027b/c over-ceiling message"). The trigger compares the
+  benchmark against the ceiling client-side at entry time (not the `deriveTargets` judging
+  target, which never exceeds the ceiling on the baseline-less settings surface) so it fires
+  before spend history accumulates — FR-027b and `contracts/settings-fields.md` were updated to
+  describe this exact comparison. `DISCOVERY_CALL_URL` was promoted to `shared/qarar.ts` and is
+  now imported by `engine.ts`, `Upgrade.tsx`, and `Settings.tsx` (one source of truth, no
+  hardcoded copies).
 - **Phase 6 (US4 — null-target handling)** — SHIPPED. The engine returns `too_early / GATE`
   when `unitTarget === null` (`server/engine.ts:1124`); `cellFormat.ts` / `DecisionTable.tsx`
   render absent-target cells as "—" and leave them uncoloured (SC-022); the settings preview
@@ -253,8 +264,10 @@ The 24 skipped tests are pre-existing skips for tests gated on database presence
   Deliberate and tested: the legacy `archetype === "free_lead" ? cvr < 15 : cvr < 2` ternary is
   preserved verbatim at `server/engine.ts:271, 373, 618, 838`.
 - **Phase 7** — ALL threshold / anchor / K6 / K7 widening work (FR-026a–h), gated on Phase 2's
-  measurement tasks being complete (they are). This is the one phase cleanly deferred.
-- **Phase 5 remainder** — the FR-027b/c over-ceiling message + discovery-call route (see 6a).
+  measurement tasks being complete (they are). This is the one phase cleanly deferred. Note
+  FR-026h (routing the appointment/webinar K7 *structural-loss decision* to the discovery call)
+  is part of Phase 7 and remains deferred; the SC-026 **settings-surface** half shipped in
+  Phase 5 (see 6a).
 - **Phase 8** — isolation.test.ts column coverage, copy review, full validation (partial).
 
 ---

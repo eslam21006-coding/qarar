@@ -1,0 +1,107 @@
+FR-027b / FR-027c — Over-ceiling message + discovery-call route (Phase 5 remainder)
+================================================================================
+
+Date: 2026-07-27
+Branch: feature/free-lead-no-aov (PR #25)
+Spec: 012-appointment-webinar-archetypes — FR-027b, FR-027c, SC-026 (task T055)
+
+
+WHAT SHIPPED
+--------------------------------------------------------------------------------
+On the Settings preview, when an appointment/webinar account's market
+cost-per-lead benchmark exceeds its funnel-math ceiling, the app now renders a
+simple-Arabic offer-level message and a discovery-call button:
+
+  Message (K7/W5 tone — the offer/funnel is the problem, not the ads):
+    "تكلفة العميل المحتمل في السوق أعلى مما يسمح به الفانل الحالي — أنت تدفع
+     لكل عميل محتمل أكثر مما يتحمّله عرضك. المشكلة في العرض أو الأسعار أو مسار
+     التحويل، وليست في الإعلانات."
+
+  CTA: "احجز مكالمة تشخيصية مجانية" → DISCOVERY_CALL_URL, opened in a new tab,
+  using the EXACT card + button treatment the dashboard funnel signal
+  (account_funnel_cta) already uses.
+
+
+TRIGGER CONDITION (and why it differs from the spec's original literal)
+--------------------------------------------------------------------------------
+Implemented as:  archetype ∈ {appointment, webinar}
+                 AND cplCeiling !== null            (stage rates entered)
+                 AND marketCplBenchmark != null
+                 AND marketCplBenchmark > cplCeiling  (both in INPUT currency)
+
+The spec originally wrote the condition as `unitTarget > cplCeiling`. Tracing
+deriveTargets showed that is UNREACHABLE on the settings surface: the priority
+chain is cplMedian30 → funnel-math (cplCeiling) → benchmark → null, so
+  - when funnel math is the active tier, unitTarget === cplCeiling (never >);
+  - the only tier that can push the judging target above the ceiling is
+    30-day lead-cost history (cplMedian30), and the settings preview computes
+    targets with baselines = null (funnel.get does the same), so that tier
+    never fires here.
+
+The user chose to compare the entered market benchmark directly against the
+ceiling instead. Rationale: this fires at settings-entry time, BEFORE any real
+spend history exists — catching a structurally broken funnel before ad budget
+is wasted, rather than waiting ~30 days for history to confirm the same
+conclusion. FR-027b (spec.md) and contracts/settings-fields.md were both
+amended to describe this exact comparison and timing.
+
+
+NO NEW RULE CODE / NO VERDICT-VOCABULARY CHANGE (requirement #3)
+--------------------------------------------------------------------------------
+This is a settings-surface informational message only — the same category as
+the already-shipped ceiling-row display (FR-027a). It does NOT introduce an
+engine rule code and does NOT touch the fixed 5-verdict vocabulary. It lives
+entirely in client/src/pages/Settings.tsx as the `overCeiling` predicate + a
+conditional block; the engine is untouched by the feature logic.
+
+The K7 structural-loss DECISION half of SC-026 (routing the appointment/webinar
+K7 action to the call, FR-026h) is Phase 7 work and remains deferred — K7 for
+the new archetypes is not yet wired. This task delivered the SETTINGS half of
+SC-026, which is self-contained.
+
+
+DISCOVERY_CALL_URL — single source of truth (requirement #2)
+--------------------------------------------------------------------------------
+Promoted the constant to shared/qarar.ts (exported) and switched the three
+hardcoded copies to import it:
+  - server/engine.ts       (K7 / W5 / diagnosis CTAs — 4 sites)
+  - client/src/pages/Upgrade.tsx
+  - client/src/pages/Settings.tsx  (new)
+Value is identical to before (https://eslamsalah.com/team-discovery-call), so
+no runtime/behaviour change — just no more drift risk from divergent hardcodes.
+
+
+TESTS (requirement #4 — SC-026 actually implemented and passing)
+--------------------------------------------------------------------------------
+client/src/pages/Settings.test.tsx — new describe "FR-027b/c over-ceiling
+message (SC-026)", 4 cases:
+  1. appointment, benchmark $20 > $9.24 ceiling → message renders, offer-level
+     wording asserted, discovery link href === DISCOVERY_CALL_URL, target
+     _blank, correct Arabic CTA label.
+  2. appointment, benchmark $5 < ceiling → NO message.
+  3. appointment, no benchmark → NO message.
+  4. webinar, benchmark $30 > $12.5 ceiling → message + discovery link.
+Settings.test.tsx: 11 passed (7 pre-existing + 4 new).
+
+
+VERIFICATION
+--------------------------------------------------------------------------------
+tsc --noEmit : clean (exit 0)
+npm test     : 484 passed | 24 skipped (508)  [was 480 before this work — +4
+               new SC-026 cases]. The only failing FILE is the env-only
+               server/auth-flow.e2e.test.ts (requires DATABASE_URL), unchanged
+               and unrelated to this work.
+
+
+FILES CHANGED
+--------------------------------------------------------------------------------
+  shared/qarar.ts                                   + exported DISCOVERY_CALL_URL
+  server/engine.ts                                  import shared const; drop local
+  client/src/pages/Upgrade.tsx                      import shared const; drop local
+  client/src/pages/Settings.tsx                     overCeiling predicate + message/CTA
+  client/src/pages/Settings.test.tsx                + SC-026 describe (4 tests)
+  specs/012-.../spec.md                             FR-027b reworded + rationale note
+  specs/012-.../contracts/settings-fields.md        condition + URL location updated
+  specs/012-.../tasks.md                            T055 marked [X]
+  mvp-checkpoint-report.txt                         §6a Phase 5 → fully shipped; §6b + header
+  fr027bc-completion.txt                            this file

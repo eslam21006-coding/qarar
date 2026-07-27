@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { act } from "react";
+import { DISCOVERY_CALL_URL } from "@shared/qarar";
 
 const mocks = vi.hoisted(() => ({
   funnelGet: vi.fn(),
@@ -572,5 +573,107 @@ describe("Settings page (T008 / US1 / SC-001 / FR-001)", () => {
       expect(values).toContain("22");
       expect(values).toContain("2000");
     });
+  });
+});
+
+// ===========================================================================
+// FR-027b / FR-027c / SC-026 — over-ceiling offer-level message + discovery
+// route on the Settings preview. When an appointment/webinar account's market
+// cost-per-lead benchmark exceeds the funnel-math ceiling, the preview MUST
+// state (simple Arabic, offer-level tone like K7/W5) that the account pays
+// more per lead than its funnel supports, and MUST route to the discovery
+// call. Settings-surface message only — no engine rule, no verdict.
+// ===========================================================================
+describe("Settings page — FR-027b/c over-ceiling message (SC-026)", () => {
+  // Appointment fixture: 6% × 70% × 22% × $2000 ⇒ leadValue 18.48 ⇒
+  // cplCeiling 9.24. The benchmark is what varies per test.
+  function apptRow(overrides: Record<string, unknown> = {}) {
+    return {
+      archetype: "appointment",
+      liveComponent: false,
+      offerDescription: null,
+      ticketPrice: null,
+      arena: "broad",
+      bestInterest: null,
+      geoTiers: null,
+      inputCurrency: "USD",
+      aov: 0,
+      htoPrice: 2000,
+      htoConversionRate: 0,
+      frontEndRoas: 1,
+      dailyBudget: null,
+      marketCplBenchmark: null,
+      htoUnderperforming: false,
+      bookRate: 6,
+      showRate: 70,
+      closeRate: 22,
+      showUpRate: null,
+      ...overrides,
+    };
+  }
+  function mount(row: Record<string, unknown>) {
+    mocks.funnelGet.mockReturnValue({
+      data: { status: "found", settings: row, targets: {} },
+      isLoading: false,
+      isError: false,
+    });
+    mocks.accounts.mockReturnValue({ data: [{ id: 100, currency: "USD" }] });
+    mocks.useUtils.mockReturnValue({
+      funnel: { get: { invalidate: vi.fn() } },
+      dashboard: { get: { invalidate: vi.fn() } },
+    });
+    return render(<Settings />);
+  }
+
+  it("benchmark ABOVE the funnel-math ceiling → offer-level message + discovery-call route", async () => {
+    // $20 benchmark > $9.24 ceiling ⇒ paying more per lead than the funnel
+    // supports.
+    mount(apptRow({ marketCplBenchmark: 20 }));
+    const cta = await screen.findByTestId("over-ceiling-cta");
+    expect(cta).toBeInTheDocument();
+    // Simple-Arabic offer-level wording (the offer/funnel is the problem, not
+    // the ads — same conclusion as K7/W5).
+    expect(cta.textContent).toContain("المشكلة في العرض");
+    expect(cta.textContent).toContain("وليست في الإعلانات");
+    // FR-027c / SC-026 — a route to book the discovery call, using the shared
+    // DISCOVERY_CALL_URL constant and the same CTA label the funnel signal
+    // uses elsewhere.
+    const link = cta.querySelector("a[href]");
+    expect(link).not.toBeNull();
+    expect(link!.getAttribute("href")).toBe(DISCOVERY_CALL_URL);
+    expect(link!.getAttribute("target")).toBe("_blank");
+    expect(link!.textContent).toContain("احجز مكالمة تشخيصية مجانية");
+  });
+
+  it("benchmark BELOW the ceiling → no over-ceiling message (funnel supports the lead cost)", async () => {
+    mount(apptRow({ marketCplBenchmark: 5 }));
+    // Preview renders (rates valid), but the offer-problem card must NOT show.
+    await screen.findByText("أرقامك المستهدفة");
+    expect(screen.queryByTestId("over-ceiling-cta")).toBeNull();
+  });
+
+  it("no benchmark entered → no over-ceiling message", async () => {
+    mount(apptRow({ marketCplBenchmark: null }));
+    await screen.findByText("أرقامك المستهدفة");
+    expect(screen.queryByTestId("over-ceiling-cta")).toBeNull();
+  });
+
+  it("webinar: benchmark above the ceiling also triggers the message", async () => {
+    // Webinar: 25% × 5% × $2000 ⇒ leadValue 25 ⇒ cplCeiling 12.5.
+    // A $30 benchmark is above it.
+    mount(
+      apptRow({
+        archetype: "webinar",
+        bookRate: null,
+        showRate: null,
+        showUpRate: 25,
+        closeRate: 5,
+        marketCplBenchmark: 30,
+      })
+    );
+    const cta = await screen.findByTestId("over-ceiling-cta");
+    expect(cta.querySelector("a[href]")!.getAttribute("href")).toBe(
+      DISCOVERY_CALL_URL
+    );
   });
 });

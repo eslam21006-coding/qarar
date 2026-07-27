@@ -525,9 +525,21 @@ confirm no numeric target is shown anywhere and an explicit not-enough-informati
   ads are judged against, the ceiling is what the user's own funnel says a lead is worth. When the
   two are equal — which is always the case when funnel math is the target's source — only the single
   primary row is shown.
-- **FR-027b**: When the judging target exceeds the funnel-math ceiling, the settings page MUST state
-  plainly in simple Arabic that the account is currently paying more per lead than its funnel can
-  support. This is an offer-level bottleneck, not an ad-level one, and MUST be worded as such.
+- **FR-027b**: When the account's **market cost-per-lead benchmark exceeds the funnel-math ceiling**
+  (`marketCplBenchmark > cplCeiling`), the settings page MUST state plainly in simple Arabic that the
+  account is paying more per lead than its funnel can support. This is an offer-level bottleneck, not
+  an ad-level one, and MUST be worded as such.
+
+  *Comparison and timing (as implemented):* the check is evaluated **client-side, at settings-entry
+  time**, directly comparing the user's entered `marketCplBenchmark` against the funnel-math
+  `cplCeiling` (both in the input currency, so no conversion drift enters the comparison). It is
+  **not** gated on the `deriveTargets` judging target (`unitTarget`): when funnel math is the active
+  tier, `unitTarget === cplCeiling`, and the tier that could push the judging target above the
+  ceiling — 30-day lead-cost history (`cplMedian30`) — does not exist on the settings surface (that
+  preview computes targets with `baselines = null`). *Rationale:* comparing the benchmark against the
+  ceiling fires **before any real spend history has accumulated**, catching a structurally broken
+  funnel at setup time — which is far more valuable than waiting ~30 days for history to confirm the
+  same conclusion after ad budget has already been wasted.
 - **FR-027c**: That same message MUST route the user to book a discovery call, using the project's
   existing discovery-call destination and the same call-to-action treatment already applied to the
   funnel-level signal. This is not optional presentation: the governing principle makes "the ads are

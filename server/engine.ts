@@ -33,6 +33,7 @@ import {
   Verdict,
   median,
   deriveTargets,
+  DISCOVERY_CALL_URL,
 } from "../shared/qarar";
 
 // deriveTargets lives in shared/qarar.ts (used by client live-preview too);
@@ -791,8 +792,6 @@ function continueRules(
 // ============================================================
 // Diagnosis (الجزء الثامن) — collect ALL broken rungs per entity
 // ============================================================
-
-const DISCOVERY_CALL_URL = "https://eslamsalah.com/team-discovery-call";
 
 export function diagnose(
   o: NormalizedObject,

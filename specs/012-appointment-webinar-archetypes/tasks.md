@@ -179,7 +179,7 @@ confirm the target value and its attributed source change in the documented orde
 
 - [ ] T053 [US3] Implement the three-tier priority chain in the new `deriveTargets` branch in `shared/qarar.ts`, reading `baselines.cplMedian30` — **not** `cpaMedian30` — at tier 1, the funnel-math ceiling at tier 2, and `marketCplBenchmark` at tier 3, and never converting the baseline (contracts/derive-targets.md §2, §4; FR-033)
 - [ ] T054 [US3] Render the funnel-math ceiling as a second row in `client/src/pages/Settings.tsx`, shown only when `cplCeiling !== null` and `cplCeiling !== unitTarget`, labelled to distinguish target from ceiling (FR-027a)
-- [ ] T055 [US3] Add the simple-Arabic over-ceiling message to `client/src/pages/Settings.tsx`, shown when `unitTarget > cplCeiling`, worded as an offer-level problem, and render the discovery-call route beside it using `DISCOVERY_CALL_URL` (`https://eslamsalah.com/team-discovery-call`) with the same CTA treatment the app already applies to the W5 funnel signal (FR-027b, FR-027c, SC-026)
+- [X] T055 [US3] Add the simple-Arabic over-ceiling message to `client/src/pages/Settings.tsx`, shown when `marketCplBenchmark > cplCeiling` (client-side at settings-entry time; see FR-027b as amended — the baseline-less settings preview can never reach `unitTarget > cplCeiling`), worded as an offer-level problem, and render the discovery-call route beside it using the shared `DISCOVERY_CALL_URL` (`shared/qarar.ts`, `https://eslamsalah.com/team-discovery-call`) with the same CTA treatment the app already applies to the W5 funnel signal (FR-027b, FR-027c, SC-026)
 
 **Checkpoint**: All three sources selectable and visible; the third tier is demonstrably reachable; divergence is never silent and always routes to the call.
 

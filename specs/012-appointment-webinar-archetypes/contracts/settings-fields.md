@@ -78,8 +78,8 @@ For `appointment` / `webinar`:
 | "كيف حسبنا هذا الرقم؟" breakdown (584-620) | **hidden** — FR-028b; it explains `rawTargetCPA` / `fullBuyerValue` / `maxCPA`, all product-purchase figures |
 | Judging-target row | **shown** whenever `unitTarget !== null` — FR-027 |
 | Funnel-math ceiling row | shown **only** when `cplCeiling !== null` **and** `cplCeiling !== unitTarget` — FR-027a |
-| Over-ceiling message | shown when `unitTarget > cplCeiling` — FR-027b — worded as an offer-level problem |
-| Discovery-call route | rendered **with** the over-ceiling message — FR-027c; use `DISCOVERY_CALL_URL` (`server/engine.ts:664`, `https://eslamsalah.com/team-discovery-call`) and the same CTA treatment the app already applies to the W5 funnel signal |
+| Over-ceiling message | shown when `marketCplBenchmark > cplCeiling` (input currency, client-side at entry time) — FR-027b — worded as an offer-level problem |
+| Discovery-call route | rendered **with** the over-ceiling message — FR-027c; use the shared `DISCOVERY_CALL_URL` (`shared/qarar.ts`, `https://eslamsalah.com/team-discovery-call`) and the same CTA treatment the app already applies to the W5 funnel signal |
 | No-target line | replaces the rows when `unitTarget === null` — FR-019a |
 
 The existing `free_lead` row (575-583) is the display pattern to reuse, including its dual-currency

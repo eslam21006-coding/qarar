@@ -1,10 +1,10 @@
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/lib/auth-client";
+import { DISCOVERY_CALL_URL } from "@shared/qarar";
 import { LogOut } from "lucide-react";
 import { useState } from "react";
 import { useLocation } from "wouter";
 
-const DISCOVERY_CALL_URL = "https://eslamsalah.com/team-discovery-call";
 const HEADING = "اشتراكك غير مفعّل بعد";
 const BODY =
   "للوصول إلى لوحة قرار يجب أن يكون اشتراكك نشطاً. إذا أتممت الدفع ولم يُفعَّل حسابك، تواصل معنا.";
