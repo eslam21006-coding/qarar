@@ -152,16 +152,31 @@ export async function fetchAdAccounts(
         accountStatus: a.account_status ?? 1,
       });
     }
-    const next = json.paging?.next as string | undefined;
-    if (next) {
-      const u = new URL(next);
-      url = u.pathname.replace(/^\/v\d+\.\d+/, "");
-      params = Object.fromEntries(u.searchParams.entries());
+    const nextPage = nextPagination(json);
+    if (nextPage) {
+      url = nextPage.url;
+      params = nextPage.params;
     } else {
       url = null;
     }
   }
   return out;
+}
+
+/**
+ * Pull the next-page URL + params out of a Meta Graph response. Returns
+ * null when there is no `paging.next` (end of pagination). Shared by
+ * `fetchAdAccounts` and `fetchUserPages` so the version-prefix stripping
+ * and the 5-page cap live in one place.
+ */
+function nextPagination(json: any): { url: string; params: Record<string, string> } | null {
+  const next = json.paging?.next as string | undefined;
+  if (!next) return null;
+  const u = new URL(next);
+  return {
+    url: u.pathname.replace(/^\/v\d+\.\d+/, ""),
+    params: Object.fromEntries(u.searchParams.entries()),
+  };
 }
 
 /**
@@ -192,6 +207,13 @@ export async function fetchUserPages(
   for (let i = 0; i < 5 && url; i++) {
     const json: any = await graphGet(url, params);
     for (const p of json.data ?? []) {
+      // Skip entries with no usable id. The pageId column is NOT NULL
+      // varchar(64); syncPages does a delete-then-insert, so an entry
+      // whose id is missing would abort the insert after the delete
+      // ran and leave the user with zero stored Pages until their next
+      // successful sync. Dropping the entry here keeps the insert
+      // honest (FR-023 forbids writing a row we can't render).
+      if (typeof p?.id !== "string" || p.id.length === 0) continue;
       // followers_count can be missing → null (FR-005: omit the line,
       // never display a misleading zero or empty value). The Meta API
       // returns numbers as strings; coerce, fall back to null on NaN.
@@ -210,11 +232,10 @@ export async function fetchUserPages(
       // FR-023 — explicitly drop the per-Page access_token. Do not return
       // it, do not log it, do not store it on the surrounding object.
     }
-    const next = json.paging?.next as string | undefined;
-    if (next) {
-      const u = new URL(next);
-      url = u.pathname.replace(/^\/v\d+\.\d+/, "");
-      params = Object.fromEntries(u.searchParams.entries());
+    const nextPage = nextPagination(json);
+    if (nextPage) {
+      url = nextPage.url;
+      params = nextPage.params;
     } else {
       url = null;
     }
