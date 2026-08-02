@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, desc, eq } from "drizzle-orm";
 import {
   adAccounts,
+  facebookPages,
   funnelSettings,
   user as authUser,
   verdictHistory,
@@ -92,6 +93,12 @@ beforeAll(async () => {
 afterAll(async () => {
   const d = await db.getDb();
   if (!d) return;
+  // Defensive cleanup — deleteAllUserData covers facebookPages (spec 013,
+  // T028), but the isolation suite seeds Page rows directly via syncPages
+  // and may have left them around if a test errored mid-flight. Wipe
+  // explicitly so a re-run starts from a clean state.
+  await d.delete(facebookPages).where(eq(facebookPages.userId, USER_A_ID));
+  await d.delete(facebookPages).where(eq(facebookPages.userId, USER_B_ID));
   await db.deleteAllUserData(USER_A_ID);
   await db.deleteAllUserData(USER_B_ID);
   await d.delete(authUser).where(eq(authUser.id, USER_A_ID));
@@ -165,6 +172,56 @@ describe.skipIf(!hasDatabase)("cross-user data isolation", () => {
       .from(adAccounts)
       .where(eq(adAccounts.userId, USER_A_ID));
     expect(rowsA.length).toBeGreaterThan(0);
+  });
+
+  // Spec 013 / FR-016 / SC-007 / Constitution IV — listPages for User A
+  // MUST NEVER return a row owned by User B, even when the two users
+  // independently manage the same Page (same `pageId`). The shared
+  // (userId, pageId) unique index exists; the read path MUST filter by
+  // userId and never widen the scope. Cross-user test added under the
+  // existing cross-user block so the seeded users + the same suite's
+  // afterAll teardown both apply.
+  it("db.listPages for User A never returns User B's Page rows (FR-016 / SC-007)", async () => {
+    const d = await db.getDb();
+    if (!d) return;
+    // Seed User A and User B each with their own row for the SAME pageId
+    // (two users can legitimately manage the same Page; each gets their
+    // own row keyed by (userId, pageId)). The read path must respect
+    // userId exclusively.
+    const sharedPageId = `page-shared-${SUFFIX}`;
+    await db.syncPages(USER_A_ID, 0, [
+      {
+        pageId: sharedPageId,
+        name: "Shared Page (A's view)",
+        pictureUrl: null,
+        followersCount: 100,
+      },
+    ]);
+    await db.syncPages(USER_B_ID, 0, [
+      {
+        pageId: sharedPageId,
+        name: "Shared Page (B's view)",
+        pictureUrl: null,
+        followersCount: 999,
+      },
+    ]);
+
+    // User A's read path sees only A's row — same pageId, but the name
+    // reflects A's fetch. User B's row is invisible.
+    const pagesA = await db.listPages(USER_A_ID);
+    const aShared = pagesA.find(p => p.pageId === sharedPageId);
+    expect(aShared?.name).toBe("Shared Page (A's view)");
+    expect(pagesA.every(p => p.userId === USER_A_ID)).toBe(true);
+
+    // And User B sees only their own row.
+    const pagesB = await db.listPages(USER_B_ID);
+    const bShared = pagesB.find(p => p.pageId === sharedPageId);
+    expect(bShared?.name).toBe("Shared Page (B's view)");
+    expect(pagesB.every(p => p.userId === USER_B_ID)).toBe(true);
+
+    // A's row never appears in B's list and vice versa.
+    expect(pagesA.find(p => p.userId === USER_B_ID)).toBeUndefined();
+    expect(pagesB.find(p => p.userId === USER_A_ID)).toBeUndefined();
   });
 });
 
