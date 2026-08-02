@@ -78,6 +78,13 @@
       "when": 1784961631032,
       "tag": "0010_curly_patch",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1785698811794,
+      "tag": "0011_facebook_pages",
+      "breakpoints": true
     }
   ]
 }
