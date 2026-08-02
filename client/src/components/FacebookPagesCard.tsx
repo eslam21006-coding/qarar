@@ -37,13 +37,7 @@ function formatFollowers(n: number): string {
   return n.toLocaleString("en-US");
 }
 
-function PageAvatar({
-  src,
-  alt,
-}: {
-  src: string | null;
-  alt: string;
-}) {
+function PageAvatar({ src, alt }: { src: string | null; alt: string }) {
   const [errored, setErrored] = useState(false);
   if (!src || errored) {
     return (
@@ -68,10 +62,16 @@ function PageAvatar({
 }
 
 export function FacebookPagesCard({ pages }: { pages: FacebookPageDisplay[] }) {
+  // useState MUST run before any conditional return so the hook order
+  // stays stable when `pages` flips between empty and non-empty
+  // (e.g. after a re-sync that removes the last Page). Putting the
+  // early return above this hook triggers React's "rendered fewer
+  // hooks than during the previous render" error.
+  const [expanded, setExpanded] = useState(false);
+
   // FR-002: hide the section entirely when there is nothing to render.
   if (pages.length === 0) return null;
 
-  const [expanded, setExpanded] = useState(false);
   const hasMore = pages.length > MAX_VISIBLE;
   const visible = expanded ? pages : pages.slice(0, MAX_VISIBLE);
 
