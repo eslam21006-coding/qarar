@@ -11,7 +11,7 @@ How to run and prove this feature works. Design details live in [data-model.md](
 - `DATABASE_URL` pointing at a dev MySQL database (never production)
 - `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` set — without them the connection screen shows the "keys not configured" warning and no OAuth is possible
 - A Facebook account that **manages at least one Page**
-- That account holds an **admin / developer / tester role on the Facebook app** — until App Review approves `pages_show_list` and `pages_read_engagement`, only app-role accounts receive them (research R1). Testing with an unprivileged account will correctly show *no Pages*, which is easy to misread as a bug.
+- That account holds an **admin / developer / tester role on the Facebook app** — until App Review approves `pages_show_list` and `pages_read_engagement`, only app-role accounts receive them (research R1). Testing with an unprivileged account will correctly show _no Pages_, which is easy to misread as a bug.
 
 ---
 
@@ -21,7 +21,7 @@ How to run and prove this feature works. Design details live in [data-model.md](
 npm run db:push
 ```
 
-This runs the T037 prerequisite gate, then `drizzle-kit generate`, then `drizzle-kit migrate`.
+This runs `scripts/verify-t037-prerequisites.ts` (the prerequisite gate for the Spec 011 `funnelSettings` unique-index saga — it does not block additive features like this one), then `drizzle-kit generate`, then `drizzle-kit migrate`.
 
 **Verify before moving on:**
 
