@@ -113,3 +113,47 @@ describe("cpaCell — Batch 2 / ISSUE-004 contract", () => {
     expect(out.className).toMatch(/text-v-continue/);
   });
 });
+
+// Spec 012 / FR-019d / SC-022 — when no target is determinable the cell
+// must render uncoloured (no fabricated zero baseline). No good/bad shade.
+describe("cpaCell — null target handling (spec 012 / SC-022)", () => {
+  it("target=null + cpa present + non-kill verdict → money(cpa) but UNCOLOURED", () => {
+    const out = cpaCell({
+      verdict: "continue",
+      results: 4,
+      cpa: 24.7,
+      target: null,
+    });
+    expect(out.value).toBe("$24.7");
+    // SC-022 — cell must NOT be coloured as good/bad without a target.
+    expect(out.className).not.toMatch(/text-v-/);
+  });
+
+  it("target=null + cpa present + kill verdict → money(cpa) but UNCOLOURED (no red)", () => {
+    const out = cpaCell({
+      verdict: "kill",
+      results: 4,
+      cpa: 60,
+      target: null,
+    });
+    // The value is the formatted CPA, NOT a dash — assert it so the test
+    // fails if the target-null branch ever regresses to "—".
+    expect(out.value).toBe("$60");
+    // SC-022 — even kill cannot be coloured without a target; the kill
+    // signal is already carried by the verdict column.
+    expect(out.className).not.toMatch(/text-v-kill/);
+  });
+
+  it("target=null + cpa=null + kill verdict → em dash, no red (already red via verdict)", () => {
+    // Note: cpa=null still takes the zero-conversion branch (not the
+    // target-null branch), and the kill verdict still colours red.
+    const out = cpaCell({
+      verdict: "kill",
+      results: 0,
+      cpa: null,
+      target: null,
+    });
+    expect(out.value).toBe("—");
+    expect(out.className).toMatch(/text-v-kill/);
+  });
+});

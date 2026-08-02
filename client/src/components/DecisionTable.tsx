@@ -306,7 +306,14 @@ export function DecisionTable({
 }: {
   rows: EngineRow[];
   series: SeriesObj[];
-  unitTarget: number;
+  /**
+   * The cost-per-lead / cost-per-purchase figure every row is judged against.
+   * `null` ⇒ no target determinable yet (FR-019, FR-019d). Consumers below
+   * MUST guard null explicitly; do NOT fabricate zero — a fabricated zero
+   * makes `cpa <= target` always true and silently miscolors every cell
+   * as "good" (research R5, spec 012 §Compile-time enforcement).
+   */
+  unitTarget: number | null;
   actId: string | null;
   accountId: number;
   isDemo: boolean;

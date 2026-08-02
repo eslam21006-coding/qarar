@@ -221,3 +221,90 @@ describe("Dashboard (round-12 Part A) — stale-while-revalidate gating", () => 
     });
   });
 });
+
+// ===========================================================================
+// Spec 012 / SC-021 / FR-019c — the target tile MUST NOT render "∞"
+// (money()'s silent default for null/undefined inputs) when
+// unitTarget is null. The tile must render "—" as the Arabic phrase
+// sentinel. We snapshot the rendered text content of the container to
+// catch any literal "∞" that might leak through the chain of
+// `value={money(…)}`-style call sites on Dashboard.tsx.
+// ===========================================================================
+
+describe("Dashboard (spec 012) — no '∞' rendering on null targets (SC-021)", () => {
+  beforeEach(() => {
+    mocks.dash.data = undefined;
+    mocks.dash.isLoading = true;
+    mocks.dash.isError = false;
+    mocks.dash.error = null;
+    mocks.dash.isFetching = false;
+    mocks.refresh.isPending = false;
+    mocks.refresh.mutate.mockReset();
+    mocks.utils.dashboard.get.invalidate.mockReset();
+  });
+
+  function makeSnapshotWithUnitTarget(unitTarget: number | null) {
+    return {
+      ...READY_SNAPSHOT,
+      result: { ...READY_SNAPSHOT.result, targets: { unitTarget } },
+    };
+  }
+
+  it("unitTarget=null → target tile renders 'لم يتحدد بعد' (FR-019b), the rendered DOM contains no '∞'", () => {
+    mocks.dash.data = makeSnapshotWithUnitTarget(null);
+    mocks.dash.isLoading = false;
+    const { container } = render(<Dashboard />);
+    // SC-021 / FR-019c — when `unitTarget === null` the target tile
+    // must render "—" as the explicit Arabic "not yet determined"
+    // sentinel. We assert this at TWO levels:
+    //   (a) the rendered DOM as a whole contains no "∞" (the
+    //       money() default we must never leak), and
+    //   (b) the closest enclosing div of the target label contains
+    //       the "لم يتحدد بعد" phrase (FR-019b) — proving the value
+    //       sibling rendered the explicit "not yet determined" copy
+    //       rather than falling through to `money(null)` (which is "∞").
+    const allText = container.textContent ?? "";
+    expect(
+      allText.includes("∞"),
+      `rendered DOM contained "∞": ${allText}`
+    ).toBe(false);
+
+    // (b) Climb from the target-label node to its containing div.
+    // The Stat component (Dashboard.tsx) wraps label + value in a
+    // single <div class="min-w-[84px] shrink-0"> — the assertion
+    // narrows the phrase check to that exact tile rather than the
+    // whole document (where other stats render "—"). Use
+    // .parentElement (not .closest("div")) because the label node
+    // itself is a div — closest() would return it.
+    const labelEl = Array.from(container.querySelectorAll("div")).find(el =>
+      (el.textContent ?? "").trim() === "هدف تكلفة العميل"
+    );
+    expect(
+      labelEl,
+      "target-tile label 'هدف تكلفة العميل' not found"
+    ).toBeTruthy();
+    const tileRoot = labelEl?.parentElement;
+    expect(
+      tileRoot,
+      "target tile has no enclosing parent element"
+    ).toBeTruthy();
+    const tileText = tileRoot?.textContent ?? "";
+    expect(tileText).toContain("لم يتحدد بعد");
+    expect(tileText).not.toContain("∞");
+    expect(tileText).toContain("هدف تكلفة العميل");
+  });
+
+  it("unitTarget=42 → target tile renders a money-formatted number, still no '∞'", () => {
+    mocks.dash.data = makeSnapshotWithUnitTarget(42);
+    mocks.dash.isLoading = false;
+    const { container } = render(<Dashboard />);
+    const allText = container.textContent ?? "";
+    expect(
+      allText.includes("∞"),
+      `rendered DOM contained "∞": ${allText}`
+    ).toBe(false);
+    // Money-formatted 42 with currency "$" → "$42". The exact rendering
+    // is money()/num()/pct()-driven; we only assert "∞"-never-rendered.
+    expect(allText).toContain("$42");
+  });
+});

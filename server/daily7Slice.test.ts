@@ -42,6 +42,11 @@ function parseInsightsRow(row: any) {
     cpm: parseFloat(row.cpm) || 0,
     cpc: parseFloat(row.cpc) || 0,
     conversions: 0,
+    // Spec 012 / FR-030 — lead/purchase split. The test fixture uses an
+    // empty actions array so both counts are 0; byte-identity with the
+    // production `parseInsightsRow` (which also produces 0 here) holds.
+    leadConversions: 0,
+    purchaseConversions: 0,
     conversionValue: 0,
     lpViews: 0,
     cpa: null as number | null,

@@ -167,3 +167,157 @@ describe("fetchBaselines — cpmNow cost baseline (US3, contract C1.2)", () => {
     for (const c of cpmCalls) expect(c.params.time_range).toBeUndefined();
   });
 });
+
+// ===========================================================================
+// T020 — Action-type split: a row with leads + purchases must populate
+// leadConversions / purchaseConversions AND keep `conversions` identical to
+// the pre-feature selection (SC-023, SC-025, FR-030).
+// ===========================================================================
+
+import { parseInsightsRow } from "./meta";
+
+describe("T020 — parseInsightsRow action-type split (FR-030)", () => {
+  function rowWithActions(actions: Array<{ action_type: string; value: string }>) {
+    return {
+      spend: "100",
+      impressions: "1000",
+      reach: "800",
+      frequency: "1.25",
+      clicks: "20",
+      inline_link_clicks: "10",
+      ctr: "2.0",
+      inline_link_click_ctr: "1.0",
+      cpm: "100",
+      cpc: "5",
+      action_values: [],
+      actions,
+    };
+  }
+
+  it("200 leads + 2 purchases → leadConversions = 200, purchaseConversions = 2", () => {
+    const w = parseInsightsRow(
+      rowWithActions([
+        { action_type: "lead", value: "200" },
+        { action_type: "purchase", value: "2" },
+      ])
+    );
+    expect(w.leadConversions).toBe(200);
+    expect(w.purchaseConversions).toBe(2);
+  });
+
+  it("`conversions` selection is unchanged for the legacy archetypes (SC-025)", () => {
+    // Pre-split ordering: purchase BEFORE lead. Pre-split `conversions`
+    // returns the first match → `purchase` (2). Post-split must match.
+    const w = parseInsightsRow(
+      rowWithActions([
+        { action_type: "lead", value: "200" },
+        { action_type: "purchase", value: "2" },
+      ])
+    );
+    expect(w.conversions).toBe(2);
+  });
+
+  it("`conversions` follows pre-split legacy ordering for a lead-only row", () => {
+    // The legacy concat order is [purchase..., lead...]; `pickAction` on
+    // CONVERSION_ACTION_TYPES returns the first match. With only `lead`
+    // in the response, legacy and post-split must both report the lead
+    // count (5). The split fields must agree with the legacy field.
+    const w = parseInsightsRow(
+      rowWithActions([{ action_type: "lead", value: "5" }])
+    );
+    expect(w.conversions).toBe(5);
+    expect(w.leadConversions).toBe(5);
+    expect(w.purchaseConversions).toBe(0);
+  });
+
+  it("`conversions` follows pre-split legacy ordering for an offsite lead (pixel)", () => {
+    // `pickAction` returns the FIRST match (legacy behaviour preserved
+    // verbatim). LEAD_ACTION_TYPES order is ["lead", "offsite...
+    // .fb_pixel_lead"] — for a row with both, `leadConversions` is the
+    // "lead" entry (5), not the sum. This matches the legacy
+    // `conversions` selection; the split never summed.
+    const w = parseInsightsRow(
+      rowWithActions([
+        { action_type: "lead", value: "5" },
+        { action_type: "offsite_conversion.fb_pixel_lead", value: "3" },
+      ])
+    );
+    expect(w.conversions).toBe(5);
+    expect(w.leadConversions).toBe(5);
+    expect(w.purchaseConversions).toBe(0);
+  });
+
+  it("`cpa` still derives from `conversions` (legacy contract unchanged)", () => {
+    const w = parseInsightsRow(
+      rowWithActions([
+        { action_type: "lead", value: "200" },
+        { action_type: "purchase", value: "2" },
+      ])
+    );
+    // spend=100, conversions=2 → cpa=50.
+    expect(w.cpa).toBe(50);
+  });
+
+  it("empty actions array → both split counts are 0, `conversions` is 0, `cpa` is null", () => {
+    const w = parseInsightsRow(rowWithActions([]));
+    expect(w.conversions).toBe(0);
+    expect(w.leadConversions).toBe(0);
+    expect(w.purchaseConversions).toBe(0);
+    expect(w.cpa).toBeNull();
+  });
+});
+
+// ===========================================================================
+// T024 — Graph request count is unchanged when cplMedian30 is computed.
+// Research R4 / FR-033 / Principle V — the lead-based median MUST be derived
+// from the existing last_30d response. Adding a second `last_30d` call would
+// be a silent regression of the read-only commitment.
+// ===========================================================================
+
+describe("T024 — cplMedian30 reuses the existing last_30d response (FR-033)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("fetchBaselines issues exactly one baseline last_30d/spend,actions call (no second call)", async () => {
+    const calls: InsightCall[] = [];
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = new URL(String(input));
+      const path = url.pathname.replace(/^\/v\d+\.\d+/, "");
+      const params = Object.fromEntries(url.searchParams.entries());
+      if (path.endsWith("/insights")) {
+        calls.push({ path, params });
+      }
+      if (/timezone_name/.test(url.searchParams.get("fields") ?? "")) {
+        return new Response(JSON.stringify({ timezone_name: "Asia/Riyadh" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      await buildSnapshot("token", "act_test", "USD");
+      // The baseline call is the only one with NO `level` param (the
+      // per-level insights carry `level=campaign|adset|ad`) and a
+      // `spend,actions` field pair. Filter exactly that shape so the
+      // count assertion is unambiguous across the other last_30d
+      // call shapes (per-level daily, presence aggregate).
+      const baselineLast30 = calls.filter(
+        c =>
+          !c.params.level &&
+          c.params.date_preset === "last_30d" &&
+          (c.params.fields ?? "").includes("spend") &&
+          (c.params.fields ?? "").includes("actions")
+      );
+      // The cpa/cpl computation share ONE call. Two would mean the lead
+      // median added a separate Graph request — a Principle V regression.
+      expect(baselineLast30.length).toBe(1);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});

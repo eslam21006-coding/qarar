@@ -513,3 +513,72 @@ describe("processAccount — funnel three-state contract (FR-001/FR-003/SC-001)"
     expect(after - before).toBe(1);
   });
 });
+
+// ===========================================================================
+// T019 — funnelToInputs and funnelSettingsToInputs must produce identical
+// FunnelInputs for the same row. Spec 012 / data-model.md §2 / plan §Phase 2.
+// Drift between the two mappers means the dashboard and the daily cron
+// compute different targets for the same account.
+// ===========================================================================
+
+describe("T019 — funnelToInputs and funnelSettingsToInputs parity", () => {
+  // Build a row that exercises every shared field — including the new
+  // spec-012 stage rates. The `realSettingsRow` helper at the top of the
+  // file builds a paid_lto row; we extend it with the requested archetype
+  // and the four rate columns.
+  function buildRow(
+    overrides: Partial<{
+      archetype: "paid_lto" | "free_lead" | "appointment" | "webinar";
+      bookRate: number | null;
+      showRate: number | null;
+      showUpRate: number | null;
+      closeRate: number | null;
+      marketCplBenchmark: number | null;
+      inputCurrency: string | null;
+      geoTiers: string[] | null;
+    }> = {}
+  ) {
+    // Use an explicit `=== undefined` check for every nullable override —
+    // `??` would treat an explicit `null` as "absent" and substitute the
+    // default, so `buildRow({ bookRate: null })` would silently become `6`
+    // and the null-mapping cases (webinar) would never be exercised.
+    return {
+      ...realSettingsRow("u-parity", 99),
+      archetype: overrides.archetype ?? "appointment",
+      marketCplBenchmark:
+        overrides.marketCplBenchmark === undefined ? 7.5 : overrides.marketCplBenchmark,
+      inputCurrency:
+        overrides.inputCurrency === undefined ? "AED" : overrides.inputCurrency,
+      geoTiers:
+        overrides.geoTiers === undefined ? ["tier1", "tier2"] : overrides.geoTiers,
+      // Spec 012 — stage rates. Stamped through unknown to keep the row
+      // shape decoupled from FunnelInputs / drizzle types.
+      ...({
+        bookRate: overrides.bookRate === undefined ? 6 : overrides.bookRate,
+        showRate: overrides.showRate === undefined ? 70 : overrides.showRate,
+        showUpRate: overrides.showUpRate === undefined ? null : overrides.showUpRate,
+        closeRate: overrides.closeRate === undefined ? 22 : overrides.closeRate,
+      } as unknown as Record<string, unknown>),
+    } as any;
+  }
+
+  it("two mappers produce identical FunnelInputs for an appointment row", async () => {
+    const row = buildRow();
+    const { funnelToInputs } = await import("./routers");
+    const { funnelSettingsToInputs } = await import("./dailyRefresh");
+    expect(funnelSettingsToInputs(row as any)).toEqual(funnelToInputs(row as any));
+  });
+
+  it("two mappers produce identical FunnelInputs when stage rates are null (webinar)", async () => {
+    const row = buildRow({
+      archetype: "webinar",
+      bookRate: null,
+      showRate: null,
+      showUpRate: 25,
+      closeRate: 5,
+    });
+    const { funnelToInputs } = await import("./routers");
+    const { funnelSettingsToInputs } = await import("./dailyRefresh");
+    expect(funnelSettingsToInputs(row as any)).toEqual(funnelToInputs(row as any));
+  });
+});

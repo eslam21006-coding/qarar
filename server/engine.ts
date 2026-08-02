@@ -26,12 +26,14 @@ import {
   EngineRow,
   Finding,
   FunnelInputs,
+  JudgeableTargets,
   NormalizedObject,
   RuleCode,
   TopAction,
   Verdict,
   median,
   deriveTargets,
+  DISCOVERY_CALL_URL,
 } from "../shared/qarar";
 
 // deriveTargets lives in shared/qarar.ts (used by client live-preview too);
@@ -100,6 +102,71 @@ function cpaGateMet(o: NormalizedObject, target: number): boolean {
 
 function killCpaGateMet(o: NormalizedObject, target: number): boolean {
   return o.w3d.spend >= 2 * target;
+}
+
+/**
+ * Archetype-aware conversion-count selector (T025, FR-031).
+ *
+ * `paid_lto` and `free_lead` continue to read the legacy `conversions`
+ * field — the lead/purchase split is invisible to them (SC-025). The two
+ * new archetypes read `leadConversions` because their target is a cost
+ * per lead; using the legacy field would compare a cost-per-sale against
+ * a cost-per-lead target (~108× apart at the spec's sanity-check rates —
+ * research R4, contracts/conversion-measurement.md §4).
+ *
+ * Return type is `number | undefined`:
+ *   - `number`         — captured, the engine can judge on it
+ *   - `undefined`      — pre-separation snapshot; FR-035 says do NOT
+ *                        coalesce to `0`. The caller MUST treat this as
+ *                        "not yet measurable" and skip judgement.
+ */
+function effectiveConversions(
+  o: NormalizedObject,
+  archetype: FunnelInputs["archetype"]
+): number | undefined {
+  if (archetype === "appointment" || archetype === "webinar") {
+    return o.w3d.leadConversions;
+  }
+  return o.w3d.conversions;
+}
+
+/**
+ * Archetype-aware cost-per-result (T025, FR-031).
+ * Returns `null` when there is no usable count — pre-separation snapshot
+ * OR zero results share the "no cpa" rendering, but the engine
+ * distinguishes the two at the pre-separation gate (T026).
+ */
+function effectiveCpa(
+  o: NormalizedObject,
+  archetype: FunnelInputs["archetype"]
+): number | null {
+  const conv = effectiveConversions(o, archetype);
+  if (conv === undefined || conv === 0) return null;
+  return o.w3d.spend / conv;
+}
+
+/**
+ * Pre-separation-snapshot guard (T026, FR-035).
+ * For `appointment` / `webinar`, `leadConversions === undefined` means the
+ * snapshot was captured before the lead/purchase split was deployed —
+ * the unit is unknown. Returning a `too_early GATE` keeps the object out
+ * of the judgement pipeline. `leadConversions === 0` is a real captured
+ * zero and falls through to the ordinary zero-result rules (FR-034);
+ * `leadConversions > 0` is the normal case.
+ */
+function preSeparationGate(
+  o: NormalizedObject,
+  archetype: FunnelInputs["archetype"]
+): Fired | null {
+  if (archetype !== "appointment" && archetype !== "webinar") return null;
+  if (o.w3d.leadConversions !== undefined) return null;
+  return {
+    verdict: "too_early",
+    rule: "GATE",
+    reason:
+      "عدد العملاء المحتملين في هذه الفترة لم يُحدَّد بعد — البيانات قديمة أو لم تُلتقط بعد",
+    action: "حدّث البيانات من ميتا ثم راجع القرار",
+  };
 }
 
 /** explicit-failure CTR kill allowed from 1,500 impressions when Link CTR < 0.5% */
@@ -186,21 +253,38 @@ function adInnocent(
   archetype: FunnelInputs["archetype"],
   baselines: Baselines
 ): boolean {
-  const { ctrLink, lpViews, conversions } = o.w3d;
+  const { ctrLink, lpViews } = o.w3d;
+  // T025 — cvr denominator follows the archetype-aware selector. The new
+  // archetypes compute cvr from leads (FR-031, SC-024). Pre-separation
+  // snapshots are caught at the gate (T026) and never reach this branch
+  // for the new archetypes; for `paid_lto` / `free_lead` the legacy
+  // `conversions` is always present (SC-025).
+  const conversions = effectiveConversions(o, archetype) ?? 0;
   const ctrMedian = baselines.ctrLinkMedian90;
   if (ctrMedian === null || ctrLink <= ctrMedian || lpViews < 100) return false;
   const cvr = (conversions / lpViews) * 100;
+  // FR-026a — the 15% lead-generation floor belongs to Phase 7 (T064) and
+  // is INTENTIONALLY NOT applied to appointment / webinar here. Phase 2
+  // ships the plumbing (archetype-aware selector) but keeps the legacy
+  // 2% product-purchase floor for every non-`free_lead` archetype so the
+  // Phase 2 / Phase 3 checkpoint does not silently widen the threshold.
+  // Phase 7 widens this ternary to include appointment/webinar (FR-026a).
   return archetype === "free_lead" ? cvr < 15 : cvr < 2;
 }
 
 function killRulesAdset(
   o: NormalizedObject,
-  t: DerivedTargets,
+  t: JudgeableTargets,
   archetype: FunnelInputs["archetype"],
   baselines: Baselines
 ): Fired | null {
   const target = t.unitTarget;
-  const { spend, conversions, cpa } = o.w3d;
+  const { spend } = o.w3d;
+  // T025 — cpa / conversions follow the archetype-aware selector. K1's
+  // zero-result check is in `effectiveConversions` units (leads for the
+  // new archetypes); K2/K6/K7 work in cpa-leads for the new archetypes.
+  const conversions = effectiveConversions(o, archetype) ?? 0;
+  const cpa = effectiveCpa(o, archetype);
   const innocent = adInnocent(o, archetype, baselines);
 
   // K1: spend ≥ 2×target + zero conversions
@@ -281,14 +365,19 @@ function isStep6Candidate(
   if (w.lpViews < 100) return false;
   if (w.linkClicks <= 0) return false;
   if (w.lpViews / w.linkClicks < 0.75) return false;
-  const cvr = (w.conversions / w.lpViews) * 100;
+  // T025 / FR-031 — cvr denominator is the archetype-aware count.
+  // FR-026a — 15% lead-generation floor is Phase 7 (T064); Phase 2 keeps
+  // the legacy 2% product-purchase floor for every non-`free_lead`
+  // archetype so the Phase 2/3 checkpoint does not silently widen it.
+  const conversions = effectiveConversions(ad, archetype) ?? 0;
+  const cvr = (conversions / w.lpViews) * 100;
   return archetype === "free_lead" ? cvr < 15 : cvr < 2;
 }
 
 function starvedAdMatrix(
   ad: NormalizedObject,
   parent: NormalizedObject | undefined,
-  t: DerivedTargets,
+  t: JudgeableTargets,
   baselines: Baselines,
   archetype: FunnelInputs["archetype"]
 ): Fired | null {
@@ -296,9 +385,12 @@ function starvedAdMatrix(
   if (ad.spendSharePct === null || ad.spendSharePct >= 10 || ad.ageDays <= 2) return null;
 
   const ctrMedian = baselines.ctrLinkMedian90 ?? 1.0;
+  // T025 — cpa read for the high-efficiency check is archetype-aware
+  // (cost-per-lead for the new archetypes, cost-per-purchase otherwise).
+  const adCpa = effectiveCpa(ad, archetype);
   const highEfficiency =
     ad.w3d.ctrLink > ctrMedian ||
-    (ad.w3d.cpa !== null && ad.w3d.cpa <= t.unitTarget);
+    (adCpa !== null && adCpa <= t.unitTarget);
 
   // Any ad-set state + high efficiency on its small spend → rescue 🛟
   if (highEfficiency) {
@@ -312,8 +404,13 @@ function starvedAdMatrix(
 
   const parentWinning =
     parent !== undefined &&
-    parent.w3d.cpa !== null &&
-    parent.w3d.cpa <= t.unitTarget;
+    // T025 — parent cpa is read through the archetype-aware selector so
+    // appointment/webinar compare on cost-per-lead (target unit), not on
+    // the legacy cost-per-purchase figure that `parent.w3d.cpa` carries.
+    // For `paid_lto` / `free_lead` this resolves to the same field as
+    // before — SC-025, no behavior change for legacy archetypes.
+    effectiveCpa(parent, archetype) !== null &&
+    (effectiveCpa(parent, archetype) as number) <= t.unitTarget;
 
   if (parentWinning) {
     // ad set hitting target + normal/weak ad → leave it
@@ -325,7 +422,12 @@ function starvedAdMatrix(
     };
   }
 
-  const weak = ad.w3d.ctrLink < ctrMedian && ad.w3d.conversions === 0;
+  // T025 — zero-result detection uses the archetype-aware count so
+  // appointment / webinar compare on leads (their judgement unit), not on
+  // the legacy purchase count which they don't have.
+  const weak =
+    ad.w3d.ctrLink < ctrMedian &&
+    (effectiveConversions(ad, archetype) ?? 0) === 0;
   if (weak) {
     // Hotfix T7: if the ad's diagnosis will be step 6 (ad+page clean, weak
     // CVR), kill with the funnel message instead of the generic "turn it
@@ -464,12 +566,15 @@ function fatigueSignals(ad: NormalizedObject, baselines: Baselines): Fired | nul
 
 function watchRules(
   o: NormalizedObject,
-  t: DerivedTargets,
+  t: JudgeableTargets,
   archetype: FunnelInputs["archetype"],
   baselines: Baselines
 ): Fired | null {
   const target = t.unitTarget;
-  const { cpa, ctrLink, linkClicks, lpViews, conversions } = o.w3d;
+  const { ctrLink, linkClicks, lpViews } = o.w3d;
+  // T025 — cpa / conversions follow the archetype-aware selector.
+  const cpa = effectiveCpa(o, archetype);
+  const conversions = effectiveConversions(o, archetype) ?? 0;
   const ctrMedian = baselines.ctrLinkMedian90;
 
   // W1: CPA between 1×–1.5× target
@@ -488,12 +593,19 @@ function watchRules(
     if (days.length >= 3) {
       const lastDay = days[days.length - 1];
       const prior = days.slice(-4, -1);
+      // T025 — day-level CPA/conversions must follow the archetype-aware
+      // selectors, otherwise appointment/webinar judge a purchase CPA
+      // against a lead-based target here.
+      const lastDayCpa = effectiveDailyCpa(lastDay, archetype);
       const lastBad =
-        lastDay.conversions === 0 ||
-        (lastDay.cpa !== null && lastDay.cpa > 1.5 * target);
+        effectiveDailyConversions(lastDay, archetype) === 0 ||
+        (lastDayCpa !== null && lastDayCpa > 1.5 * target);
       const priorGood =
         prior.length >= 2 &&
-        prior.every(d => d.cpa !== null && d.cpa <= target);
+        prior.every(d => {
+          const dCpa = effectiveDailyCpa(d, archetype);
+          return dCpa !== null && dCpa <= target;
+        });
       if (lastBad && priorGood) {
         return {
           verdict: "watch",
@@ -508,6 +620,9 @@ function watchRules(
   // W3: Link CTR above account median BUT page conversion weak — الإعلان بريء
   if (ctrMedian !== null && ctrLink > ctrMedian && lpViews >= 100) {
     const cvr = (conversions / lpViews) * 100;
+    // FR-026a — the 15% lead-generation floor is Phase 7 (T064); Phase 2
+    // keeps the legacy 2% product-purchase floor for every non-`free_lead`
+    // archetype so the Phase 2/3 checkpoint does not silently widen it.
     const weakPage = archetype === "free_lead" ? cvr < 15 : cvr < 2;
     if (weakPage) {
       return {
@@ -530,13 +645,15 @@ function watchRules(
   }
 
   // W6: CPA above target but العائد الكلي على الإنفاق ≥ breakeven (full buyer value)
-  if (cpa !== null && cpa > target && conversions > 0) {
-    const fullRoas = (conversions * t.fullBuyerValue) / o.w3d.spend;
+  // FR-015b — SKIP entirely when `fullBuyerValue` is null (no fabricated zero).
+  if (cpa !== null && cpa > target && conversions > 0 && t.fullBuyerValue !== null) {
+    const fullBuyerValue = t.fullBuyerValue;
+    const fullRoas = (conversions * fullBuyerValue) / o.w3d.spend;
     if (fullRoas >= 2.0) {
       return {
         verdict: "continue",
         rule: "W6",
-        reason: `في آخر 3 أيام: تكلفة العميل ${money(cpa)} أعلى من هدفك، لكن عند حساب كل ما سيشتريه العميل لاحقًا (${money(t.fullBuyerValue)}) فأنت رابح (العائد الكلي على الإنفاق ${fullRoas.toFixed(1)}x)`,
+        reason: `في آخر 3 أيام: تكلفة العميل ${money(cpa)} أعلى من هدفك، لكن عند حساب كل ما سيشتريه العميل لاحقًا (${money(fullBuyerValue)}) فأنت رابح (العائد الكلي على الإنفاق ${fullRoas.toFixed(1)}x)`,
         action: "واصل بحذر — وإن استمر هذا النمط ففكّر في رفع هدفك قليلًا",
       };
     }
@@ -568,15 +685,24 @@ function watchRules(
 
 function continueRules(
   o: NormalizedObject,
-  t: DerivedTargets,
+  t: JudgeableTargets,
+  archetype: FunnelInputs["archetype"],
   baselines: Baselines
 ): Fired {
   const target = t.unitTarget;
-  const { cpa, ctrLink, conversions } = o.w3d;
+  const { ctrLink } = o.w3d;
+  // T025 — cpa / conversions follow the archetype-aware selector. The
+  // legacy w3d cpa/conversions fields are populated for the existing
+  // archetypes (SC-025); for the new archetypes the selector reads
+  // `leadConversions` and synthesizes the cost-per-lead.
+  const cpa = effectiveCpa(o, archetype);
+  const conversions = effectiveConversions(o, archetype) ?? 0;
   const ctrMedian = baselines.ctrLinkMedian90;
   // Learning phase (الجزء الرابع): ad set لم يصل ~50 تحويلًا أسبوعيًا = حساس.
   // تجنب التعديلات الهيكلية أثناءه (القتل بالقواعد مسموح — يسبق هذه الدالة).
-  const inLearning = !!o.learningPhase || weeklyConversions(o) < 50;
+  // T025 — weekly total is archetype-aware (lead-based for appointment /
+  // webinar, purchase-based for legacy archetypes).
+  const inLearning = !!o.learningPhase || weeklyConversions(o, archetype) < 50;
 
   const cpaAtOrUnder = cpa !== null && cpa <= target;
   const beatsMedian = ctrMedian === null ? ctrLink >= 1.7 : ctrLink > ctrMedian;
@@ -586,7 +712,13 @@ function continueRules(
   const days = o.daily7.filter(d => d.spend > 0);
   if (days.length >= 3) {
     const last3 = days.slice(-3);
-    threeDaysUnder = last3.every(d => d.cpa !== null && d.cpa <= target * 1.0);
+    // T025 — archetype-aware daily CPA: appointment/webinar compare a
+    // per-day cost-per-lead against the CPL target, legacy archetypes keep
+    // the purchase-based `d.cpa`.
+    threeDaysUnder = last3.every(d => {
+      const dCpa = effectiveDailyCpa(d, archetype);
+      return dCpa !== null && dCpa <= target * 1.0;
+    });
   }
 
   if (cpaAtOrUnder && threeDaysUnder && beatsMedian) {
@@ -661,8 +793,6 @@ function continueRules(
 // Diagnosis (الجزء الثامن) — collect ALL broken rungs per entity
 // ============================================================
 
-const DISCOVERY_CALL_URL = "https://eslamsalah.com/team-discovery-call";
-
 export function diagnose(
   o: NormalizedObject,
   baselines: Baselines,
@@ -711,7 +841,12 @@ export function diagnose(
 
   // 5. page CVR — "ad innocent"
   if (w.lpViews >= 100) {
-    const cvr = (w.conversions / w.lpViews) * 100;
+    // T025 / FR-031 — cvr denominator is the archetype-aware count.
+    // FR-026a — 15% lead-generation floor is Phase 7 (T064); Phase 2 keeps
+    // the legacy 2% product-purchase floor for every non-`free_lead`
+    // archetype so the Phase 2/3 checkpoint does not silently widen it.
+    const conversionsForCvr = effectiveConversions(o, archetype) ?? 0;
+    const cvr = (conversionsForCvr / w.lpViews) * 100;
     const weakPage = archetype === "free_lead" ? cvr < 15 : cvr < 2;
     if (weakPage) {
       // Only absolve the ad ("الإعلان بريء") when no earlier rung (1–4) fired.
@@ -756,11 +891,26 @@ export function diagnose(
 
 function evaluateCampaign(
   o: NormalizedObject,
-  t: DerivedTargets,
+  t: JudgeableTargets,
   childRows: EngineRow[],
-  htoUnderperforming: boolean
+  htoUnderperforming: boolean,
+  archetype: FunnelInputs["archetype"]
 ): Fired {
-  const { spend, conversions } = o.w3d;
+  // T026 — pre-separation snapshot guard (see evaluateAd for the rationale).
+  // For appointment/webinar with `leadConversions === undefined` we cannot
+  // judge at the campaign level either (campaign totals include those
+  // child objects, all of which are also pre-separation).
+  const preSep = preSeparationGate(o, archetype);
+  if (preSep) return preSep;
+  const { spend } = o.w3d;
+  // T025 / T026 — campaign-level conversion count follows the archetype
+  // selector. `paid_lto` / `free_lead` keep the legacy field (SC-025);
+  // the new archetypes read `leadConversions`. A missing lead count on a
+  // pre-separation snapshot falls through to `0` only at the
+  // zero-result guard (FR-034, FR-035) — the engine above already
+  // rejected that object at the pre-separation gate (T026) so we never
+  // reach evaluateCampaign with an undefined count for the new archetypes.
+  const conversions = effectiveConversions(o, archetype) ?? 0;
   if (spend < t.unitTarget) {
     return {
       verdict: "too_early",
@@ -769,33 +919,48 @@ function evaluateCampaign(
       action: "اترك البيانات تتجمع",
     };
   }
-  const fullRoas = spend > 0 ? (conversions * t.fullBuyerValue) / spend : 0;
+  // FR-015b — when `fullBuyerValue` is null we cannot compute full-ROAS;
+  // skip every branch that depends on it (S2, W6, the W6 fallback).
+  const hasFullRoas = t.fullBuyerValue !== null;
+  const fullRoas =
+    hasFullRoas && spend > 0
+      ? (conversions * (t.fullBuyerValue as number)) / spend
+      : 0;
   const killChildren = childRows.filter(r => r.verdict === "kill").length;
 
   // W5 — funnel-level signal (user-reported): LTO ليدات/مبيعات جيدة لكن
   // لا حضور/مبيعات HTO. Meta's API can't see post-conversion data, so this
   // is driven by the explicit funnel-settings flag. الإعلان بريء — حُكم فانل.
-  if (htoUnderperforming && conversions > 0 && o.w3d.cpa !== null && o.w3d.cpa <= 1.5 * t.unitTarget) {
+  // T025 — campaign cpa is read through the archetype-aware selector so
+  // appointment / webinar compare on cost-per-lead (the judgement unit),
+  // not on the legacy cost-per-purchase figure that `o.w3d.cpa` carries.
+  const campaignCpa = effectiveCpa(o, archetype);
+  if (
+    htoUnderperforming &&
+    conversions > 0 &&
+    campaignCpa !== null &&
+    campaignCpa <= 1.5 * t.unitTarget
+  ) {
     return {
       verdict: "watch",
       rule: "W5",
-      reason: `في آخر 3 أيام: الإعلانات تجلب عملاء بسعر جيد (${money(o.w3d.cpa)}) لكن المشكلة في العرض أو مسار الفانل — الإعلان بريء`,
+      reason: `في آخر 3 أيام: الإعلانات تجلب عملاء بسعر جيد (${money(campaignCpa)}) لكن المشكلة في العرض أو مسار الفانل — الإعلان بريء`,
       action: "لا تغيّر شيئًا في الإعلانات — راجع العرض ومسار التحويل بعد البيع الأول، واحجز مكالمة تشخيصية",
       ctaUrl: DISCOVERY_CALL_URL,
     };
   }
 
-  if (fullRoas >= 2.0) {
+  if (hasFullRoas && fullRoas >= 2.0) {
     return {
       verdict: "continue",
       rule: "S2",
-      reason: `في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع ${fullRoas.toFixed(1)}x عند حساب قيمة العميل الكاملة (${money(t.fullBuyerValue)})${killChildren ? ` — مع ${killChildren} إعلان/مجموعة تحتاج إيقافًا بالداخل` : ""}`,
+      reason: `في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع ${fullRoas.toFixed(1)}x عند حساب قيمة العميل الكاملة (${money(t.fullBuyerValue as number)})${killChildren ? ` — مع ${killChildren} إعلان/مجموعة تحتاج إيقافًا بالداخل` : ""}`,
       action: killChildren
         ? "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك"
         : "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة",
     };
   }
-  if (fullRoas >= 1.0) {
+  if (hasFullRoas && fullRoas >= 1.0) {
     return {
       verdict: "watch",
       rule: "W6",
@@ -809,6 +974,18 @@ function evaluateCampaign(
       rule: "K1",
       reason: `في آخر 3 أيام: الحملة صرفت ${money(spend)} (ضعف هدفك) بدون أي نتيجة`,
       action: "أوقِف الحملة — لا تبيع أصلًا",
+    };
+  }
+  if (!hasFullRoas) {
+    // No full-buyer value to evaluate profitability against — we cannot
+    // say "campaign is losing" or "campaign is winning". Fall through to
+    // a neutral continue. The per-object kills/watch inside the campaign
+    // are already surfaced via killChildren + childRows.
+    return {
+      verdict: "continue",
+      rule: "S2",
+      reason: "في آخر 3 أيام: الحملة صرفت ما يكفي من البيانات للحكم على الإعلانات بالداخل — راجعها",
+      action: "تابع أداء الإعلانات داخل الحملة — قرار الربح الإجمالي يعتمد على إعدادات الفانل",
     };
   }
   return {
@@ -826,10 +1003,18 @@ function evaluateCampaign(
 function evaluateAd(
   ad: NormalizedObject,
   parent: NormalizedObject | undefined,
-  t: DerivedTargets,
+  t: JudgeableTargets,
   archetype: FunnelInputs["archetype"],
   baselines: Baselines
 ): Fired {
+  // T026 — pre-separation snapshot guard. For `appointment` / `webinar`,
+  // `leadConversions === undefined` means the snapshot predates the
+  // lead/purchase split (research R6, FR-035). The unit is unknown — do
+  // not judge. For `paid_lto` / `free_lead` this is a no-op (those
+  // archetypes read the legacy `conversions`, which is always populated).
+  const preSep = preSeparationGate(ad, archetype);
+  if (preSep) return preSep;
+
   // K3 explicit kill allowed even at low sample (1,500 imp + CTR < 0.5%)
   const k3 = killK3(ad);
   if (k3) return k3;
@@ -852,7 +1037,10 @@ function evaluateAd(
   // fall through to the S2 continue fallback. The kill sits BEFORE the
   // decay map and BEFORE the watch catch so a zero-result ad in the kill
   // range never gets re-classified as "watch" by the new FR-001 catch.
-  if (ad.w3d.conversions === 0 && ad.w3d.spend >= 2 * t.unitTarget) {
+  // T025 — the zero-result check uses the archetype-aware selector so the
+  // new archetypes compare on lead counts.
+  const adConv = effectiveConversions(ad, archetype) ?? 0;
+  if (adConv === 0 && ad.w3d.spend >= 2 * t.unitTarget) {
     return {
       verdict: "kill",
       rule: "K1",
@@ -874,15 +1062,19 @@ function evaluateAd(
   if (watch) return watch;
 
   // 8. Continue/Scale
-  return continueRules(ad, t, baselines);
+  return continueRules(ad, t, archetype, baselines);
 }
 
 function evaluateAdset(
   o: NormalizedObject,
-  t: DerivedTargets,
+  t: JudgeableTargets,
   archetype: FunnelInputs["archetype"],
   baselines: Baselines
 ): Fired {
+  // T026 — pre-separation snapshot guard (see evaluateAd for the rationale).
+  const preSep = preSeparationGate(o, archetype);
+  if (preSep) return preSep;
+
   // 2. Circuit breaker FIRST — "يتجاوز كل البوابات"
   const cb = circuitBreaker(o, t.unitTarget);
   if (cb) return cb;
@@ -900,7 +1092,7 @@ function evaluateAdset(
   if (watch) return watch;
 
   // 8. Continue
-  return continueRules(o, t, baselines);
+  return continueRules(o, t, archetype, baselines);
 }
 
 // ============================================================
@@ -923,42 +1115,77 @@ export function runEngine(
   // buildSummary) renders the account's currency, not a hardcoded "$".
   _currency = currencySymbolFor(snapshot.currency);
 
+  // T015 + plan §Compile-time enforcement — every per-object evaluator below
+  // takes a `JudgeableTargets` (with `unitTarget: number`). The narrow
+  // happens here, ONCE. If `unitTarget === null` (no source available —
+  // possible for `appointment` / `webinar` accounts with no baseline, no
+  // rates, no benchmark) no rule below the gate can fire without
+  // fabricating a target; every row returns `too_early GATE`.
+  //
+  // Phase 6 T058 will refine the no-target reason/action copy. For Phase 2
+  // the message is intentionally a stub: the legacy archetypes
+  // (`paid_lto`, `free_lead`) always produce a non-null `unitTarget`, so
+  // this branch is only reachable for the new archetypes and any
+  // future regression that breaks the legacy source selection.
+  const NO_TARGET_FIRED: Fired = {
+    verdict: "too_early",
+    rule: "GATE",
+    reason: "لم يتحدد هدف تكلفة العميل بعد — أكمل إعدادات الفانل أولًا",
+    action: "افتح الإعدادات وأدخل أرقام الفانل أو سعر المنتج الغالي",
+  };
+  if (targets.unitTarget === null) {
+    return buildNoTargetResult(snapshot, targets, NO_TARGET_FIRED, funnel.archetype);
+  }
+  const judgeable: JudgeableTargets = targets as JudgeableTargets;
+
   const byId = new Map(snapshot.objects.map(o => [o.id, o]));
   const rows: EngineRow[] = [];
 
-  const toRow = (o: NormalizedObject, fired: Fired, findings: Finding[]): EngineRow => ({
-    id: o.id,
-    name: o.name,
-    status: o.status,
-    level: o.level,
-    parentId: o.parentId,
-    campaignId: o.campaignId,
-    daily_budget: o.dailyBudget,
-    objective: o.objective ?? null,
-    spend_3d: round2(o.w3d.spend),
-    spend_today: round2(o.today.spend),
-    impressions_3d: o.w3d.impressions,
-    cpa_3d: o.w3d.cpa !== null ? round2(o.w3d.cpa) : null,
-    ctr_link: round2(o.w3d.ctrLink),
-    ctr_all: round2(o.w3d.ctrAll),
-    conversions_3d: o.w3d.conversions,
-    frequency_3d: round2(o.w3d.frequency),
-    spend_share_pct: o.spendSharePct !== null ? round2(o.spendSharePct) : null,
-    age_days: Math.round(o.ageDays * 10) / 10,
-    verdict: fired.verdict,
-    rule: fired.rule,
-    reason_ar: fired.reason,
-    action_ar: fired.action,
-    findings,
-    promotion_eligible: !!fired.promotionEligible,
-    promotion_note: fired.promotionNote ?? null,
-    learning_phase: !!o.learningPhase || weeklyConversions(o) < 50,
-    // Hotfix T9: 3-day ROAS = conversionValue / spend. null when either
-    // is 0 — surfaces an explicit "—" in the column instead of 0.00x.
-    roas_3d: o.w3d.spend > 0 && o.w3d.conversionValue > 0
-      ? round2(o.w3d.conversionValue / o.w3d.spend)
-      : null,
-  });
+  const toRow = (o: NormalizedObject, fired: Fired, findings: Finding[]): EngineRow => {
+    // T025 — the row's `cpa_3d` and `conversions_3d` carry the figure the
+    // engine judged on (per FR-031, FR-035). For appointment / webinar
+    // that is the lead-based number; the legacy `o.w3d.conversions` /
+    // `o.w3d.cpa` are NOT the judgement unit for those archetypes.
+    const rowConv = effectiveConversions(o, funnel.archetype);
+    const rowCpa = effectiveCpa(o, funnel.archetype);
+    return {
+      id: o.id,
+      name: o.name,
+      status: o.status,
+      level: o.level,
+      parentId: o.parentId,
+      campaignId: o.campaignId,
+      daily_budget: o.dailyBudget,
+      objective: o.objective ?? null,
+      spend_3d: round2(o.w3d.spend),
+      spend_today: round2(o.today.spend),
+      impressions_3d: o.w3d.impressions,
+      cpa_3d: rowCpa !== null ? round2(rowCpa) : null,
+      ctr_link: round2(o.w3d.ctrLink),
+      ctr_all: round2(o.w3d.ctrAll),
+      // Pre-separation snapshots: `rowConv === undefined` for appointment /
+      // webinar; render as `0` in the row but mark it conceptually as
+      // "not yet measurable" via the verdict (the pre-separation gate
+      // returns too_early for these rows).
+      conversions_3d: rowConv ?? 0,
+      frequency_3d: round2(o.w3d.frequency),
+      spend_share_pct: o.spendSharePct !== null ? round2(o.spendSharePct) : null,
+      age_days: Math.round(o.ageDays * 10) / 10,
+      verdict: fired.verdict,
+      rule: fired.rule,
+      reason_ar: fired.reason,
+      action_ar: fired.action,
+      findings,
+      promotion_eligible: !!fired.promotionEligible,
+      promotion_note: fired.promotionNote ?? null,
+      learning_phase: !!o.learningPhase || weeklyConversions(o, funnel.archetype) < 50,
+      // Hotfix T9: 3-day ROAS = conversionValue / spend. null when either
+      // is 0 — surfaces an explicit "—" in the column instead of 0.00x.
+      roas_3d: o.w3d.spend > 0 && o.w3d.conversionValue > 0
+        ? round2(o.w3d.conversionValue / o.w3d.spend)
+        : null,
+    };
+  };
 
   // Evaluate ads first (needed for nothing), then adsets, then campaigns (need children)
   const ads = snapshot.objects.filter(o => o.level === "ad");
@@ -967,7 +1194,7 @@ export function runEngine(
 
   for (const ad of ads) {
     const parent = ad.parentId ? byId.get(ad.parentId) : undefined;
-    const fired = evaluateAd(ad, parent, targets, funnel.archetype, baselines);
+    const fired = evaluateAd(ad, parent, judgeable, funnel.archetype, baselines);
     const findings =
       fired.verdict === "kill" || fired.verdict === "watch"
         ? diagnose(ad, baselines, funnel.archetype)
@@ -976,7 +1203,7 @@ export function runEngine(
   }
 
   for (const s of adsets) {
-    const fired = evaluateAdset(s, targets, funnel.archetype, baselines);
+    const fired = evaluateAdset(s, judgeable, funnel.archetype, baselines);
     const findings =
       fired.verdict === "kill" || fired.verdict === "watch"
         ? diagnose(s, baselines, funnel.archetype)
@@ -986,7 +1213,7 @@ export function runEngine(
 
   for (const c of campaigns) {
     const childRows = rows.filter(r => r.campaignId === c.id && r.level === "adset");
-    const fired = evaluateCampaign(c, targets, childRows, !!funnel.htoUnderperforming);
+    const fired = evaluateCampaign(c, judgeable, childRows, !!funnel.htoUnderperforming, funnel.archetype);
     let findings: Finding[] = [];
     if (fired.verdict === "kill" || fired.verdict === "watch") {
       findings = diagnose(c, baselines, funnel.archetype);
@@ -1030,6 +1257,70 @@ export function runEngine(
   return { rows, summary, targets, currencySymbol: _currency };
 }
 
+/**
+ * No-target result builder (Phase 2 minimum; Phase 6 T058 refines the copy).
+ *
+ * When `deriveTargets` returns `unitTarget: null` no per-object rule can
+ * fire without inventing a number. Every row is emitted as
+ * `too_early GATE` with a simple-Arabic reason/action pointing at the
+ * funnel settings. Summary counts reflect the verdict; baseline fields
+ * are surfaced as-is (so the dashboard still renders the measured history
+ * even when the target is absent — see FR-019a/b).
+ */
+function buildNoTargetResult(
+  snapshot: AccountSnapshotPayload,
+  targets: DerivedTargets,
+  fired: Fired,
+  archetype: FunnelInputs["archetype"]
+): EngineResult {
+  const toRow = (o: NormalizedObject): EngineRow => {
+    // T025 / FR-031 — the row's `cpa_3d` and `conversions_3d` carry the
+    // figure the engine judged on (per-archetype). Mirror the main
+    // `toRow` so the no-target path produces the same per-row display
+    // values the judged path does. `effectiveConversions` returns
+    // `undefined` for appointment / webinar with a pre-separation
+    // snapshot (T026) — the engine below the gate never sees those
+    // rows, so this branch is unreachable for them.
+    const rowConv = effectiveConversions(o, archetype);
+    const rowCpa = effectiveCpa(o, archetype);
+    return {
+      id: o.id,
+      name: o.name,
+      status: o.status,
+      level: o.level,
+      parentId: o.parentId,
+      campaignId: o.campaignId,
+      daily_budget: o.dailyBudget,
+      objective: o.objective ?? null,
+      spend_3d: round2(o.w3d.spend),
+      spend_today: round2(o.today.spend),
+      impressions_3d: o.w3d.impressions,
+      cpa_3d: rowCpa !== null ? round2(rowCpa) : null,
+      ctr_link: round2(o.w3d.ctrLink),
+      ctr_all: round2(o.w3d.ctrAll),
+      conversions_3d: rowConv ?? 0,
+      frequency_3d: round2(o.w3d.frequency),
+      spend_share_pct: o.spendSharePct !== null ? round2(o.spendSharePct) : null,
+      age_days: Math.round(o.ageDays * 10) / 10,
+      verdict: fired.verdict,
+      rule: fired.rule,
+      reason_ar: fired.reason,
+      action_ar: fired.action,
+      findings: [],
+      promotion_eligible: false,
+      promotion_note: null,
+      learning_phase: !!o.learningPhase || weeklyConversions(o, archetype) < 50,
+      roas_3d:
+        o.w3d.spend > 0 && o.w3d.conversionValue > 0
+          ? round2(o.w3d.conversionValue / o.w3d.spend)
+          : null,
+    };
+  };
+  const rows = snapshot.objects.map(toRow);
+  const summary = buildSummary(rows, snapshot, targets);
+  return { rows, summary, targets, currencySymbol: _currency };
+}
+
 function computeCadence(snapshot: AccountSnapshotPayload): AccountSummary["cadence"] {
   // Find the most recent createdTime across every ad. We treat any
   // createdTime string as comparable; missing/null values are ignored.
@@ -1069,9 +1360,64 @@ function computeCadence(snapshot: AccountSnapshotPayload): AccountSummary["caden
   return null; // ok
 }
 
-function weeklyConversions(o: NormalizedObject): number {
-  if (o.daily7.length === 0) return o.w3d.conversions * 2.33;
-  return o.daily7.reduce((s, d) => s + d.conversions, 0);
+function weeklyConversions(
+  o: NormalizedObject,
+  archetype: FunnelInputs["archetype"]
+): number {
+  // T025 — the weekly total follows the archetype-aware selector.
+  // appointment / webinar read `leadConversions`; legacy archetypes read
+  // `conversions`. The per-day entries are normalised the same way
+  // (`d.conversions` for legacy, `d.leadConversions` for the new ones).
+  if (o.daily7.length === 0) {
+    return (effectiveConversions(o, archetype) ?? 0) * 2.33;
+  }
+  return o.daily7.reduce(
+    (s, d) => s + (effectiveDailyConversions(d, archetype) ?? 0),
+    0
+  );
+}
+
+/**
+ * Mirror of `effectiveConversions` for `DailyMetrics`. The per-day
+ * `d.conversions` already follows the legacy ordering (CONVERSION_ACTION_TYPES
+ * for legacy archetypes; would need a separate field for the new ones).
+ * For Phase 2 the daily breakdown is derived from the same Meta response,
+ * so `d.leadConversions` is the lead-based counterpart.
+ */
+function effectiveDailyConversions(
+  d: { conversions: number; leadConversions?: number },
+  archetype: FunnelInputs["archetype"]
+): number | undefined {
+  if (archetype === "appointment" || archetype === "webinar") {
+    return d.leadConversions;
+  }
+  return d.conversions;
+}
+
+/**
+ * Mirror of `effectiveCpa` for `DailyMetrics` (T025 / FR-031). The per-day
+ * gating rules (W2 "one bad day", S1's `threeDaysUnder`) compare a daily
+ * cost against the lead-based `target`. For appointment / webinar the
+ * legacy `d.cpa` is a cost-per-PURCHASE, so those sites must synthesize a
+ * cost-per-LEAD from `d.leadConversions` — otherwise a purchase CPA is
+ * judged against a CPL target (the exact unit mismatch `effectiveCpa`
+ * removed at the 3-day level). Legacy archetypes keep `d.cpa` unchanged,
+ * so their behaviour is byte-identical.
+ *
+ * Returns `null` when there is no usable count (pre-separation snapshot,
+ * captured zero, or no spend) — the same "no cpa" signal the callers
+ * already branch on.
+ */
+function effectiveDailyCpa(
+  d: { spend: number; cpa: number | null; leadConversions?: number },
+  archetype: FunnelInputs["archetype"]
+): number | null {
+  if (archetype === "appointment" || archetype === "webinar") {
+    const conv = d.leadConversions;
+    if (conv === undefined || conv === 0 || d.spend <= 0) return null;
+    return d.spend / conv;
+  }
+  return d.cpa;
 }
 
 function round2(n: number): number {

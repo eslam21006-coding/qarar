@@ -84,12 +84,24 @@ describe("T037 gate — drizzle/schema.ts must not declare the unique index", ()
       resolve(REPO_ROOT, "drizzle/meta/_journal.json"),
       "utf8",
     );
+    // Tightened from a `journal.includes("0010")` substring check to the
+    // exact tag of the manual migration. The previous substring check
+    // collided with auto-generated migrations that legitimately start at
+    // the 0010 journal index (spec 012's schema changes produced
+    // `0010_curly_patch.sql` as the next auto-migration, with a journal
+    // `tag` of `0010_curly_patch` — not the manual file). The test's
+    // INTENT is "the manual 0010_settings_unique_index.sql is NOT in the
+    // journal"; checking for the exact tag preserves that intent without
+    // tripping on legitimate auto-generated next-index migrations. The
+    // check still fails the moment someone adds the manual file to the
+    // journal — exact-string match is strictly stricter than substring.
     expect(
-      journal.includes("0010"),
-      "drizzle/meta/_journal.json now references 0010. That makes\n" +
-        "`drizzle-kit migrate` apply the unique index automatically on the\n" +
-        "next deploy, bypassing the gate. 0010 must stay unjournalled and be\n" +
-        "applied by hand after the repair is verified clean (T034).",
+      journal.includes("0010_settings_unique_index"),
+      "drizzle/meta/_journal.json now references the manual migration\n" +
+        "`0010_settings_unique_index.sql`. That makes `drizzle-kit migrate`\n" +
+        "apply the unique index automatically on the next deploy, bypassing\n" +
+        "the gate. The manual file must stay unjournalled and be applied by\n" +
+        "hand after the repair is verified clean (T034).",
     ).toBe(false);
   });
 });

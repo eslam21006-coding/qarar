@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import { useState } from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act } from "react";
+import { DISCOVERY_CALL_URL } from "@shared/qarar";
 
 const mocks = vi.hoisted(() => ({
   funnelGet: vi.fn(),
@@ -312,5 +313,367 @@ describe("Settings page (T008 / US1 / SC-001 / FR-001)", () => {
 
     expect(screen.queryByTestId("settings-failure-card")).toBeNull();
     expect(screen.getByTestId("settings-save-button")).toBeInTheDocument();
+  });
+
+  // ===========================================================================
+  // T031 — appointment rate placeholders render with the contract ranges
+  // (3-10%, ~70%, 20-25%) and the hint text is NEVER persisted as a value.
+  // =================================================================
+  it("T031 — appointment form renders rate placeholders 3-10%, ~70%, 20-25% and never submits them", async () => {
+    // Hydrate with an appointment row so the rate fields render. The
+    // first-time `never_configured` defaults archetype to paid_lto,
+    // which would not render the appointment rate fields.
+    mocks.funnelGet.mockReturnValue({
+      data: {
+        status: "found",
+        settings: {
+          archetype: "appointment",
+          liveComponent: false,
+          offerDescription: null,
+          ticketPrice: null,
+          arena: "broad",
+          bestInterest: null,
+          geoTiers: null,
+          inputCurrency: "USD",
+          aov: 0,
+          htoPrice: 2000,
+          htoConversionRate: 0,
+          frontEndRoas: 1,
+          dailyBudget: null,
+          marketCplBenchmark: null,
+          htoUnderperforming: false,
+          bookRate: null,
+          showRate: null,
+          closeRate: null,
+          showUpRate: null,
+        },
+        targets: {},
+      },
+      isLoading: false,
+      isError: false,
+    });
+    mocks.accounts.mockReturnValue({ data: [{ id: 100, currency: "USD" }] });
+    mocks.useUtils.mockReturnValue({
+      funnel: { get: { invalidate: vi.fn() } },
+      dashboard: { get: { invalidate: vi.fn() } },
+    });
+
+    const { container } = render(<Settings />);
+
+    // First-time form renders the appointment rate inputs with their
+    // placeholder hints visible inside the empty boxes. These are
+    // never form values (FR-010) — placeholder text is greyed inside
+    // the input via the `placeholder` HTML attribute.
+    await waitFor(() => {
+      const inputs = Array.from(container.querySelectorAll("input"));
+      const placeholders = inputs.map(
+        i => i.getAttribute("placeholder") ?? ""
+      );
+      // Spec 012 / contracts/settings-fields.md §2 — appointment.
+      expect(placeholders).toContain("3-10%");
+      expect(placeholders).toContain("~70%");
+      expect(placeholders).toContain("20-25%");
+      // Empty values: no placeholder text appears as an input `value`.
+      for (const input of inputs) {
+        expect((input as HTMLInputElement).value).not.toBe("3-10%");
+        expect((input as HTMLInputElement).value).not.toBe("~70%");
+        expect((input as HTMLInputElement).value).not.toBe("20-25%");
+      }
+    });
+  });
+
+  // ===========================================================================
+  // T032 — round-trip: save an appointment account with rates, switch
+  // archetype away and back, and the rates are still present (FR-028a,
+  // SC-008, US1 AS8). The settingsFields.ts matrix hides the inputs
+  // when archetype ≠ appointment but the underlying form state still
+  // carries the rates — they re-appear when the user switches back.
+  // =================================================================
+  it("T032 — appointment rates survive an archetype switch (FR-028a / SC-008 / US1 AS8)", async () => {
+    // A single fixture and a single mounted tree. The mock is stable
+    // across renders so the same row re-hydrates when we flip the
+    // archetype back.
+    const APPT_ROW = {
+      archetype: "appointment",
+      liveComponent: false,
+      offerDescription: null,
+      ticketPrice: null,
+      arena: "broad",
+      bestInterest: null,
+      geoTiers: null,
+      inputCurrency: "USD",
+      aov: 0,
+      htoPrice: 2000,
+      htoConversionRate: 0,
+      frontEndRoas: 1,
+      dailyBudget: null,
+      marketCplBenchmark: null,
+      htoUnderperforming: false,
+      bookRate: 6,
+      showRate: 70,
+      closeRate: 22,
+      showUpRate: null,
+    };
+    mocks.funnelGet.mockReturnValue({
+      data: { status: "found", settings: APPT_ROW, targets: {} },
+      isLoading: false,
+      isError: false,
+    });
+    mocks.accounts.mockReturnValue({ data: [{ id: 100, currency: "USD" }] });
+    mocks.useUtils.mockReturnValue({
+      funnel: { get: { invalidate: vi.fn() } },
+      dashboard: { get: { invalidate: vi.fn() } },
+    });
+
+    // JSDOM has no `Element.prototype.scrollIntoView`. Radix Select calls it
+    // on the *currently selected* option when the popover opens (a different
+    // element than the one we click), so without this stub the open() path
+    // throws an unhandled "scrollIntoView is not a function" error inside a
+    // passive effect — which can corrupt the React tree between the two
+    // archetype switches below. Stub it on the prototype once.
+    if (!(Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView) {
+      (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView =
+        () => undefined;
+    }
+
+    const { container } = render(<Settings />);
+
+    // Hydrate: the three rate inputs + htoPrice are present and carry
+    // the saved values.
+    await waitFor(() => {
+      const inputs = Array.from(container.querySelectorAll("input"));
+      const values = inputs.map(i => (i as HTMLInputElement).value);
+      expect(values).toContain("6");
+      expect(values).toContain("70");
+      expect(values).toContain("22");
+      expect(values).toContain("2000");
+    });
+
+    // Drive the archetype `<select>` through Radix Select's surface.
+    // Radix Select has no native `<select>` element here (no `name`
+    // prop and no surrounding `<form>`, so `isFormControl` is false
+    // after the trigger attaches). We drive the popover instead:
+    // open via `mouseDown` on the trigger (Radix's
+    // `useStableCallback` checks `event.button === 0 && pointerType ===
+    // "mouse"`; we stub `hasPointerCapture` on JSDOM and supply the
+    // pointerType through fireEvent.pointerDown). The popover content
+    // is portaled to `document.body`. We then click the option whose
+    // visible Arabic text matches the target value.
+    //
+    // Radix renders each option as `<div role="option">` WITHOUT
+    // `data-value`; identification is by visible Arabic text.
+    const ARABIC_LABEL: Record<"appointment" | "paid_lto" | "free_lead", string> = {
+      paid_lto: "أبيع منتجًا أو خدمة مباشرة",
+      free_lead: "أجمع بيانات عملاء مجانًا",
+      appointment: "أحجز استشارة مجانية",
+    };
+    const stubPointerCapture = (el: HTMLElement) => {
+      if (!el.hasPointerCapture) {
+        (el as unknown as { hasPointerCapture: () => boolean }).hasPointerCapture = () => false;
+      }
+      if (!el.releasePointerCapture) {
+        (el as unknown as { releasePointerCapture: () => void }).releasePointerCapture = () => undefined;
+      }
+      if (!(el as unknown as { scrollIntoView?: () => void }).scrollIntoView) {
+        (el as unknown as { scrollIntoView: () => void }).scrollIntoView = () => undefined;
+      }
+    };
+    const openArchetypeSelect = () => {
+      const trigger = container.querySelector(
+        'button[role="combobox"]'
+      ) as HTMLElement | null;
+      if (!trigger) throw new Error("archetype SelectTrigger not found");
+      stubPointerCapture(trigger);
+      // Radix listens for `onPointerDown` on the trigger and guards
+      // `event.button === 0 && event.pointerType === "mouse"`.
+      fireEvent.pointerDown(trigger, {
+        button: 0,
+        pointerType: "mouse",
+        pointerId: 1,
+        isPrimary: true,
+      });
+    };
+    const setArchetype = async (value: "appointment" | "paid_lto" | "free_lead") => {
+      openArchetypeSelect();
+      // The popover content is portaled — look both in the container
+      // and at the document body for the option element.
+      const needle = ARABIC_LABEL[value];
+      const findOption = (): HTMLElement | null => {
+        const scope: ParentNode =
+          (document.body as ParentNode) ?? (container as ParentNode);
+        const all = Array.from(scope.querySelectorAll('[role="option"]'));
+        return all.find(el => (el.textContent ?? "").includes(needle)) as
+          | HTMLElement
+          | null;
+      };
+      // Wait up to 1s for the popover content to render.
+      const start = Date.now();
+      let item: HTMLElement | null = null;
+      while (Date.now() - start < 1000) {
+        item = findOption();
+        if (item) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      if (!item) {
+        // Re-fire pointerdown one more time in case the first was lost.
+        openArchetypeSelect();
+        await new Promise(resolve => setTimeout(resolve, 50));
+        item = findOption();
+      }
+      if (!item) {
+        const allItems = Array.from(
+          (document.body ?? container).querySelectorAll('[role="option"]')
+        );
+        throw new Error(
+          `archetype option ${value} (looking for "${needle}") not found — popover items: ${allItems
+            .map(el => el.textContent)
+            .join(" | ")}`
+        );
+      }
+      stubPointerCapture(item);
+      // Radix SelectItem (react-select v2) commits a selection on `onClick`
+      // ONLY when its internal pointerType ref is not "mouse" (default
+      // "touch"), and on `onPointerUp` only when it IS "mouse". The prior
+      // helper fired pointerDown({pointerType:"mouse"}) which flipped the ref
+      // to "mouse" and made the following click a NO-OP — so the archetype
+      // never actually changed and the round-trip was never exercised. Fire a
+      // plain click (ref stays "touch") so `handleSelect` runs → onValueChange
+      // + the popover closes.
+      act(() => {
+        fireEvent.click(item!);
+      });
+    };
+
+    // Round-trip: appointment → paid_lto → appointment. The fixture
+    // doesn't change — same row re-hydrated — so any field that
+    // vanished on paid_lto MUST re-appear on appointment.
+    await setArchetype("paid_lto");
+    // Prove the intermediate state actually changed: the appointment rate
+    // inputs (6 / 22) must be GONE on paid_lto. Without this, a select that
+    // silently failed to switch (Radix/JSDOM quirk) would leave the form on
+    // appointment and the final assertions would still pass — the round trip
+    // would be unproven.
+    await waitFor(() => {
+      const values = Array.from(container.querySelectorAll("input")).map(
+        i => (i as HTMLInputElement).value
+      );
+      expect(values).not.toContain("6");
+      expect(values).not.toContain("22");
+    });
+    await setArchetype("appointment");
+
+    // The contract: returning to appointment restores the three rate
+    // inputs AND the saved values 6 / 70 / 22. htoPrice 2000 is the
+    // shared anchor (visible in every archetype).
+    await waitFor(() => {
+      const inputs = Array.from(container.querySelectorAll("input"));
+      const values = inputs.map(i => (i as HTMLInputElement).value);
+      expect(values).toContain("6");
+      expect(values).toContain("70");
+      expect(values).toContain("22");
+      expect(values).toContain("2000");
+    });
+  });
+});
+
+// ===========================================================================
+// FR-027b / FR-027c / SC-026 — over-ceiling offer-level message + discovery
+// route on the Settings preview. When an appointment/webinar account's market
+// cost-per-lead benchmark exceeds the funnel-math ceiling, the preview MUST
+// state (simple Arabic, offer-level tone like K7/W5) that the account pays
+// more per lead than its funnel supports, and MUST route to the discovery
+// call. Settings-surface message only — no engine rule, no verdict.
+// ===========================================================================
+describe("Settings page — FR-027b/c over-ceiling message (SC-026)", () => {
+  // Appointment fixture: 6% × 70% × 22% × $2000 ⇒ leadValue 18.48 ⇒
+  // cplCeiling 9.24. The benchmark is what varies per test.
+  function apptRow(overrides: Record<string, unknown> = {}) {
+    return {
+      archetype: "appointment",
+      liveComponent: false,
+      offerDescription: null,
+      ticketPrice: null,
+      arena: "broad",
+      bestInterest: null,
+      geoTiers: null,
+      inputCurrency: "USD",
+      aov: 0,
+      htoPrice: 2000,
+      htoConversionRate: 0,
+      frontEndRoas: 1,
+      dailyBudget: null,
+      marketCplBenchmark: null,
+      htoUnderperforming: false,
+      bookRate: 6,
+      showRate: 70,
+      closeRate: 22,
+      showUpRate: null,
+      ...overrides,
+    };
+  }
+  function mount(row: Record<string, unknown>) {
+    mocks.funnelGet.mockReturnValue({
+      data: { status: "found", settings: row, targets: {} },
+      isLoading: false,
+      isError: false,
+    });
+    mocks.accounts.mockReturnValue({ data: [{ id: 100, currency: "USD" }] });
+    mocks.useUtils.mockReturnValue({
+      funnel: { get: { invalidate: vi.fn() } },
+      dashboard: { get: { invalidate: vi.fn() } },
+    });
+    return render(<Settings />);
+  }
+
+  it("benchmark ABOVE the funnel-math ceiling → offer-level message + discovery-call route", async () => {
+    // $20 benchmark > $9.24 ceiling ⇒ paying more per lead than the funnel
+    // supports.
+    mount(apptRow({ marketCplBenchmark: 20 }));
+    const cta = await screen.findByTestId("over-ceiling-cta");
+    expect(cta).toBeInTheDocument();
+    // Simple-Arabic offer-level wording (the offer/funnel is the problem, not
+    // the ads — same conclusion as K7/W5).
+    expect(cta.textContent).toContain("المشكلة في العرض");
+    expect(cta.textContent).toContain("وليست في الإعلانات");
+    // FR-027c / SC-026 — a route to book the discovery call, using the shared
+    // DISCOVERY_CALL_URL constant and the same CTA label the funnel signal
+    // uses elsewhere.
+    const link = cta.querySelector("a[href]");
+    expect(link).not.toBeNull();
+    expect(link!.getAttribute("href")).toBe(DISCOVERY_CALL_URL);
+    expect(link!.getAttribute("target")).toBe("_blank");
+    expect(link!.textContent).toContain("احجز مكالمة تشخيصية مجانية");
+  });
+
+  it("benchmark BELOW the ceiling → no over-ceiling message (funnel supports the lead cost)", async () => {
+    mount(apptRow({ marketCplBenchmark: 5 }));
+    // Preview renders (rates valid), but the offer-problem card must NOT show.
+    await screen.findByText("أرقامك المستهدفة");
+    expect(screen.queryByTestId("over-ceiling-cta")).toBeNull();
+  });
+
+  it("no benchmark entered → no over-ceiling message", async () => {
+    mount(apptRow({ marketCplBenchmark: null }));
+    await screen.findByText("أرقامك المستهدفة");
+    expect(screen.queryByTestId("over-ceiling-cta")).toBeNull();
+  });
+
+  it("webinar: benchmark above the ceiling also triggers the message", async () => {
+    // Webinar: 25% × 5% × $2000 ⇒ leadValue 25 ⇒ cplCeiling 12.5.
+    // A $30 benchmark is above it.
+    mount(
+      apptRow({
+        archetype: "webinar",
+        bookRate: null,
+        showRate: null,
+        showUpRate: 25,
+        closeRate: 5,
+        marketCplBenchmark: 30,
+      })
+    );
+    const cta = await screen.findByTestId("over-ceiling-cta");
+    expect(cta.querySelector("a[href]")!.getAttribute("href")).toBe(
+      DISCOVERY_CALL_URL
+    );
   });
 });

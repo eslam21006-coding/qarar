@@ -1,0 +1,389 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`T007 — deriveTargets regression lock for free_lead + paid_lto > free_lead/paid_lto deriveTargets snapshot — free_lead · baseline source 1`] = `
+{
+  "capped": false,
+  "cplCeiling": 73.5,
+  "effectiveCPA": 43,
+  "fullBuyerValue": 148,
+  "leadValue": 105,
+  "maxCPA": 74,
+  "rawTargetCPA": 43,
+  "unitTarget": 2.1,
+  "unitTargetSource": "cpl_baseline",
+}
+`;
+
+exports[`T007 — deriveTargets regression lock for free_lead + paid_lto > free_lead/paid_lto deriveTargets snapshot — free_lead · benchmark source (no baseline) 1`] = `
+{
+  "capped": false,
+  "cplCeiling": 73.5,
+  "effectiveCPA": 43,
+  "fullBuyerValue": 148,
+  "leadValue": 105,
+  "maxCPA": 74,
+  "rawTargetCPA": 43,
+  "unitTarget": 4,
+  "unitTargetSource": "cpl_benchmark",
+}
+`;
+
+exports[`T007 — deriveTargets regression lock for free_lead + paid_lto > free_lead/paid_lto deriveTargets snapshot — free_lead · effectiveCPA fallback (neither) 1`] = `
+{
+  "capped": false,
+  "cplCeiling": 73.5,
+  "effectiveCPA": 43,
+  "fullBuyerValue": 148,
+  "leadValue": 105,
+  "maxCPA": 74,
+  "rawTargetCPA": 43,
+  "unitTarget": 43,
+  "unitTargetSource": "effective_cpa",
+}
+`;
+
+exports[`T007 — deriveTargets regression lock for free_lead + paid_lto > free_lead/paid_lto deriveTargets snapshot — paid_lto · default 1`] = `
+{
+  "capped": false,
+  "cplCeiling": null,
+  "effectiveCPA": 43,
+  "fullBuyerValue": 148,
+  "leadValue": null,
+  "maxCPA": 74,
+  "rawTargetCPA": 43,
+  "unitTarget": 43,
+  "unitTargetSource": "effective_cpa",
+}
+`;
+
+exports[`T007 — deriveTargets regression lock for free_lead + paid_lto > free_lead/paid_lto deriveTargets snapshot — paid_lto · roas 0.5 capped 1`] = `
+{
+  "capped": true,
+  "cplCeiling": null,
+  "effectiveCPA": 74,
+  "fullBuyerValue": 148,
+  "leadValue": null,
+  "maxCPA": 74,
+  "rawTargetCPA": 86,
+  "unitTarget": 74,
+  "unitTargetSource": "effective_cpa",
+}
+`;
+
+exports[`T007 — deriveTargets regression lock for free_lead + paid_lto > free_lead/paid_lto deriveTargets snapshot — paid_lto · roas 0.65 uncapped 1`] = `
+{
+  "capped": false,
+  "cplCeiling": null,
+  "effectiveCPA": 66.15384615384615,
+  "fullBuyerValue": 148,
+  "leadValue": null,
+  "maxCPA": 74,
+  "rawTargetCPA": 66.15384615384615,
+  "unitTarget": 66.15384615384615,
+  "unitTargetSource": "effective_cpa",
+}
+`;
+
+exports[`T008 — runEngine verdict/rule/reason/action regression lock > free_lead: every object verdict/rule/reason/action snapshot 1`] = `
+{
+  "label": "free_lead",
+  "rows": [
+    {
+      "action_ar": "الجملة الافتتاحية لم توقف أحدًا — المشكلة في المفهوم لا في الشكل. غيّر المفهوم كاملًا، لا تكتفِ بتغيير اللون أو الحجم. إذا احتجت إلى بناء مفهوم جديد من الصفر، احجز مكالمة: https://eslamsalah.com/team-discovery-call",
+      "id": "ad_k3",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: من كل 1000 شاهدوا الإعلان، أقل من 5 ضغطوا (0.40%) بعد 5,200 مشاهدة — الهوك لا يوقف أحدًا",
+      "rule": "K3",
+      "verdict": "kill",
+    },
+    {
+      "action_ar": "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام",
+      "id": "ad_k1b",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.60% (متوسط حسابك 1.70%)",
+      "rule": "S2",
+      "verdict": "continue",
+    },
+    {
+      "action_ar": "يوم أول قوي ثم انهيار — هذا إعلان برّاق استُنفدت شريحته. لا ترفع الميزانية محاولًا استعادة اليوم الأول، رفعها يكسر تعلّم الخوارزمية ويسرّع الانهيار. جهّز إعلانًا جديدًا بمفهوم مختلف كليًا.",
+      "id": "ad_flash",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: اليوم الأول كان ممتازًا ثم هبط الأداء 65% — نجاح لم يدُم",
+      "rule": "K4",
+      "verdict": "kill",
+    },
+    {
+      "action_ar": "انسخه لمجموعة جديدة وحده ليأخذ فرصته (مع الحفاظ على تفاعلاته)، ثم أوقِف الأصل بعد استقرار النسخة",
+      "id": "ad_rescue",
+      "level": "ad",
+      "reason_ar": "تمنحه ميتا 6.7% فقط من ميزانية المجموعة لكنه ممتاز في القليل الذي يصرفه — ناجح مخنوق",
+      "rule": "K5",
+      "verdict": "rescue",
+    },
+    {
+      "action_ar": "⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا",
+      "id": "ad_s1",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: الناس تضغط على الإعلان أكثر من المعتاد (2.40%) لكن الصفحة لا تقنعهم بالشراء (2.5% فقط) — الإعلان بريء",
+      "rule": "W3",
+      "verdict": "watch",
+    },
+    {
+      "action_ar": "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام",
+      "id": "ad_cb",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)",
+      "rule": "S2",
+      "verdict": "continue",
+    },
+    {
+      "action_ar": "لا تفعل شيئًا — انتظر 48 ساعة على الأقل قبل أي قرار",
+      "id": "ad_gate",
+      "level": "ad",
+      "reason_ar": "عمره يوم واحد — بياناته لم تكتمل بعد",
+      "rule": "GATE",
+      "verdict": "too_early",
+    },
+    {
+      "action_ar": "الجمهور ممتاز — لا تلمس المجموعة الإعلانية إطلاقًا. التصميم هو المنتهي. أضف نسخة بديلة جديدة في نفس المجموعة الإعلانية وانتظر 3 إلى 5 أيام: إذا عاد الأداء فالمشكلة كانت إنهاكًا، إذا بقي ضعيفًا فالمشكلة هيكلية.",
+      "id": "ad_fatigue",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: الجمهور بدأ يملّ التصميم — ضغط الناس على الإعلان نزل 37% (من 2.30% إلى 1.45%) بينما سعر الظهور ثابت",
+      "rule": "F1",
+      "verdict": "watch",
+    },
+    {
+      "action_ar": "راقبه يومين أو ثلاثة بدون أي تعديل",
+      "id": "ad_s4",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: تكلفة العميل $48 أعلى من هدفك ($39) بقليل — ليست كارثة",
+      "rule": "W1",
+      "verdict": "watch",
+    },
+    {
+      "action_ar": "⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا",
+      "id": "ad_w3",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: الناس تضغط على الإعلان أكثر من المعتاد (2.60%) لكن الصفحة لا تقنعهم بالشراء (0.4% فقط) — الإعلان بريء",
+      "rule": "W3",
+      "verdict": "watch",
+    },
+    {
+      "action_ar": "أوقِف هذه المجموعة",
+      "id": "as_k1",
+      "level": "adset",
+      "reason_ar": "في آخر 3 أيام: صرف $95 (ضعف هدفك $39) بدون أي نتيجة — لا يبيع أصلًا",
+      "rule": "K1",
+      "verdict": "kill",
+    },
+    {
+      "action_ar": "⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا",
+      "id": "as_good",
+      "level": "adset",
+      "reason_ar": "في آخر 3 أيام: الناس تضغط على الإعلان أكثر من المعتاد (1.90%) لكن الصفحة لا تقنعهم بالشراء (2.1% فقط) — الإعلان بريء",
+      "rule": "W3",
+      "verdict": "watch",
+    },
+    {
+      "action_ar": "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى",
+      "id": "as_cb",
+      "level": "adset",
+      "reason_ar": "اليوم: صرف $110 (أكثر من ضعفين ونصف هدفك $39) بدون أي نتيجة",
+      "rule": "CB2",
+      "verdict": "kill",
+    },
+    {
+      "action_ar": "لا تفعل شيئًا — انتظر 48 ساعة على الأقل قبل أي قرار",
+      "id": "as_gate",
+      "level": "adset",
+      "reason_ar": "عمره يوم واحد — بياناته لم تكتمل بعد",
+      "rule": "GATE",
+      "verdict": "too_early",
+    },
+    {
+      "action_ar": "راقبه يومين أو ثلاثة بدون أي تعديل",
+      "id": "as_w1",
+      "level": "adset",
+      "reason_ar": "في آخر 3 أيام: تكلفة العميل $53 أعلى من هدفك ($39) بقليل — ليست كارثة",
+      "rule": "W1",
+      "verdict": "watch",
+    },
+    {
+      "action_ar": "⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا",
+      "id": "as_w3",
+      "level": "adset",
+      "reason_ar": "في آخر 3 أيام: الناس تضغط على الإعلان أكثر من المعتاد (2.60%) لكن الصفحة لا تقنعهم بالشراء (0.4% فقط) — الإعلان بريء",
+      "rule": "W3",
+      "verdict": "watch",
+    },
+    {
+      "action_ar": "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك",
+      "id": "cmp_test",
+      "level": "campaign",
+      "reason_ar": "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 2.6x عند حساب قيمة العميل الكاملة ($148) — مع 2 إعلان/مجموعة تحتاج إيقافًا بالداخل",
+      "rule": "S2",
+      "verdict": "continue",
+    },
+    {
+      "action_ar": "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة",
+      "id": "cmp_scale",
+      "level": "campaign",
+      "reason_ar": "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)",
+      "rule": "S2",
+      "verdict": "continue",
+    },
+  ],
+}
+`;
+
+exports[`T008 — runEngine verdict/rule/reason/action regression lock > paid_lto: every object verdict/rule/reason/action snapshot 1`] = `
+{
+  "label": "paid_lto",
+  "rows": [
+    {
+      "action_ar": "الجملة الافتتاحية لم توقف أحدًا — المشكلة في المفهوم لا في الشكل. غيّر المفهوم كاملًا، لا تكتفِ بتغيير اللون أو الحجم. إذا احتجت إلى بناء مفهوم جديد من الصفر، احجز مكالمة: https://eslamsalah.com/team-discovery-call",
+      "id": "ad_k3",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: من كل 1000 شاهدوا الإعلان، أقل من 5 ضغطوا (0.40%) بعد 5,200 مشاهدة — الهوك لا يوقف أحدًا",
+      "rule": "K3",
+      "verdict": "kill",
+    },
+    {
+      "action_ar": "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام",
+      "id": "ad_k1b",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.60% (متوسط حسابك 1.70%)",
+      "rule": "S2",
+      "verdict": "continue",
+    },
+    {
+      "action_ar": "يوم أول قوي ثم انهيار — هذا إعلان برّاق استُنفدت شريحته. لا ترفع الميزانية محاولًا استعادة اليوم الأول، رفعها يكسر تعلّم الخوارزمية ويسرّع الانهيار. جهّز إعلانًا جديدًا بمفهوم مختلف كليًا.",
+      "id": "ad_flash",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: اليوم الأول كان ممتازًا ثم هبط الأداء 65% — نجاح لم يدُم",
+      "rule": "K4",
+      "verdict": "kill",
+    },
+    {
+      "action_ar": "انسخه لمجموعة جديدة وحده ليأخذ فرصته (مع الحفاظ على تفاعلاته)، ثم أوقِف الأصل بعد استقرار النسخة",
+      "id": "ad_rescue",
+      "level": "ad",
+      "reason_ar": "تمنحه ميتا 6.7% فقط من ميزانية المجموعة لكنه ممتاز في القليل الذي يصرفه — ناجح مخنوق",
+      "rule": "K5",
+      "verdict": "rescue",
+    },
+    {
+      "action_ar": "جاهز للتوسيع — انسخه لمرحلة أعلى مع الحفاظ على تفاعلاته (واترك الأصل يعمل)",
+      "id": "ad_s1",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: حقق هدفك (تكلفة $25) ثلاثة أيام متتالية والناس تتفاعل معه أكثر من المعتاد (2.40%)",
+      "rule": "S1",
+      "verdict": "continue",
+    },
+    {
+      "action_ar": "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام",
+      "id": "ad_cb",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)",
+      "rule": "S2",
+      "verdict": "continue",
+    },
+    {
+      "action_ar": "لا تفعل شيئًا — انتظر 48 ساعة على الأقل قبل أي قرار",
+      "id": "ad_gate",
+      "level": "ad",
+      "reason_ar": "عمره يوم واحد — بياناته لم تكتمل بعد",
+      "rule": "GATE",
+      "verdict": "too_early",
+    },
+    {
+      "action_ar": "الجمهور ممتاز — لا تلمس المجموعة الإعلانية إطلاقًا. التصميم هو المنتهي. أضف نسخة بديلة جديدة في نفس المجموعة الإعلانية وانتظر 3 إلى 5 أيام: إذا عاد الأداء فالمشكلة كانت إنهاكًا، إذا بقي ضعيفًا فالمشكلة هيكلية.",
+      "id": "ad_fatigue",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: الجمهور بدأ يملّ التصميم — ضغط الناس على الإعلان نزل 37% (من 2.30% إلى 1.45%) بينما سعر الظهور ثابت",
+      "rule": "F1",
+      "verdict": "watch",
+    },
+    {
+      "action_ar": "راقبه يومين أو ثلاثة بدون أي تعديل",
+      "id": "ad_s4",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: تكلفة العميل $48 أعلى من هدفك ($43) بقليل — ليست كارثة",
+      "rule": "W1",
+      "verdict": "watch",
+    },
+    {
+      "action_ar": "⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا",
+      "id": "ad_w3",
+      "level": "ad",
+      "reason_ar": "في آخر 3 أيام: الناس تضغط على الإعلان أكثر من المعتاد (2.60%) لكن الصفحة لا تقنعهم بالشراء (0.4% فقط) — الإعلان بريء",
+      "rule": "W3",
+      "verdict": "watch",
+    },
+    {
+      "action_ar": "أوقِف هذه المجموعة",
+      "id": "as_k1",
+      "level": "adset",
+      "reason_ar": "في آخر 3 أيام: صرف $95 (ضعف هدفك $43) بدون أي نتيجة — لا يبيع أصلًا",
+      "rule": "K1",
+      "verdict": "kill",
+    },
+    {
+      "action_ar": "واصل بدون أي تعديل — أي تغيير الآن يعيد تعلّم فيسبوك من الصفر؛ وسّع بعد خروجه من مرحلة التعلّم",
+      "id": "as_good",
+      "level": "adset",
+      "reason_ar": "في آخر 3 أيام: تكلفة العميل $36 أقل من هدفك، لكن فيسبوك ما زال يتعلّم على هذه المجموعة",
+      "rule": "S2",
+      "verdict": "continue",
+    },
+    {
+      "action_ar": "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى",
+      "id": "as_cb",
+      "level": "adset",
+      "reason_ar": "اليوم: صرف $110 (أكثر من ضعفين ونصف هدفك $43) بدون أي نتيجة",
+      "rule": "CB2",
+      "verdict": "kill",
+    },
+    {
+      "action_ar": "لا تفعل شيئًا — انتظر 48 ساعة على الأقل قبل أي قرار",
+      "id": "as_gate",
+      "level": "adset",
+      "reason_ar": "عمره يوم واحد — بياناته لم تكتمل بعد",
+      "rule": "GATE",
+      "verdict": "too_early",
+    },
+    {
+      "action_ar": "راقبه يومين أو ثلاثة بدون أي تعديل",
+      "id": "as_w1",
+      "level": "adset",
+      "reason_ar": "في آخر 3 أيام: تكلفة العميل $53 أعلى من هدفك ($43) بقليل — ليست كارثة",
+      "rule": "W1",
+      "verdict": "watch",
+    },
+    {
+      "action_ar": "⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا",
+      "id": "as_w3",
+      "level": "adset",
+      "reason_ar": "في آخر 3 أيام: الناس تضغط على الإعلان أكثر من المعتاد (2.60%) لكن الصفحة لا تقنعهم بالشراء (0.4% فقط) — الإعلان بريء",
+      "rule": "W3",
+      "verdict": "watch",
+    },
+    {
+      "action_ar": "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك",
+      "id": "cmp_test",
+      "level": "campaign",
+      "reason_ar": "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 2.6x عند حساب قيمة العميل الكاملة ($148) — مع 2 إعلان/مجموعة تحتاج إيقافًا بالداخل",
+      "rule": "S2",
+      "verdict": "continue",
+    },
+    {
+      "action_ar": "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة",
+      "id": "cmp_scale",
+      "level": "campaign",
+      "reason_ar": "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)",
+      "rule": "S2",
+      "verdict": "continue",
+    },
+  ],
+}
+`;

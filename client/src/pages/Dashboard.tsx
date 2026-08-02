@@ -250,9 +250,25 @@ export default function Dashboard() {
           />
           <Stat
             label="متوسط تكلفة العميل (30 يوم)"
-            value={money(summary.baselines.cpaMedian30 ?? undefined, currencySymbol)}
+            // SC-021 — money()'s silent default for null is "∞".
+            // Guard so a missing 30-day baseline renders "—",
+            // not the misleading "you may pay anything" sentinel.
+            value={
+              summary.baselines.cpaMedian30 == null
+                ? "—"
+                : money(summary.baselines.cpaMedian30, currencySymbol)
+            }
           />
-          <Stat label="هدف تكلفة العميل" value={money(targets.unitTarget, currencySymbol)} cls="text-primary" />
+          <Stat
+            label="هدف تكلفة العميل"
+            // FR-019b — a null target means the user still has to enter funnel
+            // numbers; render the distinct "not yet determined" phrase, NOT a
+            // plain "—". The dash is reserved for "still measuring" states (the
+            // 30-day-median tile above). money()'s null default "∞" must never
+            // reach this tile (FR-019c / SC-021).
+            value={targets.unitTarget === null ? "لم يتحدد بعد" : money(targets.unitTarget, currencySymbol)}
+            cls="text-primary"
+          />
         </div>
       </div>
 
@@ -273,6 +289,8 @@ export default function Dashboard() {
           <DecisionTable
             rows={rows}
             series={series}
+            // FR-019d — propagate the absent target as null. The table and
+            // its cells explicitly guard against null (no fabricated zero).
             unitTarget={targets.unitTarget}
             actId={isDemo ? null : (accountExternalId ?? null)}
             accountId={accountId}

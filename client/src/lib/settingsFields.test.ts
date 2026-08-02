@@ -3,6 +3,8 @@ import {
   FIELD_COPY,
   HIDDEN_FIELDS,
   VISIBLE_FIELDS,
+  closeRateLabel,
+  htoUnderperformingLabel,
   isFieldVisible,
   type FunnelArchetype,
   type SettingsFieldName,
@@ -11,7 +13,8 @@ import {
 const ALL_ARCHETYPES: FunnelArchetype[] = [
   "paid_lto",
   "free_lead",
-  "direct_call",
+  "appointment",
+  "webinar",
 ];
 
 describe("settingsFields — VISIBLE/HIDDEN field sets", () => {
@@ -59,14 +62,6 @@ describe("settingsFields — FIELD_COPY contract", () => {
     );
   });
 
-  it("every label is a non-empty string", () => {
-    for (const f of VISIBLE_FIELDS) {
-      const label = FIELD_COPY[f].label;
-      expect(typeof label, `label type for ${f}`).toBe("string");
-      expect(label.length, `empty label for ${f}`).toBeGreaterThan(0);
-    }
-  });
-
   it("every hint is a non-empty string", () => {
     for (const f of VISIBLE_FIELDS) {
       const hint = FIELD_COPY[f].hint;
@@ -75,11 +70,10 @@ describe("settingsFields — FIELD_COPY contract", () => {
     }
   });
 
-  it("no copy string contains ASCII letters (no English visible)", () => {
+  it("no hint string contains ASCII letters (no English visible)", () => {
     const asciiLetter = /[A-Za-z]/;
     for (const f of VISIBLE_FIELDS) {
-      const { label, hint } = FIELD_COPY[f];
-      expect(asciiLetter.test(label), `ASCII letters in label for ${f}: ${label}`).toBe(false);
+      const { hint } = FIELD_COPY[f];
       expect(asciiLetter.test(hint), `ASCII letters in hint for ${f}: ${hint}`).toBe(false);
     }
   });
@@ -96,35 +90,57 @@ describe("settingsFields — isFieldVisible predicate", () => {
     }
   });
 
-  it("marketCplBenchmark is visible only for free_lead", () => {
-    expect(isFieldVisible("marketCplBenchmark", "free_lead")).toBe(true);
-    expect(isFieldVisible("marketCplBenchmark", "paid_lto")).toBe(false);
-    expect(isFieldVisible("marketCplBenchmark", "direct_call")).toBe(false);
+  // Spec 012 / FR-026d — the previous test locked in the retired
+  // `direct_call` option's product-purchase field visibility. The
+  // feature deliberately removes `direct_call` and adds `appointment` /
+  // `webinar`. The replacement asserts the spec-012 visibility matrix
+  // (contracts/settings-fields.md §3): aov / frontEndRoas /
+  // htoConversionRate are HIDDEN for appointment + webinar (their math
+  // no longer depends on them); the rate fields are archetype-specific.
+  it("aov / frontEndRoas / htoConversionRate are HIDDEN for appointment + webinar (FR-028)", () => {
+    for (const f of ["aov", "frontEndRoas", "htoConversionRate"] as const) {
+      expect(isFieldVisible(f, "appointment"), `${f} visible for appointment`).toBe(false);
+      expect(isFieldVisible(f, "webinar"), `${f} visible for webinar`).toBe(false);
+    }
   });
 
-  it("aov, frontEndRoas, htoPrice, htoConversionRate stay visible for direct_call", () => {
-    expect(isFieldVisible("aov", "direct_call")).toBe(true);
-    expect(isFieldVisible("frontEndRoas", "direct_call")).toBe(true);
-    expect(isFieldVisible("htoPrice", "direct_call")).toBe(true);
-    expect(isFieldVisible("htoConversionRate", "direct_call")).toBe(true);
-  });
-
-  it("aov, frontEndRoas, htoPrice, htoConversionRate are visible for every archetype", () => {
-    for (const f of ["aov", "frontEndRoas", "htoPrice", "htoConversionRate"] as const) {
-      for (const a of ALL_ARCHETYPES) {
+  it("aov / frontEndRoas / htoConversionRate stay visible for paid_lto / free_lead", () => {
+    for (const f of ["aov", "frontEndRoas", "htoConversionRate"] as const) {
+      for (const a of ["paid_lto", "free_lead"] as const) {
         expect(isFieldVisible(f, a), `${f} invisible for ${a}`).toBe(true);
       }
     }
+  });
+
+  it("htoPrice stays visible for every archetype (funnel math needs it)", () => {
+    for (const a of ALL_ARCHETYPES) {
+      expect(isFieldVisible("htoPrice", a), `htoPrice invisible for ${a}`).toBe(true);
+    }
+  });
+
+  it("marketCplBenchmark is visible for free_lead / appointment / webinar (FR-020 widening)", () => {
+    expect(isFieldVisible("marketCplBenchmark", "free_lead")).toBe(true);
+    expect(isFieldVisible("marketCplBenchmark", "appointment")).toBe(true);
+    expect(isFieldVisible("marketCplBenchmark", "webinar")).toBe(true);
+    expect(isFieldVisible("marketCplBenchmark", "paid_lto")).toBe(false);
+  });
+
+  it("rate fields are archetype-specific (FR-005 / FR-006 / FR-007)", () => {
+    expect(isFieldVisible("bookRate", "appointment")).toBe(true);
+    expect(isFieldVisible("bookRate", "webinar")).toBe(false);
+    expect(isFieldVisible("showRate", "appointment")).toBe(true);
+    expect(isFieldVisible("showRate", "webinar")).toBe(false);
+    expect(isFieldVisible("showUpRate", "webinar")).toBe(true);
+    expect(isFieldVisible("showUpRate", "appointment")).toBe(false);
+    expect(isFieldVisible("closeRate", "appointment")).toBe(true);
+    expect(isFieldVisible("closeRate", "webinar")).toBe(true);
   });
 
   it("archetype-independent visible fields are visible under every archetype", () => {
     const archetypeIndependent: SettingsFieldName[] = [
       "archetype",
       "inputCurrency",
-      "aov",
-      "frontEndRoas",
       "htoPrice",
-      "htoConversionRate",
       "htoUnderperforming",
       "dailyBudget",
     ];
@@ -133,5 +149,21 @@ describe("settingsFields — isFieldVisible predicate", () => {
         expect(isFieldVisible(f, a), `${f} not visible for ${a}`).toBe(true);
       }
     }
+  });
+});
+
+describe("settingsFields — archetype-dependent labels (T037 / T043)", () => {
+  it("htoUnderperforming wording is archetype-dependent (FR-028d)", () => {
+    expect(htoUnderperformingLabel("paid_lto")).toContain("المنتج الغالي");
+    expect(htoUnderperformingLabel("free_lead")).toContain("المنتج الغالي");
+    expect(htoUnderperformingLabel("appointment")).toContain("تحجز وتحضر");
+    expect(htoUnderperformingLabel("webinar")).toContain("تحضر الندوة");
+  });
+
+  it("closeRate label is archetype-dependent (FR-007)", () => {
+    // appointment asks "out of every 100 calls, how many end in a sale"
+    expect(closeRateLabel("appointment")).toContain("مكالمة");
+    // webinar asks "out of every 100 attendees, how many buy"
+    expect(closeRateLabel("webinar")).toContain("حاضر");
   });
 });

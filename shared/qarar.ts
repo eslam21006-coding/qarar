@@ -134,7 +134,28 @@ export interface WindowMetrics {
   ctrLink: number;
   cpm: number;
   cpc: number;
+  /**
+   * The combined conversion count used by `paid_lto` and `free_lead`
+   * (FR-032). For `appointment` / `webinar` the engine reads
+   * `leadConversions` instead — this field is unchanged on the wire
+   * but those archetypes do not consult it (SC-025).
+   */
   conversions: number;
+  /**
+   * Lead-type conversion count (spec 012, FR-030).
+   * **undefined means the snapshot was captured before the lead/purchase
+   * separation was deployed** — the unit is unknown (could be leads, could
+   * be purchases, cannot tell) and the engine MUST treat the row as
+   * "not yet measurable" rather than coalescing to `0` (FR-035,
+   * contracts/conversion-measurement.md §5). `0` is a real captured
+   * zero and is meaningfully different from `undefined`.
+   */
+  leadConversions?: number;
+  /**
+   * Purchase-type conversion count (spec 012, FR-030). Same
+   * undefined-vs-zero semantics as `leadConversions`.
+   */
+  purchaseConversions?: number;
   /** value of conversions reported by Meta (used for ROAS = value / spend) */
   conversionValue: number;
   /** landing page views (from actions) */
@@ -184,8 +205,20 @@ export interface Baselines {
   ctrLinkMedian90: number | null;
   /** 14-day average CPM */
   cpmAvg14: number | null;
-  /** 30-day median CPA/CPL */
+  /** 30-day median CPA/CPL (existing, unchanged). Read by `paid_lto` and
+   *  `free_lead` (FR-032); NOT read by `appointment` / `webinar` (FR-033). */
   cpaMedian30: number | null;
+  /**
+   * 30-day median cost-per-LEAD (spec 012, FR-033, contracts/conversion-
+   * measurement.md §6). Derived from the SAME `last_30d` Graph response
+   * that produces `cpaMedian30` — no new Meta call (research R4).
+   * Read by `appointment` / `webinar` as the tier-1 target source. Kept
+   * separate from `cpaMedian30` because the two medians may use different
+   * action types for the same account — substituting one for the other
+   * re-introduces the unit mismatch this field exists to resolve.
+   * `null` when no day has a positive lead count.
+   */
+  cplMedian30: number | null;
   /** current account-level CPM (3d) for market-level comparison */
   cpmNow: number | null;
 }
@@ -213,7 +246,7 @@ export interface AccountSnapshotPayload {
 // ---------- Funnel settings & derived targets ----------
 
 export interface FunnelInputs {
-  archetype: "paid_lto" | "free_lead" | "direct_call";
+  archetype: "paid_lto" | "free_lead" | "appointment" | "webinar";
   liveComponent: boolean;
   offerDescription?: string | null;
   ticketPrice?: number | null;
@@ -236,21 +269,69 @@ export interface FunnelInputs {
    * inside convertCurrency.
    */
   inputCurrency?: string | null;
+  /**
+   * Stage-rate inputs for `appointment` / `webinar` archetypes (spec 012).
+   * Optional because the existing `paid_lto` and `free_lead` archetypes do
+   * not store them, and every existing fixture omits them ⇒ undefined ⇒
+   * deriveTargets treats them as absent. Each value is `> 0` and `≤ 100`
+   * when present; `null` means "the user has not answered this stage".
+   * `closeRate` is shared between the two new archetypes (FR-007).
+   */
+  bookRate?: number | null;
+  showRate?: number | null;
+  showUpRate?: number | null;
+  closeRate?: number | null;
 }
 
 export interface DerivedTargets {
   rawTargetCPA: number | null;
-  fullBuyerValue: number;
+  /**
+   * AOV + HTO × rate for product-purchase archetypes (FR-015c).
+   * For `appointment` / `webinar` it equals `leadValue` (FR-015a) so the
+   * profitable-campaign and above-target-but-profitable rules fire on the
+   * lead value, not a hidden figure.
+   * `null` whenever the underlying inputs are absent (FR-015b) — the two
+   * rules that read it MUST skip rather than evaluate against zero.
+   */
+  fullBuyerValue: number | null;
   maxCPA: number;
   effectiveCPA: number;
   capped: boolean;
-  /** lead value & economic ceiling (free_lead) */
+  /** lead value & economic ceiling (free_lead, appointment, webinar) */
   leadValue: number | null;
   cplCeiling: number | null;
-  /** the unit target the engine judges with (CPA or CPL) */
-  unitTarget: number;
-  unitTargetSource: "effective_cpa" | "cpl_baseline" | "cpl_benchmark";
+  /**
+   * The unit target the engine judges with (CPA or CPL).
+   * `null` when no source is available (FR-019) — the gate stage returns
+   * `too_early GATE` before any rule below reads it. Every consumer below
+   * the gate receives the narrowed `JudgeableTargets` (compile-time
+   * enforcement; plan §Compile-time enforcement).
+   */
+  unitTarget: number | null;
+  unitTargetSource:
+    | "effective_cpa"
+    | "cpl_baseline"
+    | "cpl_benchmark"
+    | "cpl_funnel_math"
+    | null;
 }
+
+/**
+ * Narrowed type produced only by the gate stage: identical to
+ * `DerivedTargets` but with `unitTarget: number` (non-null).
+ *
+ * The gate converts `DerivedTargets` → `JudgeableTargets` exactly once,
+ * and every rule below the gate takes this type. Any future rule that
+ * tries to read a target without going through the gate fails to compile.
+ *
+ * Widening this type (i.e. making `unitTarget` nullable again) defeats
+ * the compile-time guarantee introduced by spec 012. Per the rule:
+ * "produced only by the gate stage — widening it defeats the compile-time
+ *  guarantee" (plan §Compile-time enforcement).
+ */
+export type JudgeableTargets = Omit<DerivedTargets, "unitTarget"> & {
+  unitTarget: number;
+};
 
 // ---------- Engine output ----------
 
@@ -357,6 +438,16 @@ export function median(values: number[]): number | null {
 /** Attribution model change date (March 2026) */
 export const ATTRIBUTION_CHANGE_DATE = "2026-03-01";
 
+/**
+ * Discovery-call destination (Principle VII). Single source of truth shared by
+ * every "the offer/funnel is the problem, book a call" outcome: the engine's
+ * K7 / W5 / diagnosis CTAs (`server/engine.ts`), the access-denied upgrade
+ * screen (`client/src/pages/Upgrade.tsx`), and the Settings over-ceiling
+ * message (FR-027c). Import this rather than re-hardcoding the URL so the four
+ * surfaces can never drift.
+ */
+export const DISCOVERY_CALL_URL = "https://eslamsalah.com/team-discovery-call";
+
 // ---------- Currency conversion (Batch 2 / ISSUE-009) ----------
 // Frozen, shared table. No external/network rate source (constitution).
 // Pivots through USD: amount / rate[from] * rate[to].
@@ -461,8 +552,12 @@ export function deriveTargets(
 
   const roas = f.frontEndRoas > 0 ? f.frontEndRoas : 1;
   const rawTargetCPA = aov > 0 ? aov / roas : null;
-  const fullBuyerValue = aov + htoPrice * (f.htoConversionRate / 100);
-  const maxCPA = fullBuyerValue / 2;
+  // Spec 012 / FR-015a — for appointment / webinar `fullBuyerValue`
+  // equals `leadValue` (one conversion = one lead, the conversion
+  // event for these funnels). `null` when leadValue is null (FR-015b).
+  // For free_lead / paid_lto the existing formula is preserved (FR-015c).
+  let fullBuyerValue: number | null = aov + htoPrice * (f.htoConversionRate / 100);
+  const maxCPA = fullBuyerValue !== null ? fullBuyerValue / 2 : 0;
   const effectiveCPA =
     rawTargetCPA !== null ? Math.min(rawTargetCPA, maxCPA) : maxCPA;
   const capped = rawTargetCPA !== null && rawTargetCPA > maxCPA;
@@ -470,7 +565,7 @@ export function deriveTargets(
   // Free-lead funnel: two anchors (2.3)
   let leadValue: number | null = null;
   let cplCeiling: number | null = null;
-  let unitTarget = effectiveCPA;
+  let unitTarget: number | null = effectiveCPA;
   let unitTargetSource: DerivedTargets["unitTargetSource"] = "effective_cpa";
 
   if (f.archetype === "free_lead") {
@@ -487,6 +582,96 @@ export function deriveTargets(
       unitTargetSource = "cpl_benchmark";
     } else {
       unitTarget = effectiveCPA;
+    }
+  } else if (f.archetype === "appointment") {
+    // Spec 012 / T034 — appointment funnel math:
+    //   p        = (bookRate/100) × (showRate/100) × (closeRate/100)
+    //   leadValue = p × htoPrice                  (already in account currency)
+    //   cplCeiling = leadValue / 2                (FR-026e; also the K7 ceiling
+    //                                              once Phase 7 widens K7 to
+    //                                              the new archetypes)
+    // Tier-1 source (FR-033): `baselines.cplMedian30` — the LEAD-based
+    // 30-day median, NOT `cpaMedian30`. The two are different fields;
+    // reading the wrong one re-introduces the unit mismatch.
+    const bookRate = f.bookRate;
+    const showRate = f.showRate;
+    const closeRate = f.closeRate;
+    if (
+      bookRate != null &&
+      bookRate > 0 &&
+      showRate != null &&
+      showRate > 0 &&
+      closeRate != null &&
+      closeRate > 0 &&
+      htoPrice > 0
+    ) {
+      const p = (bookRate / 100) * (showRate / 100) * (closeRate / 100);
+      leadValue = p * htoPrice;
+      cplCeiling = 0.5 * leadValue;
+    }
+    // T035 / FR-015a — fullBuyerValue = leadValue for appointment.
+    // The conversion event is the lead, so one conversion is worth
+    // exactly one lead. Null when the chain is broken (FR-015b) —
+    // the engine's W6 / S2 skip entirely on null (T036), never
+    // evaluating against a fabricated zero.
+    fullBuyerValue = leadValue;
+
+    // FR-018 — `effectiveCPA` (the product-purchase path) is NEVER
+    // reachable for appointment. The priority chain selects ONLY from
+    // cpl_baseline, cpl_funnel_math, cpl_benchmark, or null.
+    if (baselines?.cplMedian30 && baselines.cplMedian30 > 0) {
+      unitTarget = baselines.cplMedian30;
+      unitTargetSource = "cpl_baseline";
+    } else if (cplCeiling !== null) {
+      unitTarget = cplCeiling;
+      unitTargetSource = "cpl_funnel_math";
+    } else if (marketCplBenchmark != null && marketCplBenchmark > 0) {
+      unitTarget = marketCplBenchmark;
+      unitTargetSource = "cpl_benchmark";
+    } else {
+      // No source available — leave null. The engine's no-target path
+      // (Phase 6 T058) renders an explicit not-enough-information state;
+      // for Phase 3 the row-level evaluator falls through to too_early.
+      unitTarget = null;
+      unitTargetSource = null;
+    }
+  } else if (f.archetype === "webinar") {
+    // Spec 012 / T046 — webinar funnel math (FR-006 / contracts/
+    // derive-targets.md §3). Two stage rates instead of three:
+    //   p        = (showUpRate/100) × (closeRate/100)
+    //   leadValue = p × htoPrice
+    //   cplCeiling = leadValue / 2
+    // Same priority chain as appointment (FR-016): cplMedian30 → funnel
+    // math → marketCplBenchmark → null. `fullBuyerValue` is the lead
+    // value (FR-015a) so the W6 / S2 ROAS rules fire from the same
+    // anchor the unit target uses (FR-026e).
+    const showUpRate = f.showUpRate;
+    const closeRate = f.closeRate;
+    if (
+      showUpRate != null &&
+      showUpRate > 0 &&
+      closeRate != null &&
+      closeRate > 0 &&
+      htoPrice > 0
+    ) {
+      const p = (showUpRate / 100) * (closeRate / 100);
+      leadValue = p * htoPrice;
+      cplCeiling = 0.5 * leadValue;
+    }
+    fullBuyerValue = leadValue;
+
+    if (baselines?.cplMedian30 && baselines.cplMedian30 > 0) {
+      unitTarget = baselines.cplMedian30;
+      unitTargetSource = "cpl_baseline";
+    } else if (cplCeiling !== null) {
+      unitTarget = cplCeiling;
+      unitTargetSource = "cpl_funnel_math";
+    } else if (marketCplBenchmark != null && marketCplBenchmark > 0) {
+      unitTarget = marketCplBenchmark;
+      unitTargetSource = "cpl_benchmark";
+    } else {
+      unitTarget = null;
+      unitTargetSource = null;
     }
   }
 

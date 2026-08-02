@@ -124,7 +124,7 @@ async function getFunnelForRun(
  * a private local copy because the cron is on its own (offline) path and
  * should not depend on tRPC-internal helpers.
  */
-function funnelSettingsToInputs(
+export function funnelSettingsToInputs(
   row: NonNullable<Awaited<ReturnType<typeof db.getFunnel>>>
 ): FunnelInputs {
   return {
@@ -145,6 +145,13 @@ function funnelSettingsToInputs(
     // Batch 2 / ISSUE-009 — carrier so the daily cron's runEngine()
     // converts monetary inputs identically to the live dashboard path.
     inputCurrency: row.inputCurrency,
+    // Spec 012 — stage rates for the appointment / webinar archetypes.
+    // Optional on the row (DB columns are nullable); mapped to `null` when
+    // absent so `deriveTargets` treats the rate as "not answered".
+    bookRate: (row as { bookRate?: number | null }).bookRate ?? null,
+    showRate: (row as { showRate?: number | null }).showRate ?? null,
+    showUpRate: (row as { showUpRate?: number | null }).showUpRate ?? null,
+    closeRate: (row as { closeRate?: number | null }).closeRate ?? null,
   };
 }
 
