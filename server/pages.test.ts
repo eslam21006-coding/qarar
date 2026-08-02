@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import {
   facebookPages,
@@ -111,26 +111,60 @@ afterAll(async () => {
 // heuristic — Meta tokens look like long alphanumeric strings, so we
 // assert that no stored value matches a regex for the typical shape.
 describe.skipIf(!hasDatabase)("Spec 013 / T013 — token-never-stored (FR-023 / SC-012)", () => {
-  it("syncPages never persists a per-Page access_token, even if the caller passes one", async () => {
+  it("fetchUserPages drops every per-Page access_token; syncPages never persists one", async () => {
     const d = await db.getDb();
     if (!d) return;
 
-    const fakeTokenA =
+    const fakeToken =
       "EAABwzLixnjYBAFHsampleTOKENshapeShouldNeverAppear1234567890";
-    const fakeTokenB =
-      "EAABwzLixnjYBAFHsampleTOKENshapeShouldNeverAppear0987654321";
 
-    // Hand syncPages input that includes an `access_token` field per
-    // entry — mimicking the legacy `/me/accounts` shape (which returns
-    // an `access_token` per page). The schema must NOT retain it.
-    await db.syncPages(USER_A_ID, 0, [
-      {
-        pageId: "p-token-a",
-        name: "Token Page A",
-        pictureUrl: null,
-        followersCount: 50,
-      } as any,
-    ]);
+    const realFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: "p-token-1",
+              name: "Token Page",
+              followers_count: "50",
+              picture: { data: { url: "https://example.com/x.jpg" } },
+              access_token: fakeToken,
+            },
+            {
+              id: "p-token-2",
+              name: "Token Page Two",
+              followers_count: null,
+              picture: null,
+              access_token: fakeToken,
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    let pages;
+    try {
+      pages = await fetchUserPages("token");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    // The returned shape MUST NOT include access_token — the production
+    // fetcher's mapping only projects pageId, name, pictureUrl,
+    // followersCount (FR-023: the type system encodes the guarantee).
+    expect(pages.length).toBe(2);
+    for (const p of pages) {
+      expect(Object.keys(p).sort()).toEqual(
+        ["followersCount", "name", "pageId", "pictureUrl"].sort()
+      );
+      expect((p as any).access_token).toBeUndefined();
+    }
+
+    // And the storage layer must not surface a token either — feed
+    // the returned value (which deliberately omitted the field) and
+    // assert no stored row matches a token shape.
+    await db.syncPages(USER_A_ID, 0, pages);
 
     const rows = await d
       .select()
@@ -138,63 +172,44 @@ describe.skipIf(!hasDatabase)("Spec 013 / T013 — token-never-stored (FR-023 / 
       .where(eq(facebookPages.userId, USER_A_ID));
     expect(rows.length).toBeGreaterThan(0);
 
-    // No stored column should hold anything resembling a Meta user access
-    // token. Tokens in Meta's production format begin with "EAA" and
-    // are 100+ chars of base64-ish characters.
     for (const r of rows) {
       for (const v of Object.values(r)) {
         if (typeof v === "string") {
           expect(v).not.toMatch(/^EAA[A-Za-z0-9_-]{40,}$/);
-          expect(v).not.toContain(fakeTokenA);
-          expect(v).not.toContain(fakeTokenB);
+          expect(v).not.toContain(fakeToken);
         }
       }
     }
   });
 
-  it("fetchUserPages result does not contain an access_token field", async () => {
-    // Pure-shape check: the fetcher's return type is the only thing the
-    // router sees, and the type deliberately has no token. Calling
-    // fetchUserPages with a fake token against a stubbed fetch confirms
-    // that the response shape itself drops the field — no caller has
-    // to remember to omit it.
-    // We construct a result by walking the production mapping path: the
-    // function maps `picture.data.url` to `pictureUrl` and drops the
-    // `access_token`. Here we re-derive the same shape by inspecting
-    // the function's declared output via the schema: the inserted row
-    // has only the schema columns.
-    const d = await db.getDb();
-    if (!d) return;
-    const rows = await d
-      .select()
-      .from(facebookPages)
-      .where(eq(facebookPages.userId, USER_A_ID));
-    // The schema columns are the exhaustive list — there is no token
-    // column to begin with. Asserting that list is the strongest form
-    // of the guarantee the type system encodes.
-    expect(rows[0]).toBeDefined();
-    const columnNames = [
-      "id",
-      "userId",
-      "connectionId",
-      "pageId",
-      "name",
-      "pictureUrl",
-      "followersCount",
-      "syncedAt",
-      "createdAt",
-    ];
-    for (const col of columnNames) {
-      expect(col in (rows[0] as object)).toBe(true);
+  it("fetchUserPages drops entries whose id is missing (NOT NULL guard)", async () => {
+    const realFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            { name: "Has Id", followers_count: "10" }, // no id
+            {
+              id: "p-good",
+              name: "Good",
+              followers_count: "20",
+              picture: { data: { url: "https://example.com/x.jpg" } },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    let pages;
+    try {
+      pages = await fetchUserPages("token");
+    } finally {
+      globalThis.fetch = realFetch;
     }
-    // And the union of keys is exactly that list — no token-shaped key.
-    expect(Object.keys(rows[0]!).sort()).toEqual([...columnNames].sort());
-  });
-
-  // Suppress unused-import warning for the fetcher; it's imported above
-  // so future tests (and review tooling) can rely on the public surface.
-  it("fetchUserPages is exported from server/meta.ts", () => {
-    expect(typeof fetchUserPages).toBe("function");
+    // The id-less entry is dropped, not pushed as pageId=undefined.
+    expect(pages.length).toBe(1);
+    expect(pages[0]?.pageId).toBe("p-good");
   });
 });
 
@@ -215,72 +230,88 @@ describe.skipIf(!hasDatabase)("Spec 013 / T013 — token-never-stored (FR-023 / 
 // `meta.pages` even though the rows still exist on disk — only the gate
 // hides them (FR-002, spec Edge Cases "Connection expired").
 describe.skipIf(!hasDatabase)("Spec 013 / T014a — showPagesNotice predicate (FR-025/FR-026/FR-027)", () => {
-  function computeHasPagesVisibility(scopes: string | null): boolean {
-    if (!scopes) return false;
-    const set = new Set(
-      scopes
-        .split(",")
-        .map(s => s.trim())
-        .filter(Boolean)
-    );
-    return set.has("pages_show_list") && set.has("pages_read_engagement");
-  }
+  // The matrix below is exercised through the production `meta.status`
+  // router. We seed the connection row with the scopes + status +
+  // pagesNoticeDismissedAt under test, then assert the router's
+  // `hasPagesVisibility` and `showPagesNotice` flags reflect the spec.
+  // This catches regressions where the predicate and the data diverge
+  // (which a substitute-based test would not).
 
-  function computeShowPagesNotice(
+  async function withConnection(
+    userId: string,
     scopes: string | null,
-    connected: boolean,
-    dismissedAt: Date | null
-  ): boolean {
-    return (
-      connected && !computeHasPagesVisibility(scopes) && dismissedAt === null
-    );
+    status: "active" | "expired" | "revoked" = "active",
+    pagesNoticeDismissedAt: Date | null = null
+  ) {
+    const d = await db.getDb();
+    if (!d) return;
+    await d
+      .update(metaConnections)
+      .set({ scopes, status, pagesNoticeDismissedAt })
+      .where(eq(metaConnections.userId, userId));
+    const caller = appRouter.createCaller(ctxFor(userId));
+    return caller.meta.status();
   }
 
-  it("no connection → showPagesNotice is false (FR-027)", () => {
-    expect(computeShowPagesNotice(null, false, null)).toBe(false);
-    expect(computeShowPagesNotice("ads_read", false, null)).toBe(false);
+  it("no connection (status=expired) → showPagesNotice is false, hasPagesVisibility is false (FR-027)", async () => {
+    const before = await withConnection(USER_A_ID, "ads_read", "expired");
+    expect(before.showPagesNotice).toBe(false);
+    expect(before.hasPagesVisibility).toBe(false);
   });
 
-  it("connection WITH Page visibility → showPagesNotice is false (FR-027)", () => {
-    expect(
-      computeShowPagesNotice(
-        "ads_read,ads_management,pages_show_list,pages_read_engagement",
-        true,
-        null
-      )
-    ).toBe(false);
+  it("active connection WITH Page visibility → showPagesNotice is false (FR-027)", async () => {
+    const before = await withConnection(
+      USER_A_ID,
+      "ads_read,ads_management,pages_show_list,pages_read_engagement"
+    );
+    expect(before.hasPagesVisibility).toBe(true);
+    expect(before.showPagesNotice).toBe(false);
   });
 
-  it("connection WITHOUT Page visibility, never dismissed → showPagesNotice is true (FR-025)", () => {
-    expect(computeShowPagesNotice("ads_read", true, null)).toBe(true);
+  it("active connection WITHOUT Page visibility, never dismissed → showPagesNotice is true (FR-025)", async () => {
+    const before = await withConnection(USER_A_ID, "ads_read");
+    expect(before.hasPagesVisibility).toBe(false);
+    expect(before.showPagesNotice).toBe(true);
     // Legacy hardcoded value present in pre-feature rows.
-    expect(computeShowPagesNotice("ads_read,ads_management", true, null)).toBe(true);
+    const legacy = await withConnection(USER_A_ID, "ads_read,ads_management");
+    expect(legacy.showPagesNotice).toBe(true);
   });
 
-  it("same connection once dismissed → showPagesNotice is false (FR-026)", () => {
-    expect(
-      computeShowPagesNotice("ads_read", true, new Date("2026-08-02T00:00:00Z"))
-    ).toBe(false);
+  it("active connection once dismissed → showPagesNotice is false (FR-026)", async () => {
+    const before = await withConnection(
+      USER_A_ID,
+      "ads_read",
+      "active",
+      new Date("2026-08-02T00:00:00Z")
+    );
+    expect(before.showPagesNotice).toBe(false);
   });
 
-  it("hasPagesVisibility requires BOTH pages_show_list AND pages_read_engagement (research R1)", () => {
+  it("hasPagesVisibility requires BOTH pages_show_list AND pages_read_engagement (research R1)", async () => {
     // Either alone is false.
-    expect(computeHasPagesVisibility("ads_read,pages_show_list")).toBe(false);
-    expect(computeHasPagesVisibility("ads_read,pages_read_engagement")).toBe(false);
+    const onlyList = await withConnection(USER_A_ID, "ads_read,pages_show_list");
+    expect(onlyList.hasPagesVisibility).toBe(false);
+    const onlyEngagement = await withConnection(
+      USER_A_ID,
+      "ads_read,pages_read_engagement"
+    );
+    expect(onlyEngagement.hasPagesVisibility).toBe(false);
     // Both present (in any order, surrounded by other scopes) is true.
-    expect(
-      computeHasPagesVisibility(
-        "ads_read,ads_management,pages_show_list,pages_read_engagement"
-      )
-    ).toBe(true);
-    expect(
-      computeHasPagesVisibility(
-        "pages_read_engagement,ads_read,pages_show_list"
-      )
-    ).toBe(true);
+    const both = await withConnection(
+      USER_A_ID,
+      "ads_read,ads_management,pages_show_list,pages_read_engagement"
+    );
+    expect(both.hasPagesVisibility).toBe(true);
+    const reordered = await withConnection(
+      USER_A_ID,
+      "pages_read_engagement,ads_read,pages_show_list"
+    );
+    expect(reordered.hasPagesVisibility).toBe(true);
     // Empty / null are false.
-    expect(computeHasPagesVisibility(null)).toBe(false);
-    expect(computeHasPagesVisibility("")).toBe(false);
+    const empty = await withConnection(USER_A_ID, "");
+    expect(empty.hasPagesVisibility).toBe(false);
+    const nullScopes = await withConnection(USER_A_ID, null);
+    expect(nullScopes.hasPagesVisibility).toBe(false);
   });
 
   // T018's connection-state gate: meta.pages returns [] when the user's
@@ -447,30 +478,100 @@ describe.skipIf(!hasDatabase)("Spec 013 / T023 — replace semantics (FR-013 / S
 // The router path is exercised in T025 (implementation); this test
 // focuses on the lower-layer guarantee: when fetchUserPages rejects, the
 // previously stored rows are unchanged.
-describe.skipIf(!hasDatabase)("Spec 013 / T024 — fetch failure does not empty stored rows", () => {
-  it("a rejected fetchUserPages leaves prior rows intact", async () => {
+describe.skipIf(!hasDatabase)("Spec 013 / T024 — failure isolation (FR-014 / SC-009)", () => {
+  it("a non-auth Pages fetch failure leaves prior rows intact and reports pagesSynced=false", async () => {
     const d = await db.getDb();
     if (!d) return;
+
+    // Seed User B's connection with Page visibility so meta.syncAccounts
+    // takes the Pages branch, plus one stored Page row.
+    await d
+      .update(metaConnections)
+      .set({
+        scopes: "ads_read,ads_management,pages_show_list,pages_read_engagement",
+      })
+      .where(eq(metaConnections.userId, USER_B_ID));
     await db.syncPages(USER_B_ID, 0, [
       { pageId: "p-stable", name: "Stable", pictureUrl: null, followersCount: 42 },
     ]);
-    const before = await db.listPages(USER_B_ID);
-    expect(before.length).toBe(1);
 
-    // Simulate a failure: catch and do nothing — exactly the shape
-    // the router uses inside the failure-isolation try/catch.
-    let threw = false;
+    // Mock the meta module so fetchUserPages rejects with a non-auth
+    // error. fetchAdAccounts succeeds (we override to []) so the
+    // account sync continues normally.
+    const metaModule = await import("./meta");
+    const fetchUserPagesSpy = vi
+      .spyOn(metaModule, "fetchUserPages")
+      .mockRejectedValue(new Error("simulated Pages fetch failure"));
+    const fetchAdAccountsSpy = vi
+      .spyOn(metaModule, "fetchAdAccounts")
+      .mockResolvedValue([]);
     try {
-      throw new Error("simulated Pages fetch failure");
-    } catch {
-      threw = true;
-    }
-    expect(threw).toBe(true);
+      const caller = appRouter.createCaller(ctxFor(USER_B_ID));
+      const result = await caller.meta.syncAccounts();
+      // The mutation succeeds (FR-014), reports pagesSynced=false, and
+      // ad-account sync still ran (we mocked fetchAdAccounts to []).
+      expect(result.pagesSynced).toBe(false);
+      expect(result.accounts).toEqual([]);
 
-    const after = await db.listPages(USER_B_ID);
-    expect(after.length).toBe(1);
-    expect(after[0]?.pageId).toBe("p-stable");
-    expect(after[0]?.followersCount).toBe(42);
+      // Prior Page rows are intact — the failed Pages path did not
+      // touch storage (writes happen only after a successful fetch,
+      // research R5).
+      const after = await db.listPages(USER_B_ID);
+      expect(after.length).toBe(1);
+      expect(after[0]?.pageId).toBe("p-stable");
+      expect(after[0]?.followersCount).toBe(42);
+    } finally {
+      fetchUserPagesSpy.mockRestore();
+      fetchAdAccountsSpy.mockRestore();
+    }
+  });
+
+  it("an isAuthError Pages fetch failure escalates to RECONNECT_REQUIRED (research R6)", async () => {
+    const d = await db.getDb();
+    if (!d) return;
+
+    await d
+      .update(metaConnections)
+      .set({
+        scopes: "ads_read,ads_management,pages_show_list,pages_read_engagement",
+      })
+      .where(eq(metaConnections.userId, USER_B_ID));
+    await db.syncPages(USER_B_ID, 0, [
+      { pageId: "p-stable", name: "Stable", pictureUrl: null, followersCount: 42 },
+    ]);
+
+    const metaModule = await import("./meta");
+    const err: any = new Error("OAuthException");
+    err.isAuthError = true;
+    err.metaCode = 190;
+    const spy = vi.spyOn(metaModule, "fetchUserPages").mockRejectedValue(err);
+    try {
+      const caller = appRouter.createCaller(ctxFor(USER_B_ID));
+      await expect(caller.meta.syncAccounts()).rejects.toMatchObject({
+        code: "PRECONDITION_FAILED",
+        message: "RECONNECT_REQUIRED",
+      });
+
+      // Connection marked expired — the existing auth-error path
+      // (research R6 / T025) applies.
+      const conn = await d
+        .select()
+        .from(metaConnections)
+        .where(eq(metaConnections.userId, USER_B_ID))
+        .limit(1);
+      expect(conn[0]?.status).toBe("expired");
+
+      // And prior Page rows are still intact on disk.
+      const after = await db.listPages(USER_B_ID);
+      expect(after.length).toBe(1);
+    } finally {
+      spy.mockRestore();
+      // Restore active so subsequent tests in the suite are not poisoned.
+      await d
+        .update(metaConnections)
+        .set({ status: "active" })
+        .where(eq(metaConnections.userId, USER_B_ID));
+    }
   });
 });
 
