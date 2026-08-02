@@ -501,7 +501,17 @@ export default function Settings() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="paid_lto">أبيع منتجًا أو خدمة مباشرة، أو أقدم فعالية أو استشارة مدفوعة</SelectItem>
-                    <SelectItem value="free_lead">أجمع بيانات عملاء مجانًا ثم أبيع منتجًا غاليًا</SelectItem>
+                    {/* `free_lead` is withdrawn as a NEW choice — `appointment`
+                        / `webinar` replace it going forward. The archetype
+                        itself is untouched (schema, enum and all derived logic
+                        stay as they are), so an account already saved as
+                        `free_lead` keeps working exactly as before; we still
+                        render its item in that one case, otherwise Radix would
+                        show a blank trigger for a value with no matching
+                        option. Nobody else ever sees it. */}
+                    {form.archetype === "free_lead" && (
+                      <SelectItem value="free_lead">أجمع بيانات عملاء مجانًا ثم أبيع منتجًا غاليًا</SelectItem>
+                    )}
                     <SelectItem value="appointment">أحجز استشارة مجانية ثم أبيع بعدها</SelectItem>
                     <SelectItem value="webinar">أدعو الناس إلى فعالية مجانية: ندوة أو تحدٍّ أو ماستر كلاس، ثم أبيع بعدها</SelectItem>
                   </SelectContent>

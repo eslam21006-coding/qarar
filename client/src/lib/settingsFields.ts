@@ -50,9 +50,12 @@ export const ARCHETYPE_SELECTOR_HELPER =
 export const FIELD_COPY: { [K in VisibleFieldName]: FieldCopy } = {
   archetype: {
     label: "كيف تبيع؟",
+    // Mirrors the selectable options in the Settings dropdown. `free_lead`
+    // is deliberately absent: the archetype still exists and every saved
+    // row keeps working, but it is no longer offered as a new choice —
+    // `appointment` / `webinar` replace it going forward.
     hint:
       "أبيع منتجًا أو خدمة مباشرة، أو أقدم فعالية أو استشارة مدفوعة · " +
-      "أجمع بيانات عملاء مجانًا ثم أبيع منتجًا غاليًا · " +
       "أحجز استشارة مجانية ثم أبيع بعدها · " +
       "أدعو الناس إلى فعالية مجانية: ندوة أو تحدٍّ أو ماستر كلاس، ثم أبيع بعدها",
   },
