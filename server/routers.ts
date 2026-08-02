@@ -131,6 +131,28 @@ async function getUserToken(userId: string): Promise<string> {
   return decryptToken(conn.encryptedToken);
 }
 
+/**
+ * Spec 013 / FR-024 / research R1 — does the user's granted scope
+ * include Page visibility? Requires BOTH `pages_show_list` AND
+ * `pages_read_engagement`; one alone is not enough (research R1:
+ * `pages_show_list` alone returns a Page list where `followers_count`
+ * is unreadable, gutting FR-003).
+ *
+ * Single source of truth shared by `meta.status` (decides whether to
+ * render the reconnect note) and `meta.syncAccounts` (decides whether
+ * to sync Pages at all). The two paths MUST agree — a future change
+ * to the required scopes only needs one edit here.
+ */
+function hasPagesVisibility(scopes: string | null | undefined): boolean {
+  const scopeSet = new Set(
+    (scopes ?? "")
+      .split(",")
+      .map(s => s.trim())
+      .filter(Boolean)
+  );
+  return scopeSet.has("pages_show_list") && scopeSet.has("pages_read_engagement");
+}
+
 export const appRouter = router({
   system: systemRouter,
   auth: router({
@@ -156,26 +178,20 @@ export const appRouter = router({
       // alone is not enough. `showPagesNotice` is the three-way
       // condition that decides whether to render the dismissible
       // reconnect note: connected AND no Page visibility AND the note
-      // was never dismissed for this user (FR-025/FR-026/FR-027).
-      const scopes = conn?.scopes ?? null;
-      const scopeSet = new Set(
-        (scopes ?? "")
-          .split(",")
-          .map(s => s.trim())
-          .filter(Boolean)
-      );
-      const hasPagesVisibility =
-        scopeSet.has("pages_show_list") && scopeSet.has("pages_read_engagement");
+      // was never dismissed for this user (FR-025/FR-026/FR-027). The
+      // predicate lives in `hasPagesVisibility` so `meta.syncAccounts`
+      // (T025) shares the same rule.
+      const pagesVisible = hasPagesVisibility(conn?.scopes);
       const connected = !!conn && conn.status === "active";
       const showPagesNotice =
-        connected && !hasPagesVisibility && conn?.pagesNoticeDismissedAt == null;
+        connected && !pagesVisible && conn?.pagesNoticeDismissedAt == null;
       return {
         configured: !!META_APP_ID(),
         connected,
         needsReauth: !!conn && conn.status !== "active",
         fbUserName: conn?.fbUserName ?? null,
         connectedAt: conn?.createdAt ?? null,
-        hasPagesVisibility,
+        hasPagesVisibility: pagesVisible,
         showPagesNotice,
       };
     }),
@@ -228,15 +244,9 @@ export const appRouter = router({
       // failure. When the connection lacks Page visibility, no Pages
       // call is made and `pagesSynced` is `true` (nothing to sync is
       // not a failure, per contracts §syncAccounts §5).
-      const scopes = (conn.scopes ?? "")
-        .split(",")
-        .map(s => s.trim())
-        .filter(Boolean);
-      const hasPagesVisibility =
-        scopes.includes("pages_show_list") &&
-        scopes.includes("pages_read_engagement");
+      const pagesVisible = hasPagesVisibility(conn.scopes);
       let pagesSynced = true;
-      if (hasPagesVisibility) {
+      if (pagesVisible) {
         try {
           const pages = await fetchUserPages(token);
           await db.syncPages(ctx.user.id, conn.id, pages);
