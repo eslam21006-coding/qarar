@@ -359,18 +359,39 @@ export async function syncPages(
 ): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
-  await db.delete(facebookPages).where(eq(facebookPages.userId, userId));
-  if (pages.length === 0) return;
-  await db.insert(facebookPages).values(
-    pages.map(p => ({
-      userId,
-      connectionId,
-      pageId: p.pageId,
-      name: p.name,
-      pictureUrl: p.pictureUrl,
-      followersCount: p.followersCount,
-    }))
-  );
+  // Deduplicate by pageId before insertion: the (userId, pageId) unique
+  // index would otherwise reject the second of two identical entries
+  // from a flaky Graph response, aborting the whole insert after the
+  // delete ran and leaving the user with zero Pages (research R5's
+  // crash-window concern, generalizing from "crash" to "constraint
+  // violation"). Keeping the FIRST occurrence — same shape as
+  // db.syncAccounts — is the conservative read.
+  const seen = new Set<string>();
+  const deduped: typeof pages = [];
+  for (const p of pages) {
+    if (seen.has(p.pageId)) continue;
+    seen.add(p.pageId);
+    deduped.push(p);
+  }
+  // Transaction wraps delete + insert so a crash (or a constraint
+  // violation on a different column) cannot leave the user with zero
+  // Pages between the two statements. The whole sync is one MySQL
+  // transaction; the public surface is unchanged (research R5:
+  // "wrap in a transaction if the driver path makes it free").
+  await db.transaction(async tx => {
+    await tx.delete(facebookPages).where(eq(facebookPages.userId, userId));
+    if (deduped.length === 0) return;
+    await tx.insert(facebookPages).values(
+      deduped.map(p => ({
+        userId,
+        connectionId,
+        pageId: p.pageId,
+        name: p.name,
+        pictureUrl: p.pictureUrl,
+        followersCount: p.followersCount,
+      }))
+    );
+  });
 }
 
 /**
