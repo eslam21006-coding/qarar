@@ -4,7 +4,9 @@ import {
   exchangeCodeForToken,
   exchangeForLongLivedToken,
   fetchAdAccounts,
+  fetchGrantedPermissions,
   fetchMe,
+  fetchUserPages,
   META_APP_SECRET,
 } from "./meta";
 import { encryptToken } from "./crypto";
@@ -122,13 +124,20 @@ export function registerMetaCallback(app: Express) {
       }
 
       const me = await fetchMe(token);
+      // Spec 013 / FR-024 / research R2 — store the permissions Meta
+      // ACTUALLY granted, not the literal `"ads_read"` the pre-feature
+      // callback hardcoded. The hardcoded value made every scope-derived
+      // check (including FR-024's "does this connection have Page
+      // visibility?") read a constant; FR-024 requires we tell a
+      // connection with Page visibility apart from one without.
+      const grantedPermissions = await fetchGrantedPermissions(token);
       await db.upsertConnection({
         userId,
         fbUserId: me.id,
         fbUserName: me.name,
         encryptedToken: encryptToken(token),
         tokenExpiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : null,
-        scopes: "ads_read",
+        scopes: grantedPermissions.join(","),
       });
 
       // initial account sync (best effort)
@@ -137,6 +146,27 @@ export function registerMetaCallback(app: Express) {
         if (conn) {
           const accounts = await fetchAdAccounts(token);
           await db.syncAccounts(userId, conn.id, accounts);
+          // Spec 013 / FR-010 / contracts §Non-tRPC surface — Pages are
+          // synced best-effort right after the ad-account sync. Guarded
+          // by whether the granted scope includes Page visibility, so
+          // a user who declined the Pages permissions (or hasn't
+          // completed Meta App Review for them yet) does not silently
+          // have an empty Pages table — they instead see the reconnect
+          // note on next render (FR-025). A Pages failure must NOT
+          // change the `/?meta=connected` redirect; their next re-sync
+          // fills the list (FR-014).
+          const scopes = grantedPermissions;
+          const hasPagesVisibility =
+            scopes.includes("pages_show_list") &&
+            scopes.includes("pages_read_engagement");
+          if (hasPagesVisibility) {
+            try {
+              const pages = await fetchUserPages(token);
+              await db.syncPages(userId, conn.id, pages);
+            } catch {
+              /* best effort — the user can re-sync from UI */
+            }
+          }
         }
       } catch {
         /* user can re-sync from UI */
