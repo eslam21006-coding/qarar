@@ -56,7 +56,13 @@ export function buildOAuthUrl(redirectUri: string, state: string): string {
     client_id: META_APP_ID(),
     redirect_uri: redirectUri,
     state,
-    scope: "ads_read,ads_management",
+    // Spec 013 — pages_show_list returns the user's Pages via /me/accounts;
+    // pages_read_engagement is required to read the per-Page `followers_count`
+    // field on those Pages (research R1). Both are read-only permissions and
+    // both require Meta App Review before they take effect for non-app-role
+    // users — until approved, real users get no Pages and see the reconnect
+    // note rather than a broken section.
+    scope: "ads_read,ads_management,pages_show_list,pages_read_engagement",
     response_type: "code",
   });
   return `https://www.facebook.com/v23.0/dialog/oauth?${params.toString()}`;
@@ -153,6 +159,89 @@ export async function fetchAdAccounts(
       params = Object.fromEntries(u.searchParams.entries());
     } else {
       url = null;
+    }
+  }
+  return out;
+}
+
+/**
+ * Spec 013 — fetch the Facebook Pages the user manages, for display on the
+ * Meta connection screen. Mirrors `fetchAdAccounts` pagination shape:
+ * `limit=100`, follows `paging.next`, caps at 5 pages → 500 Pages maximum
+ * (research R9).
+ *
+ * Per FR-003 / R3, requests `id,name,followers_count,picture{url}` only.
+ * `followers_count` is the followers metric — never a fallback to
+ * `fan_count` (the legacy likes count) is performed.
+ *
+ * Per FR-023 / R3 / R9, the `access_token` Meta returns alongside each
+ * Page is **deliberately discarded**. The feature is display-only; a
+ * write-capable credential has no use here and must never reach storage,
+ * logs, or any user-facing response.
+ */
+export async function fetchUserPages(
+  token: string
+): Promise<Array<{ pageId: string; name: string | null; pictureUrl: string | null; followersCount: number | null }>> {
+  const out: Array<{ pageId: string; name: string | null; pictureUrl: string | null; followersCount: number | null }> = [];
+  let url: string | null = `/me/accounts`;
+  let params: Record<string, string> = {
+    fields: "id,name,followers_count,picture{url}",
+    limit: "100",
+    access_token: token,
+  };
+  for (let i = 0; i < 5 && url; i++) {
+    const json: any = await graphGet(url, params);
+    for (const p of json.data ?? []) {
+      // followers_count can be missing → null (FR-005: omit the line,
+      // never display a misleading zero or empty value). The Meta API
+      // returns numbers as strings; coerce, fall back to null on NaN.
+      const rawFollowers = p.followers_count;
+      let followersCount: number | null = null;
+      if (rawFollowers !== undefined && rawFollowers !== null) {
+        const n = parseInt(String(rawFollowers), 10);
+        if (Number.isFinite(n)) followersCount = n;
+      }
+      out.push({
+        pageId: p.id,
+        name: typeof p.name === "string" ? p.name : null,
+        pictureUrl: typeof p.picture?.data?.url === "string" ? p.picture.data.url : null,
+        followersCount,
+      });
+      // FR-023 — explicitly drop the per-Page access_token. Do not return
+      // it, do not log it, do not store it on the surrounding object.
+    }
+    const next = json.paging?.next as string | undefined;
+    if (next) {
+      const u = new URL(next);
+      url = u.pathname.replace(/^\/v\d+\.\d+/, "");
+      params = Object.fromEntries(u.searchParams.entries());
+    } else {
+      url = null;
+    }
+  }
+  return out;
+}
+
+/**
+ * Spec 013 / FR-024 — list the permissions the user has actually granted
+ * this token. The OAuth dialog only shows what we requested, but the user
+ * can decline individual scopes; the only correct source of truth for
+ * "do we have Page visibility?" is `/me/permissions`, not the scope string
+ * we sent at connect time.
+ *
+ * Returns the permission names whose `status` is `granted`. Used by the
+ * OAuth callback to populate `metaConnections.scopes` (the column was
+ * previously hardcoded to `"ads_read"` — a latent bug fixed by FR-024 /
+ * research R2). With the correct value in the column, downstream code
+ * can tell a connection that includes Page visibility apart from one
+ * that doesn't, and show the reconnect note in the right case (FR-025).
+ */
+export async function fetchGrantedPermissions(token: string): Promise<string[]> {
+  const json: any = await graphGet("/me/permissions", { access_token: token });
+  const out: string[] = [];
+  for (const p of json.data ?? []) {
+    if (p && typeof p.permission === "string" && p.status === "granted") {
+      out.push(p.permission);
     }
   }
   return out;
