@@ -13,10 +13,11 @@ All Technical Context unknowns are resolved below. Each item states the decision
 **Rationale**: `pages_show_list` returns the `/me/accounts` edge — the list of Pages the user has a role on, with `id`, `name`, and `access_token`. It does **not** reliably grant the Page-level fields we display: `followers_count` is a Page node read that requires `pages_read_engagement`. Requesting only `pages_show_list` would return a list where every follower count is missing, and FR-005 would then omit the count for every Page — a section showing only names and pictures, which is not what FR-003 specifies. The feature branch name (`feature/pages-read-engagement-display`) already anticipates this pairing.
 
 **Alternatives considered**:
-- *`pages_show_list` alone* — rejected: yields no follower counts, gutting FR-003.
-- *`pages_manage_metadata` / `pages_read_user_content`* — rejected: write-adjacent and content-reading permissions we never use; FR-021 forbids requesting more than the display needs, and each extra permission enlarges App Review scope.
 
-**⚠ Deployment dependency**: both permissions require **Meta App Review** before they work for users who are not admins/developers/testers of the Facebook app. Until approved, the Pages section will be empty for real users while working normally for app-role accounts. This gates *user-visible* delivery, not development or merge. Submit review early; it is the long pole.
+- _`pages_show_list` alone_ — rejected: yields no follower counts, gutting FR-003.
+- _`pages_manage_metadata` / `pages_read_user_content`_ — rejected: write-adjacent and content-reading permissions we never use; FR-021 forbids requesting more than the display needs, and each extra permission enlarges App Review scope.
+
+**⚠ Deployment dependency**: both permissions require **Meta App Review** before they work for users who are not admins/developers/testers of the Facebook app. Until approved, the Pages section will be empty for real users while working normally for app-role accounts. This gates _user-visible_ delivery, not development or merge. Submit review early; it is the long pole.
 
 ---
 
@@ -24,16 +25,17 @@ All Technical Context unknowns are resolved below. Each item states the decision
 
 **Decision**: At OAuth callback, call `/me/permissions` and store the **actually granted** permission names, comma-joined, into the existing `metaConnections.scopes` column. Page visibility is then `scopes` containing both `pages_show_list` and `pages_read_engagement`.
 
-**Rationale**: FR-024 requires telling a connection with Page visibility apart from one without, and FR-025 must cover the user who *declines* the permission in the Facebook dialog. What we *requested* is therefore not a valid source — only what was *granted* is. `/me/permissions` returns per-permission `granted`/`declined` status and is one cheap call on a path that runs only at connect time.
+**Rationale**: FR-024 requires telling a connection with Page visibility apart from one without, and FR-025 must cover the user who _declines_ the permission in the Facebook dialog. What we _requested_ is therefore not a valid source — only what was _granted_ is. `/me/permissions` returns per-permission `granted`/`declined` status and is one cheap call on a path that runs only at connect time.
 
-**Bug this fixes**: `server/metaCallback.ts:131` currently hardcodes `scopes: "ads_read"` on every connection, even though `buildOAuthUrl` (`server/meta.ts:59`) requests `ads_read,ads_management`. The column is therefore wrong for every row in production today. Because the stored value is a literal, *any* scope-derived logic built on it would be reading a constant. This must be fixed as part of this feature — FR-024 depends on it.
+**Bug this fixes**: `server/metaCallback.ts` currently hardcodes `scopes: "ads_read"` on every connection, even though `buildOAuthUrl` (in `server/meta.ts`) requests `ads_read,ads_management`. The column is therefore wrong for every row in production today. Because the stored value is a literal, _any_ scope-derived logic built on it would be reading a constant. This must be fixed as part of this feature — FR-024 depends on it.
 
 **Legacy rows behave correctly by accident**: existing rows contain `"ads_read"`, which does not contain the Pages permissions, so the predicate returns `false` and those users get the reconnect note (FR-025). No backfill or data migration is needed.
 
 **Alternatives considered**:
-- *Parse Meta's `granular_scopes` from token debug* — rejected: `/debug_token` requires an app token and returns a more complex shape for no added benefit.
-- *Infer from an empty Pages response* — rejected: cannot distinguish "no permission" from "user genuinely manages no Pages", and FR-029 requires exactly that distinction.
-- *Store the requested-scope constant* — rejected: ignores declines, breaking FR-025.
+
+- _Parse Meta's `granular_scopes` from token debug_ — rejected: `/debug_token` requires an app token and returns a more complex shape for no added benefit.
+- _Infer from an empty Pages response_ — rejected: cannot distinguish "no permission" from "user genuinely manages no Pages", and FR-029 requires exactly that distinction.
+- _Store the requested-scope constant_ — rejected: ignores declines, breaking FR-025.
 
 ---
 
@@ -53,11 +55,12 @@ All Technical Context unknowns are resolved below. Each item states the decision
 
 **Decision**: A nullable `pagesNoticeDismissedAt` timestamp column on **`metaConnections`**.
 
-**Rationale**: FR-026 says the note must not reappear "for that user" — a per-user guarantee, so browser `localStorage` is wrong (it is per-device, and the note would return on a second browser). The note is only ever shown to users who *have* a connection (FR-027), so the connection row is exactly the right lifetime: it is created with the connection and deleted by `deleteAllUserData`, which satisfies FR-017/FR-019 with no extra work. Reconnecting issues a fresh upsert, and since the new connection will have Page visibility, FR-026's "disappears once visibility is present" holds regardless of the flag's value.
+**Rationale**: FR-026 says the note must not reappear "for that user" — a per-user guarantee, so browser `localStorage` is wrong (it is per-device, and the note would return on a second browser). The note is only ever shown to users who _have_ a connection (FR-027), so the connection row is exactly the right lifetime: it is created with the connection and deleted by `deleteAllUserData`, which satisfies FR-017/FR-019 with no extra work. Reconnecting issues a fresh upsert, and since the new connection will have Page visibility, FR-026's "disappears once visibility is present" holds regardless of the flag's value.
 
 **Alternatives considered**:
-- *`localStorage`* — rejected: per-device, violates FR-026's per-user promise.
-- *A separate `userPreferences` table* — rejected: a whole table for one nullable timestamp, and it would need its own deletion wiring.
+
+- _`localStorage`_ — rejected: per-device, violates FR-026's per-user promise.
+- _A separate `userPreferences` table_ — rejected: a whole table for one nullable timestamp, and it would need its own deletion wiring.
 
 ---
 
@@ -65,7 +68,7 @@ All Technical Context unknowns are resolved below. Each item states the decision
 
 **Decision**: `syncPages(userId, connectionId, pages)` deletes the user's existing Page rows and inserts the incoming set — a true replace. Writes happen **only after** the Graph fetch has fully succeeded.
 
-**Rationale**: FR-013 requires that Pages the user no longer manages disappear. This deliberately differs from the sibling `db.syncAccounts` (`server/db.ts:221`), which updates and inserts but **never deletes** — a difference that is correct, not an oversight: ad accounts own downstream `funnelSettings`, `snapshots`, and `verdictHistory` rows, so deleting them would orphan user configuration (the very problem spec 011 was built to repair). Facebook Pages own nothing; no other table references them, so replace is safe and is the simplest way to satisfy FR-013.
+**Rationale**: FR-013 requires that Pages the user no longer manages disappear. This deliberately differs from the sibling `db.syncAccounts` (in `server/db.ts`), which updates and inserts but **never deletes** — a difference that is correct, not an oversight: ad accounts own downstream `funnelSettings`, `snapshots`, and `verdictHistory` rows, so deleting them would orphan user configuration (the very problem spec 011 was built to repair). Facebook Pages own nothing; no other table references them, so replace is safe and is the simplest way to satisfy FR-013. The whole delete + insert runs inside one MySQL transaction (research R5 follow-up: "wrap in a transaction if the driver path makes it free").
 
 **Crash-window tradeoff (accepted)**: between the delete and the insert, a crash would leave the user with zero Pages, hiding the section until their next sync. The window is sub-second, writes only begin after a successful fetch, and the damage is a hidden confirmation strip — not lost user data. Wrap in a transaction if the driver path makes it free; do not add a transaction abstraction solely for this.
 
@@ -79,7 +82,7 @@ All Technical Context unknowns are resolved below. Each item states the decision
 
 **Rationale**: FR-014 requires that a Pages failure neither fails the account sync nor discards stored Pages, while still telling the user. Since the Pages write only runs after a successful fetch, a fetch failure leaves prior rows untouched for free. Returning a flag rather than throwing keeps the failure non-fatal by construction.
 
-**Contract impact**: this is a **breaking change to an existing tRPC return shape**. `client/src/pages/Home.tsx:113` consumes `syncAccounts` today; its `onSuccess` invalidates the accounts query and must be updated in the same change. Documented in `contracts/meta-router.md`.
+**Contract impact**: this is a **breaking change to an existing tRPC return shape**. `client/src/pages/Home.tsx` (the `syncAccounts.onSuccess` handler) consumes `syncAccounts` today; its `onSuccess` invalidates the accounts query and must be updated in the same change. Documented in `contracts/meta-router.md`.
 
 **Auth errors stay special**: if the Pages fetch fails with `isAuthError`, the existing behaviour wins — mark the connection expired and throw `RECONNECT_REQUIRED`, exactly as the account path does. An expired token is not a partial failure.
 
@@ -94,6 +97,7 @@ All Technical Context unknowns are resolved below. Each item states the decision
 **Rationale**: Matches the constitution's additive-migration rule and the repo's normal path. Both statements are purely additive — no existing column is altered, retyped, or dropped.
 
 **Repo-specific hazards deliberately avoided**:
+
 - **Do not use `scripts/apply-migrations.mjs`.** It hardcodes its migration list, ignores command-line arguments, and is a one-off repair script — running it re-attempts old migrations (it previously tried `0005` and failed on pre-existing foreign keys).
 - **Do not touch `drizzle/0010_settings_unique_index.sql`.** It is intentionally absent from `drizzle/meta/_journal.json` and must stay that way; it is applied manually only after the T023/T033/T034 gate cycle.
 - The journal's highest entry is `idx: 10` (`0010_curly_patch`), so the generated tag will be `0011_*`. **Verify after generating** that exactly one new journal entry appeared and that the generated snapshot contains no phantom operations — a corrupted snapshot with a phantom ADD-then-DROP previously broke production.
@@ -114,7 +118,7 @@ All Technical Context unknowns are resolved below. Each item states the decision
 
 ## R9 — Pagination and volume
 
-**Decision**: Reuse the `fetchAdAccounts` pagination shape (`server/meta.ts:128`): `limit=100`, follow `paging.next`, cap at 5 pages → 500 Pages maximum.
+**Decision**: Reuse the `fetchAdAccounts` pagination shape (in `server/meta.ts`): `limit=100`, follow `paging.next`, cap at 5 pages → 500 Pages maximum. The `paging.next` URL parsing is now shared between `fetchAdAccounts` and `fetchUserPages` via a small helper (CodeRabbit review fix).
 
 **Rationale**: Consistency with the existing fetcher, and 500 is far beyond any realistic advertiser. The cap bounds a pathological account rather than looping unbounded. Display is separately bounded at 5 Pages with an expander (FR-008), so a large list costs storage and one sync, never screen space.
 
@@ -125,6 +129,7 @@ All Technical Context unknowns are resolved below. Each item states the decision
 **Decision**: Follow the existing suites — `server/isolation.test.ts` for the cross-user guarantee, a new `server/pages.test.ts` for sync/replace/failure semantics, and a client test alongside `client/src/pages/Settings.test.tsx`'s patterns for conditional rendering.
 
 **Required coverage** (each maps to a spec criterion):
+
 - Cross-user reads return only the owner's Pages — SC-007, constitution IV.
 - `deleteAllUserData` removes Page rows — SC-008, FR-017.
 - Replace semantics: removed Pages disappear, new ones appear, changed fields update — FR-013.

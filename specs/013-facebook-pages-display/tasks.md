@@ -1,5 +1,4 @@
 ---
-
 description: "Task list for Facebook Pages Display (spec 013)"
 ---
 
@@ -44,9 +43,9 @@ This is a web app with the layout fixed by the constitution: React client in `cl
 - [ ] T004 Add the nullable `pagesNoticeDismissedAt` timestamp column to the `metaConnections` table in `drizzle/schema.ts` per data-model.md §2 (depends on T003 — same file)
 - [ ] T005 Generate and apply migration `0011` with `npm run db:push`, then verify per quickstart: exactly one new `drizzle/0011_*.sql`, exactly one new journal entry (`idx: 11`), and SQL containing only `CREATE TABLE facebookPages` + `ALTER TABLE metaConnections ADD COLUMN` — no DROP and no ADD-then-DROP pair. Never use `scripts/apply-migrations.mjs` (depends on T003, T004)
 - [ ] T006 [P] Add the `FacebookPageDisplay` type to `shared/qarar.ts` per data-model.md §6 — deliberately without any token field
-- [ ] T007 Add `fetchUserPages(token)` to `server/meta.ts`: `GET /me/accounts` with `fields=id,name,followers_count,picture{url}` and `limit=100`, following `paging.next` up to 5 pages, mirroring the `fetchAdAccounts` pattern at `server/meta.ts:128`. Map to `{ pageId, name, pictureUrl, followersCount }` and **discard** each entry's `access_token` — never return or log it (FR-023, research R3/R9)
+- [ ] T007 Add `fetchUserPages(token)` to `server/meta.ts`: `GET /me/accounts` with `fields=id,name,followers_count,picture{url}` and `limit=100`, following `paging.next` up to 5 pages, mirroring the `fetchAdAccounts` pattern in `server/meta.ts`. Map to `{ pageId, name, pictureUrl, followersCount }` and **discard** each entry's `access_token` — never return or log it (FR-023, research R3/R9)
 - [ ] T008 Add `fetchGrantedPermissions(token)` to `server/meta.ts`: `GET /me/permissions`, returning only the permission names whose status is `granted` (research R2) (depends on T007 — same file)
-- [ ] T009 Update the OAuth scope in `buildOAuthUrl` at `server/meta.ts:59` to `ads_read,ads_management,pages_show_list,pages_read_engagement` (depends on T008 — same file)
+- [ ] T009 Update the OAuth scope in `buildOAuthUrl` in `server/meta.ts` to `ads_read,ads_management,pages_show_list,pages_read_engagement` (depends on T008 — same file)
 - [ ] T010 Add `listPages(userId)` and `syncPages(userId, connectionId, pages)` to `server/db.ts`: `listPages` filters by `userId` and orders by `followersCount` descending with nulls last then `name`; `syncPages` deletes the user's rows then inserts the incoming set (replace semantics per data-model.md §4 / research R5) and is only ever called after a successful fetch
 - [ ] T011 Add `dismissPagesNotice(userId)` to `server/db.ts` setting `metaConnections.pagesNoticeDismissedAt` to now, scoped by `userId`, idempotent and a no-op when no connection exists (depends on T010 — same file)
 
@@ -74,7 +73,7 @@ This is a web app with the layout fixed by the constitution: React client in `cl
 - [ ] T017 [US1] Extend `meta.status` in `server/routers.ts` with `hasPagesVisibility` (scopes contain both `pages_show_list` and `pages_read_engagement`) and `showPagesNotice` (connected AND not `hasPagesVisibility` AND `pagesNoticeDismissedAt` is null), per contracts/meta-router.md
 - [ ] T018 [US1] Add the `meta.pages` query to `server/routers.ts` as an `activeProcedure` returning `db.listPages(ctx.user.id)` mapped to `FacebookPageDisplay[]`; an empty array is a normal result, never an error. **Return `[]` unless the user's connection status is `active`** — `activeProcedure` gates on subscription (`server/_core/trpc.ts:61`), not on Meta connection state, so FR-002's "active Meta connection" condition must be enforced here rather than left to the client alone (FR-002, spec Edge Cases) (depends on T017 — same file)
 - [ ] T019 [US1] Add the `meta.dismissPagesNotice` mutation to `server/routers.ts` as an `activeProcedure` calling `db.dismissPagesNotice(ctx.user.id)` and returning `{ success: true }` (depends on T018 — same file)
-- [ ] T020 [P] [US1] Create `client/src/components/FacebookPagesCard.tsx`: a `Card` matching the existing account-picker styling in `client/src/pages/Home.tsx`, heading `صفحاتك على فيسبوك`, each row showing avatar (with placeholder fallback on image error), name, and follower count using the `.num` class so digits render left-to-right inside the RTL layout; renders `null` when the list is empty; shows at most 5 rows with an `عرض الكل` expander. Long Page names truncate to a single line (CSS ellipsis) with the full name carried in a `title` attribute so it stays reachable — this is the mechanism the spec's "full name remains discoverable" edge case leaves open (FR-002 through FR-009, spec Edge Cases)
+- [ ] T020 [P] [US1] Create `client/src/components/FacebookPagesCard.tsx`: a `Card` matching the existing account-picker styling in `client/src/pages/Home.tsx`, heading `صفحاتك على فيسبوك`, each row showing avatar (with placeholder fallback on image error), name, and follower count using the `.num` class so digits render left-to-right inside the RTL layout; renders `null` when the list is empty; shows at most 5 rows with an `عرض الكل` expander. Long Page names truncate to a single line (CSS ellipsis) with the full name carried in a `title` attribute so it stays reachable — this is the mechanism the spec's "full name remains discoverable" edge case leaves open (FR-002 through FR-009, spec Edge Cases). Hook order MUST remain stable across renders — `useState` for the expander runs before the empty-list early return (CodeRabbit review fix).
 - [ ] T021 [US1] Mount `FacebookPagesCard` in `client/src/pages/Home.tsx` between the Meta connection card and the "اختر الحساب الإعلاني الذي تريد مراقبته" picker, fed by a `trpc.meta.pages.useQuery()` gated on an active connection (FR-001, FR-002)
 - [ ] T022 [US1] Add the reconnect note to `client/src/pages/Home.tsx`, rendered only when `status.data.showPagesNotice` is true: simple Arabic copy explaining that reconnecting will show their Pages, the existing connect action as the path forward, and a dismiss control calling `meta.dismissPagesNotice` then invalidating `meta.status`. It must not gate or block any existing action (FR-025 through FR-028) (depends on T021 — same file)
 
@@ -96,7 +95,7 @@ This is a web app with the layout fixed by the constitution: React client in `cl
 ### Implementation for User Story 2
 
 - [ ] T025 [US2] Extend `meta.syncAccounts` in `server/routers.ts` per contracts/meta-router.md: after the existing account sync, if the connection has Page visibility, fetch and replace Pages inside its own try/catch; return `{ accounts, pagesSynced }` instead of a bare array; preserve the existing `isAuthError` → mark expired → `RECONNECT_REQUIRED` path; `pagesSynced` is `true` when there was nothing to sync (FR-011, FR-013, FR-014)
-- [ ] T026 [US2] Update the `syncAccounts` mutation handler in `client/src/pages/Home.tsx:113` for the new return shape — read `.accounts`, keep the existing `تم تحديث الحسابات` success toast, and add a second Arabic warning toast (e.g. `تعذّر تحديث قائمة الصفحات`) when `pagesSynced` is `false`; invalidate `meta.pages` alongside `meta.accounts` (depends on T025)
+- [ ] T026 [US2] Update the `syncAccounts` mutation handler in `client/src/pages/Home.tsx` (the `onSuccess` callback) for the new return shape — read `.accounts`, keep the existing `تم تحديث الحسابات` success toast, and add a second Arabic warning toast (e.g. `تعذّر تحديث قائمة الصفحات`) when `pagesSynced` is `false`; invalidate `meta.pages` alongside `meta.accounts` (depends on T025)
 
 **Checkpoint**: User Stories 1 and 2 both work independently.
 
@@ -114,7 +113,7 @@ This is a web app with the layout fixed by the constitution: React client in `cl
 
 ### Implementation for User Story 3
 
-- [ ] T028 [US3] Extend `deleteAllUserData` in `server/db.ts:172` with `await db.delete(facebookPages).where(eq(facebookPages.userId, userId));`, ordered before the `metaConnections` delete; no separate handling is needed for `pagesNoticeDismissedAt` since it is a column on the connection row already deleted there (data-model.md §5)
+- [ ] T028 [US3] Extend `deleteAllUserData` in `server/db.ts` with `await db.delete(facebookPages).where(eq(facebookPages.userId, userId));`, ordered before the `metaConnections` delete; no separate handling is needed for `pagesNoticeDismissedAt` since it is a column on the connection row already deleted there (data-model.md §5)
 
 **Checkpoint**: All three user stories are independently functional.
 
@@ -197,8 +196,8 @@ At MVP the list refreshes only on connect. That is a coherent product: it is exa
 ### Incremental Delivery
 
 1. Foundational → US1 (MVP, scenarios 1/2/3/6/7/10 — scenario 10 covers the connection gate T018 adds)
-2. + US2 → re-sync keeps it current (scenarios 4, 5)
-3. + US3 → wipe on disconnect verified (scenario 8)
+2. - US2 → re-sync keeps it current (scenarios 4, 5)
+3. - US3 → wipe on disconnect verified (scenario 8)
 4. Polish → scenarios 9, 11 and App Review submission
 
 ### Sequencing note on App Review

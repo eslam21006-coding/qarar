@@ -10,7 +10,7 @@ Show the advertiser the Facebook Pages they manage — picture, name, follower c
 
 Technically: add two read-only Meta permissions, fetch `/me/accounts` at OAuth callback and on the existing re-sync, store the result in a new per-user `facebookPages` table, and render it from storage. Users whose connection predates the new permissions get a one-time dismissible Arabic note inviting them to reconnect. Nothing writes to Meta; the per-Page access token Meta returns is discarded on arrival.
 
-Two pre-existing conditions shape the work: the OAuth scope at `server/meta.ts:59` has no Pages permission (so App Review is the delivery long pole), and `server/metaCallback.ts:131` hardcodes `scopes: "ads_read"` — a latent bug that must be fixed because the reconnect note's detection reads that column.
+Two pre-existing conditions shape the work: the OAuth scope in `server/meta.ts` (`buildOAuthUrl`) has no Pages permission (so App Review is the delivery long pole), and `server/metaCallback.ts` hardcodes `scopes: "ads_read"` — a latent bug that must be fixed because the reconnect note's detection reads that column.
 
 ## Technical Context
 
@@ -34,23 +34,23 @@ Two pre-existing conditions shape the work: the OAuth scope at `server/meta.ts:5
 
 ## Constitution Check
 
-*GATE: evaluated before Phase 0 and re-evaluated after Phase 1 design.*
+_GATE: evaluated before Phase 0 and re-evaluated after Phase 1 design._
 
-| Principle | Verdict | Basis |
-|-----------|---------|-------|
-| I. Deterministic engine — no AI in decisions | ✅ Pass | Feature never touches `server/engine.ts`; no verdict, diagnosis, or evaluation-order code is read or written. |
-| II. Rule codes verbatim | ✅ Pass | No rule codes involved. |
-| III. Simple Arabic everywhere | ✅ Pass | FR-009 mandates 6th-grade Arabic; FR-006 mandates `.num` LTR rendering for follower counts inside the RTL layout. Section heading `صفحاتك على فيسبوك`, expander `عرض الكل`. |
-| IV. Hard data isolation | ✅ Pass | `facebookPages.userId` on every row; every read filters by it (FR-016). `deleteAllUserData` extended (FR-017). Cross-user test required — SC-007. |
-| V. Read-only by default | ✅ **Strengthened** | Reads come from storage (FR-012); Meta is contacted only at OAuth callback and explicit user re-sync — no new scheduled work, and the daily refresh is deliberately untouched. FR-020 forbids all Page writes; the requested permissions are read-only; FR-023 discards the per-Page token so no write-capable credential is ever persisted. |
-| VI. Fixed verdict vocabulary | ✅ Pass | No verdicts added, renamed, or recoloured. |
-| VII. Purpose is the offer/funnel | ✅ Pass | Pure connection-confirmation UI; does not alter diagnosis or the discovery-call route. |
-| Stack constraints | ✅ Pass | No new runtime dependencies. Uses React 19 / tRPC 11 / Drizzle already in place. |
-| Additive migrations | ✅ Pass | `CREATE TABLE` + `ADD COLUMN` only; nothing altered or dropped (R7). |
+| Principle                                    | Verdict             | Basis                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| I. Deterministic engine — no AI in decisions | ✅ Pass             | Feature never touches `server/engine.ts`; no verdict, diagnosis, or evaluation-order code is read or written.                                                                                                                                                                                                                                |
+| II. Rule codes verbatim                      | ✅ Pass             | No rule codes involved.                                                                                                                                                                                                                                                                                                                      |
+| III. Simple Arabic everywhere                | ✅ Pass             | FR-009 mandates 6th-grade Arabic; FR-006 mandates `.num` LTR rendering for follower counts inside the RTL layout. Section heading `صفحاتك على فيسبوك`, expander `عرض الكل`.                                                                                                                                                                  |
+| IV. Hard data isolation                      | ✅ Pass             | `facebookPages.userId` on every row; every read filters by it (FR-016). `deleteAllUserData` extended (FR-017). Cross-user test required — SC-007.                                                                                                                                                                                            |
+| V. Read-only by default                      | ✅ **Strengthened** | Reads come from storage (FR-012); Meta is contacted only at OAuth callback and explicit user re-sync — no new scheduled work, and the daily refresh is deliberately untouched. FR-020 forbids all Page writes; the requested permissions are read-only; FR-023 discards the per-Page token so no write-capable credential is ever persisted. |
+| VI. Fixed verdict vocabulary                 | ✅ Pass             | No verdicts added, renamed, or recoloured.                                                                                                                                                                                                                                                                                                   |
+| VII. Purpose is the offer/funnel             | ✅ Pass             | Pure connection-confirmation UI; does not alter diagnosis or the discovery-call route.                                                                                                                                                                                                                                                       |
+| Stack constraints                            | ✅ Pass             | No new runtime dependencies. Uses React 19 / tRPC 11 / Drizzle already in place.                                                                                                                                                                                                                                                             |
+| Additive migrations                          | ✅ Pass             | `CREATE TABLE` + `ADD COLUMN` only; nothing altered or dropped (R7).                                                                                                                                                                                                                                                                         |
 
 **Result: PASS — no violations, so Complexity Tracking is omitted.**
 
-Post-Phase-1 re-evaluation: **still PASS.** The design added a `(userId, pageId)` unique index and a nullable timestamp column, both additive; no principle changed status. The one design decision worth recording is that `syncPages` *deletes* rows where the sibling `syncAccounts` does not — justified in R5 (Pages own no downstream data; ad accounts own user configuration).
+Post-Phase-1 re-evaluation: **still PASS.** The design added a `(userId, pageId)` unique index and a nullable timestamp column, both additive; no principle changed status. The one design decision worth recording is that `syncPages` _deletes_ rows where the sibling `syncAccounts` does not — justified in R5 (Pages own no downstream data; ad accounts own user configuration).
 
 ## Project Structure
 
@@ -110,13 +110,13 @@ Phases A→D are ordered by dependency. Phase B's scope change is inert until Ap
 
 ## Risks
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
+| Risk                                                                | Impact                                                                                              | Mitigation                                                                                                                  |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | **Meta App Review** for `pages_show_list` + `pages_read_engagement` | Section stays empty for non-app-role users until approved — blocks user-visible delivery, not merge | Submit as early as possible; screencast the read-only section; the empty state is already a supported, silent case (FR-029) |
-| `scopes` column is wrong for every existing row (hardcoded literal) | Reconnect-note detection would read a constant | Fixed in Phase B; legacy `"ads_read"` values correctly evaluate to "no Page visibility", so no backfill is needed (R2) |
-| `syncAccounts` return-shape change | Breaks `Home.tsx:113` if missed | Contract documented; client updated in the same change; `npm run check` catches it |
-| Migration tooling hazards in this repo | A wrong path can re-run old migrations | Use `npm run db:push` only; never `apply-migrations.mjs`; never touch `0010_settings_unique_index.sql` (R7) |
-| Users declining the permission mid-dialog | Ambiguous "no Pages" vs "no permission" | `/me/permissions` records what was actually granted; declines route to the same note as legacy grants (FR-025) |
+| `scopes` column is wrong for every existing row (hardcoded literal) | Reconnect-note detection would read a constant                                                      | Fixed in Phase B; legacy `"ads_read"` values correctly evaluate to "no Page visibility", so no backfill is needed (R2)      |
+| `syncAccounts` return-shape change                                  | Breaks `Home.tsx:113` if missed                                                                     | Contract documented; client updated in the same change; `npm run check` catches it                                          |
+| Migration tooling hazards in this repo                              | A wrong path can re-run old migrations                                                              | Use `npm run db:push` only; never `apply-migrations.mjs`; never touch `0010_settings_unique_index.sql` (R7)                 |
+| Users declining the permission mid-dialog                           | Ambiguous "no Pages" vs "no permission"                                                             | `/me/permissions` records what was actually granted; declines route to the same note as legacy grants (FR-025)              |
 
 ## Open Items for `/speckit-tasks`
 

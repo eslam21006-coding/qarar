@@ -37,16 +37,16 @@ Reads stored Pages for the calling user. Never contacts Meta.
 // input: none
 // output:
 Array<{
-  pageId: string,
-  name: string | null,
-  pictureUrl: string | null,
-  followersCount: number | null,   // null = unavailable (omit line); 0 = genuine zero
-}>
+  pageId: string;
+  name: string | null;
+  pictureUrl: string | null;
+  followersCount: number | null; // null = unavailable (omit line); 0 = genuine zero
+}>;
 ```
 
 - Ordered `followersCount DESC`, nulls last, then `name` (FR-007).
 - Returns `[]` when the user has no Pages — the client hides the section (FR-002). An empty array is a normal result, never an error.
-- **Returns `[]` when the user's Meta connection is not `active`.** `activeProcedure` is `protectedProcedure.use(requireActiveSubscription)` (`server/_core/trpc.ts:61`) — it gates on *subscription*, not on Meta connection state, so it does **not** deliver FR-002's "active Meta connection" condition. This procedure must check `conn.status === "active"` itself. Without it, a user whose token expired would keep receiving stored Pages, contradicting FR-002 and the expired-connection edge case, with the rule enforced only by a client-side condition.
+- **Returns `[]` when the user's Meta connection is not `active`.** `activeProcedure` is `protectedProcedure.use(requireActiveSubscription)` (`server/_core/trpc.ts:61`) — it gates on _subscription_, not on Meta connection state, so it does **not** deliver FR-002's "active Meta connection" condition. This procedure must check `conn.status === "active"` itself. Without it, a user whose token expired would keep receiving stored Pages, contradicting FR-002 and the expired-connection edge case, with the rule enforced only by a client-side condition.
 - Scoped to `ctx.user.id`; no input parameter can widen the scope (FR-016).
 - The per-Page access token is absent from both the row and this type (FR-023).
 
@@ -90,7 +90,7 @@ Sets `metaConnections.pagesNoticeDismissedAt = now()` for the calling user. Idem
 
 ### Client migration
 
-`client/src/pages/Home.tsx:113` currently treats the return value as the account list. It must read `.accounts`, and show a second toast in simple Arabic when `pagesSynced === false` — e.g. `تعذّر تحديث قائمة الصفحات` alongside the existing `تم تحديث الحسابات`. `npm run check` will flag the call site if missed.
+`client/src/pages/Home.tsx` (the `syncAccounts` `onSuccess` handler) currently treats the return value as the account list. It must read `.accounts`, and show a second toast in simple Arabic when `pagesSynced === false` — e.g. `تعذّر تحديث قائمة الصفحات` alongside the existing `تم تحديث الحسابات`. `npm run check` will flag the call site if missed.
 
 **Serves**: FR-011, FR-013, FR-014, SC-006, SC-009
 
@@ -104,7 +104,7 @@ Sets `metaConnections.pagesNoticeDismissedAt = now()` for the calling user. Idem
 
 ## Non-tRPC surface
 
-**`GET /api/meta/callback`** (`server/metaCallback.ts:97`) — no change to its request or response contract; it still redirects to `/?meta=connected`. Two internal behaviour changes:
+**`GET /api/meta/callback`** (the route in `server/metaCallback.ts`) — no change to its request or response contract; it still redirects to `/?meta=connected`. Two internal behaviour changes:
 
 1. `scopes` is now the comma-joined list of permissions Meta reports as **granted**, replacing the hardcoded `"ads_read"` at line 131.
 2. After the existing best-effort ad-account sync, Pages are synced best-effort too. A Pages failure must not change the redirect — the user still lands connected, and their next re-sync fills the list.
@@ -115,7 +115,7 @@ Sets `metaConnections.pagesNoticeDismissedAt = now()` for the calling user. Idem
 
 ## OAuth scope change
 
-`buildOAuthUrl` (`server/meta.ts:59`):
+`buildOAuthUrl` (in `server/meta.ts`):
 
 ```diff
 - scope: "ads_read,ads_management",

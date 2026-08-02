@@ -36,7 +36,10 @@ export const facebookPages = mysqlTable(
     createdAt: timestamp("createdAt").defaultNow().notNull(),
   },
   t => ({
-    userPageIdx: uniqueIndex("uq_facebookPages_user_page").on(t.userId, t.pageId),
+    userPageIdx: uniqueIndex("uq_facebookPages_user_page").on(
+      t.userId,
+      t.pageId
+    ),
   })
 );
 
@@ -45,14 +48,14 @@ export type FacebookPage = typeof facebookPages.$inferSelect;
 
 ### Field rules
 
-| Field | Rule |
-|-------|------|
-| `userId` | Required on every row; every query filters by it. Never nullable — an unowned Page row is a data-isolation defect. |
-| `pageId` | Meta's identifier. Unique **per user**, not globally — two users may legitimately manage the same Page and each gets their own row. |
-| `name` | Nullable; Meta can omit it. UI falls back to the `pageId` rather than rendering an empty row (SC-002). |
-| `pictureUrl` | Nullable. Expiry is expected and handled client-side by the `onError` placeholder (FR-004, R8). |
+| Field            | Rule                                                                                                                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `userId`         | Required on every row; every query filters by it. Never nullable — an unowned Page row is a data-isolation defect.                                                                                     |
+| `pageId`         | Meta's identifier. Unique **per user**, not globally — two users may legitimately manage the same Page and each gets their own row.                                                                    |
+| `name`           | Nullable; Meta can omit it. UI falls back to the `pageId` rather than rendering an empty row (SC-002).                                                                                                 |
+| `pictureUrl`     | Nullable. Expiry is expected and handled client-side by the `onError` placeholder (FR-004, R8).                                                                                                        |
 | `followersCount` | **Nullable and meaningful**: `NULL` means Meta did not report it → omit the follower line (FR-005). `0` means zero followers and renders as a real zero. These two must never collapse into one value. |
-| `syncedAt` | Set on every insert; supports the "point-in-time" framing in the spec's Assumptions. |
+| `syncedAt`       | Set on every insert; supports the "point-in-time" framing in the spec's Assumptions.                                                                                                                   |
 
 ### Why a unique index is safe here
 
@@ -76,18 +79,18 @@ One additive nullable column:
 pagesNoticeDismissedAt: timestamp("pagesNoticeDismissedAt"),
 ```
 
-The existing `scopes: text("scopes")` column is **not** altered — but its *contents* change meaning. It currently receives the hardcoded literal `"ads_read"` from `server/metaCallback.ts:131`. From this feature onward it receives the comma-joined list of permissions Meta reports as actually granted (R2). No backfill: legacy `"ads_read"` values already evaluate to "no Page visibility", which is the correct answer for those rows.
+The existing `scopes: text("scopes")` column is **not** altered — but its _contents_ change meaning. It currently receives the hardcoded literal `"ads_read"` from `server/metaCallback.ts` (the OAuth-callback handler). From this feature onward it receives the comma-joined list of permissions Meta reports as actually granted (R2). No backfill: legacy `"ads_read"` values already evaluate to "no Page visibility", which is the correct answer for those rows.
 
 ---
 
 ## 3. Derived values (computed, not stored)
 
-| Value | Derivation | Serves |
-|-------|-----------|--------|
-| `hasPagesVisibility` | `scopes` contains both `pages_show_list` and `pages_read_engagement` | FR-024 |
-| `showPagesNotice` | connection is `active` AND `!hasPagesVisibility` AND `pagesNoticeDismissedAt IS NULL` | FR-025, FR-026, FR-027 |
-| display order | `followersCount DESC NULLS LAST`, then `name` | FR-007, Assumptions |
-| `hasMore` | stored Page count > 5 | FR-008, FR-008a |
+| Value                | Derivation                                                                            | Serves                 |
+| -------------------- | ------------------------------------------------------------------------------------- | ---------------------- |
+| `hasPagesVisibility` | `scopes` contains both `pages_show_list` and `pages_read_engagement`                  | FR-024                 |
+| `showPagesNotice`    | connection is `active` AND `!hasPagesVisibility` AND `pagesNoticeDismissedAt IS NULL` | FR-025, FR-026, FR-027 |
+| display order        | `followersCount DESC NULLS LAST`, then `name`                                         | FR-007, Assumptions    |
+| `hasMore`            | stored Page count > 5                                                                 | FR-008, FR-008a        |
 
 Ordering is applied at read time, not stored, so it stays consistent without a migration if the rule ever changes.
 
@@ -112,13 +115,13 @@ Disconnect ─────► deleteAllUserData ──► facebookPages rows del
 Deauthorize ────► same wipe path, driven by Meta's webhook (FR-018)
 ```
 
-**`syncPages` is a replace**: delete the user's rows, insert the incoming set. This differs from the sibling `db.syncAccounts` (`server/db.ts:221`), which never deletes — deliberately, because ad accounts own downstream `funnelSettings` / `snapshots` / `verdictHistory` rows and deleting them would orphan user configuration. Pages own nothing, so replace is both safe and the simplest way to satisfy FR-013's removal requirement. Writes begin only after the Graph fetch fully succeeds, so a fetch failure can never empty the table (R5).
+**`syncPages` is a replace**: delete the user's rows, insert the incoming set. This differs from the sibling `db.syncAccounts` (in `server/db.ts`), which never deletes — deliberately, because ad accounts own downstream `funnelSettings` / `snapshots` / `verdictHistory` rows and deleting them would orphan user configuration. Pages own nothing, so replace is both safe and the simplest way to satisfy FR-013's removal requirement. Writes begin only after the Graph fetch fully succeeds, so a fetch failure can never empty the table (R5). The delete + insert run inside one MySQL transaction (research R5: "wrap in a transaction if the driver path makes it free").
 
 ---
 
 ## 5. Deletion coverage
 
-`deleteAllUserData` (`server/db.ts:172`) gains one line, ordered before `metaConnections`:
+`deleteAllUserData` (in `server/db.ts`) gains one line, ordered before `metaConnections`:
 
 ```ts
 await db.delete(facebookPages).where(eq(facebookPages.userId, userId));
@@ -146,12 +149,12 @@ export type FacebookPageDisplay = {
 
 ## 7. Validation rules mapped to requirements
 
-| Rule | Requirement |
-|------|-------------|
-| Every read filters by `userId` | FR-016, SC-007 |
-| Per-Page access token never written to any column | FR-023, SC-012 |
-| `NULL` vs `0` followers stay distinct | FR-005, Edge Cases |
-| Re-sync removes Pages no longer managed | FR-013 |
-| Fetch failure leaves rows untouched | FR-014, SC-009 |
-| Wipe on disconnect and deauthorize | FR-017, FR-018, SC-008 |
-| At most 5 rendered before the expander | FR-008, FR-008a |
+| Rule                                              | Requirement            |
+| ------------------------------------------------- | ---------------------- |
+| Every read filters by `userId`                    | FR-016, SC-007         |
+| Per-Page access token never written to any column | FR-023, SC-012         |
+| `NULL` vs `0` followers stay distinct             | FR-005, Edge Cases     |
+| Re-sync removes Pages no longer managed           | FR-013                 |
+| Fetch failure leaves rows untouched               | FR-014, SC-009         |
+| Wipe on disconnect and deauthorize                | FR-017, FR-018, SC-008 |
+| At most 5 rendered before the expander            | FR-008, FR-008a        |
