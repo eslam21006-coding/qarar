@@ -13,6 +13,19 @@ import { encryptToken } from "./crypto";
 import * as db from "./db";
 
 /**
+ * OAuth scopes the app requests at connect time. Used as the
+ * conservative fallback when /me/permissions fails — hasPagesVisibility
+ * evaluates to false on this read, which routes the user to the
+ * reconnect note rather than a broken flow.
+ */
+const REQUESTED_SCOPES = [
+  "ads_read",
+  "ads_management",
+  "pages_show_list",
+  "pages_read_engagement",
+];
+
+/**
  * Meta App Review — verify a `signed_request` payload.
  *
  * Format: `<base64url(sig)>.<base64url(jsonPayload)>` where `sig` is
@@ -130,7 +143,22 @@ export function registerMetaCallback(app: Express) {
       // check (including FR-024's "does this connection have Page
       // visibility?") read a constant; FR-024 requires we tell a
       // connection with Page visibility apart from one without.
-      const grantedPermissions = await fetchGrantedPermissions(token);
+      //
+      // Best-effort: a transient /me/permissions failure (rate limit,
+      // Meta outage) MUST NOT prevent persisting a successful
+      // authorization — the user just completed OAuth and the redirect
+      // must continue. On failure we fall back to the OAuth scope the
+      // app requested (research R2: any scope-derived check on a
+      // conservative read evaluates to "no Page visibility", which is
+      // the right answer — the user gets the reconnect note rather
+      // than a broken flow). A future re-sync / re-authorize will
+      // overwrite this column with the truth.
+      let grantedPermissions: string[] = [];
+      try {
+        grantedPermissions = await fetchGrantedPermissions(token);
+      } catch {
+        grantedPermissions = REQUESTED_SCOPES;
+      }
       await db.upsertConnection({
         userId,
         fbUserId: me.id,
