@@ -16,6 +16,7 @@ import {
   buildSnapshot,
   fetchAdAccounts,
   fetchAdDailyHistory,
+  fetchUserPages,
   revokeToken,
   setDailyBudget,
   setObjectStatus,
@@ -26,6 +27,7 @@ import { deriveTargets, runEngine } from "./engine";
 import {
   AccountSnapshotPayload,
   DailyMetrics,
+  FacebookPageDisplay,
   FunnelInputs,
   SUPPORTED_CURRENCIES,
 } from "../shared/qarar";
@@ -149,12 +151,32 @@ export const appRouter = router({
     /** Connection status + whether the Facebook app credentials are configured. */
     status: protectedProcedure.query(async ({ ctx }) => {
       const conn = await db.getConnection(ctx.user.id);
+      // Spec 013 / FR-024, FR-027 — `hasPagesVisibility` requires BOTH
+      // `pages_show_list` AND `pages_read_engagement` (research R1); one
+      // alone is not enough. `showPagesNotice` is the three-way
+      // condition that decides whether to render the dismissible
+      // reconnect note: connected AND no Page visibility AND the note
+      // was never dismissed for this user (FR-025/FR-026/FR-027).
+      const scopes = conn?.scopes ?? null;
+      const scopeSet = new Set(
+        (scopes ?? "")
+          .split(",")
+          .map(s => s.trim())
+          .filter(Boolean)
+      );
+      const hasPagesVisibility =
+        scopeSet.has("pages_show_list") && scopeSet.has("pages_read_engagement");
+      const connected = !!conn && conn.status === "active";
+      const showPagesNotice =
+        connected && !hasPagesVisibility && conn?.pagesNoticeDismissedAt == null;
       return {
         configured: !!META_APP_ID(),
-        connected: !!conn && conn.status === "active",
+        connected,
         needsReauth: !!conn && conn.status !== "active",
         fbUserName: conn?.fbUserName ?? null,
         connectedAt: conn?.createdAt ?? null,
+        hasPagesVisibility,
+        showPagesNotice,
       };
     }),
 
@@ -198,7 +220,74 @@ export const appRouter = router({
         }
         throw new TRPCError({ code: "BAD_GATEWAY", message: e.message });
       }
-      return db.listAccounts(ctx.user.id);
+      // Spec 013 / FR-011, FR-013, FR-014, contracts §syncAccounts —
+      // Pages are synced after the account sync, guarded by Page
+      // visibility, in its own try/catch so a Pages failure cannot fail
+      // the account sync (FR-014). An auth error escalates to the
+      // RECONNECT_REQUIRED path — an expired token is not a partial
+      // failure. When the connection lacks Page visibility, no Pages
+      // call is made and `pagesSynced` is `true` (nothing to sync is
+      // not a failure, per contracts §syncAccounts §5).
+      const scopes = (conn.scopes ?? "")
+        .split(",")
+        .map(s => s.trim())
+        .filter(Boolean);
+      const hasPagesVisibility =
+        scopes.includes("pages_show_list") &&
+        scopes.includes("pages_read_engagement");
+      let pagesSynced = true;
+      if (hasPagesVisibility) {
+        try {
+          const pages = await fetchUserPages(token);
+          await db.syncPages(ctx.user.id, conn.id, pages);
+        } catch (e: any) {
+          if (e?.isAuthError) {
+            await db.markConnectionStatus(ctx.user.id, "expired");
+            throw new TRPCError({
+              code: "PRECONDITION_FAILED",
+              message: "RECONNECT_REQUIRED",
+            });
+          }
+          // Non-auth Pages failure: swallow; report pagesSynced=false;
+          // prior rows are intact (FR-014, R5 — writes only happen
+          // after a successful fetch).
+          pagesSynced = false;
+        }
+      }
+      const accounts = await db.listAccounts(ctx.user.id);
+      return { accounts, pagesSynced };
+    }),
+
+    /**
+     * Spec 013 / FR-002 / contracts/meta-router.md — read stored Pages
+     * for the calling user. Never contacts Meta. Returns `[]` when the
+     * user's Meta connection is not `active` even though Page rows may
+     * still exist on disk (FR-002 + "Connection expired" edge case).
+     * `activeProcedure` gates on subscription, not on Meta connection
+     * state, so the `status === "active"` check is enforced here.
+     * Scoped strictly to `ctx.user.id` (FR-016, SC-007).
+     */
+    pages: activeProcedure.query(async ({ ctx }): Promise<FacebookPageDisplay[]> => {
+      const conn = await db.getConnection(ctx.user.id);
+      if (!conn || conn.status !== "active") return [];
+      const rows = await db.listPages(ctx.user.id);
+      return rows.map(r => ({
+        pageId: r.pageId,
+        name: r.name,
+        pictureUrl: r.pictureUrl,
+        followersCount: r.followersCount,
+      }));
+    }),
+
+    /**
+     * Spec 013 / FR-026 — dismiss the "reconnect to see your Pages"
+     * note. Idempotent (calling twice is harmless). A user with no
+     * Meta connection is a no-op rather than an error (they could not
+     * have seen the note; FR-027).
+     */
+    dismissPagesNotice: activeProcedure.mutation(async ({ ctx }) => {
+      await db.dismissPagesNotice(ctx.user.id);
+      return { success: true } as const;
     }),
 
     selectAccount: activeProcedure
