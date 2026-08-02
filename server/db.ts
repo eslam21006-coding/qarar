@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
@@ -6,6 +6,7 @@ import {
   user as authUser,
   metaConnections,
   adAccounts,
+  facebookPages,
   funnelSettings,
   snapshots,
   actionChecks,
@@ -177,6 +178,14 @@ export async function deleteAllUserData(userId: string) {
   await db.delete(funnelSettings).where(eq(funnelSettings.userId, userId));
   await db.delete(actionChecks).where(eq(actionChecks.userId, userId));
   await db.delete(adAccounts).where(eq(adAccounts.userId, userId));
+  // Spec 013 / FR-017 — Pages are wiped alongside everything else
+  // ("افصل واحذف بياناتي"). Ordered before `metaConnections` so the
+  // connection row's `pagesNoticeDismissedAt` column is also dropped
+  // (the column lives on the connection row, which is deleted below).
+  // The Meta deauthorize webhook (`server/metaCallback.ts:170`) reaches
+  // this same path, so FR-018 (deauthorize wipes Pages too) is
+  // satisfied by the same one-line addition.
+  await db.delete(facebookPages).where(eq(facebookPages.userId, userId));
   await db.delete(metaConnections).where(eq(metaConnections.userId, userId));
 }
 
@@ -291,6 +300,92 @@ export async function ensureDemoAccount(userId: string) {
     .where(and(eq(adAccounts.userId, userId), eq(adAccounts.isDemo, true)))
     .limit(1);
   return created[0];
+}
+
+// ============================================================
+// Spec 013 — Facebook Pages (display-only, per-user)
+// ============================================================
+
+/**
+ * Spec 013 / FR-002, FR-007, FR-016 — read the caller's stored Pages.
+ * Strictly scoped by userId (constitution IV). Ordered by follower count
+ * descending with NULLs last, then by name — the same stable ordering the
+ * UI relies on so two renders of the same data show the same order.
+ */
+export async function listPages(userId: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(facebookPages)
+    .where(eq(facebookPages.userId, userId))
+    .orderBy(
+      // NULLs last is required by FR-005: Pages whose follower count Meta
+      // withheld must sort after every Page with a known count, never
+      // displace a Page with a known value.
+      sql`${facebookPages.followersCount} IS NULL`,
+      desc(facebookPages.followersCount),
+      facebookPages.name
+    );
+}
+
+/**
+ * Spec 013 / FR-013 / research R5 — replace the user's Page set with the
+ * incoming list. Differs deliberately from `syncAccounts`, which never
+ * deletes (ad accounts own downstream `funnelSettings` / `snapshots` /
+ * `verdictHistory` rows). Facebook Pages own nothing, so replace is the
+ * simplest way to satisfy FR-013's "Pages no longer managed disappear"
+ * requirement.
+ *
+ * Crash-window tradeoff (research R5, accepted): a crash between the
+ * delete and the inserts leaves the user with zero Pages, hiding the
+ * section until their next sync. The window is sub-second, writes begin
+ * only after a successful fetch, and the damage is a hidden confirmation
+ * strip — not lost user data.
+ *
+ * Per-Page access tokens are NEVER accepted here — the caller passes a
+ * list whose every element has `{ pageId, name, pictureUrl, followersCount }`
+ * and nothing else (FR-023, SC-012).
+ */
+export async function syncPages(
+  userId: string,
+  connectionId: number,
+  pages: Array<{
+    pageId: string;
+    name: string | null;
+    pictureUrl: string | null;
+    followersCount: number | null;
+  }>
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  await db.delete(facebookPages).where(eq(facebookPages.userId, userId));
+  if (pages.length === 0) return;
+  await db.insert(facebookPages).values(
+    pages.map(p => ({
+      userId,
+      connectionId,
+      pageId: p.pageId,
+      name: p.name,
+      pictureUrl: p.pictureUrl,
+      followersCount: p.followersCount,
+    }))
+  );
+}
+
+/**
+ * Spec 013 / FR-026 — record that the user dismissed the "reconnect to see
+ * your Pages" note. Idempotent (dismissing twice is harmless). A user with
+ * no Meta connection is a no-op rather than an error (they could not have
+ * seen the note; FR-027).
+ */
+export async function dismissPagesNotice(userId: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(metaConnections)
+    .set({ pagesNoticeDismissedAt: new Date() })
+    .where(eq(metaConnections.userId, userId));
 }
 
 // ============================================================
