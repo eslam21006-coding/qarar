@@ -13,17 +13,14 @@ import { encryptToken } from "./crypto";
 import * as db from "./db";
 
 /**
- * OAuth scopes the app requests at connect time. Used as the
- * conservative fallback when /me/permissions fails — hasPagesVisibility
- * evaluates to false on this read, which routes the user to the
- * reconnect note rather than a broken flow.
+ * The pre-Pages scopes — used as the conservative fallback when
+ * /me/permissions fails. Deliberately excludes `pages_show_list` and
+ * `pages_read_engagement`: falling back to the full *requested* scope
+ * list would claim Page visibility the user may never have granted,
+ * which is the approach research R2 explicitly rejected ("ignores
+ * declines, breaking FR-025").
  */
-const REQUESTED_SCOPES = [
-  "ads_read",
-  "ads_management",
-  "pages_show_list",
-  "pages_read_engagement",
-];
+const PRE_PAGES_FALLBACK_SCOPES = ["ads_read", "ads_management"];
 
 /**
  * Meta App Review — verify a `signed_request` payload.
@@ -147,17 +144,16 @@ export function registerMetaCallback(app: Express) {
       // Best-effort: a transient /me/permissions failure (rate limit,
       // Meta outage) MUST NOT prevent persisting a successful
       // authorization — the user just completed OAuth and the redirect
-      // must continue. On failure we fall back to the OAuth scope the
-      // app requested (research R2: any scope-derived check on a
-      // conservative read evaluates to "no Page visibility", which is
-      // the right answer — the user gets the reconnect note rather
-      // than a broken flow). A future re-sync / re-authorize will
-      // overwrite this column with the truth.
+      // must continue. On /me/permissions failure, fall back to
+      // pre-Pages scopes only. This is conservative: hasPagesVisibility
+      // will return false, triggering the reconnect note (FR-025)
+      // rather than silently claiming Pages access. A future re-authorize
+      // overwrites this column with the truth.
       let grantedPermissions: string[] = [];
       try {
         grantedPermissions = await fetchGrantedPermissions(token);
       } catch {
-        grantedPermissions = REQUESTED_SCOPES;
+        grantedPermissions = PRE_PAGES_FALLBACK_SCOPES;
       }
       await db.upsertConnection({
         userId,

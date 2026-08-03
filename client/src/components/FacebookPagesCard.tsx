@@ -86,7 +86,7 @@ export function FacebookPagesCard({ pages }: { pages: FacebookPageDisplay[] }) {
       <div className="px-6 pt-6">
         <h2 className="font-bold">صفحاتك على فيسبوك</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          للتأكد إنك وصّلت حساب ميتا الصحيح — هذه الصفحات اللي تديرها منه.
+          للتأكد أنك وصّلت حساب ميتا الصحيح — هذه الصفحات التي تديرها منه.
         </p>
       </div>
       <ul
