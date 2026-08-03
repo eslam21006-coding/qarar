@@ -1,6 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { FacebookPagesCard } from "@/components/FacebookPagesCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { signOut } from "@/lib/auth-client";
 import { trpc } from "@/lib/trpc";
@@ -15,6 +16,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Trash2,
+  X,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -99,6 +101,16 @@ function ConnectScreen({
   const utils = trpc.useUtils();
   const status = trpc.meta.status.useQuery();
   const accounts = trpc.meta.accounts.useQuery();
+  // Spec 013 — read stored Pages for the calling user. Gated on an
+  // active connection so an expired token doesn't trigger the read.
+  // The server's `meta.pages` query also enforces the same gate; the
+  // client-side guard is purely an optimization to skip the round-trip.
+  const pagesQuery = trpc.meta.pages.useQuery(undefined, {
+    enabled: !!status.data?.connected,
+  });
+  const dismissPagesNotice = trpc.meta.dismissPagesNotice.useMutation({
+    onSuccess: () => utils.meta.status.invalidate(),
+  });
 
   const connectUrl = trpc.meta.connectUrl.useMutation({
     onSuccess: d => {
@@ -111,9 +123,17 @@ function ConnectScreen({
     },
   });
   const syncAccounts = trpc.meta.syncAccounts.useMutation({
-    onSuccess: () => {
+    onSuccess: d => {
+      // Spec 013 / contracts §syncAccounts — the mutation now returns
+      // `{ accounts, pagesSynced }`. `accounts` is the legacy list shape
+      // consumed by the picker; `pagesSynced` is a per-call flag so a
+      // Pages failure surfaces without failing the account sync.
       utils.meta.accounts.invalidate();
-      toast.success("تم تحديث قائمة الحسابات");
+      utils.meta.pages.invalidate();
+      toast.success("تم تحديث الحسابات");
+      if (d && d.pagesSynced === false) {
+        toast.warning("تعذّر تحديث قائمة الصفحات");
+      }
     },
     onError: () => toast.error("فشل تحديث الحسابات — جرّب إعادة التوصيل"),
   });
@@ -130,12 +150,20 @@ function ConnectScreen({
     onSuccess: () => {
       utils.meta.status.invalidate();
       utils.meta.accounts.invalidate();
+      utils.meta.pages.invalidate();
       toast.success("تم فصل الحساب وحذف كل بياناتك");
     },
   });
 
   const realAccounts = (accounts.data ?? []).filter(a => !a.isDemo);
   const demoAccount = (accounts.data ?? []).find(a => a.isDemo);
+  const pages = pagesQuery.data ?? [];
+  // Demo mode: there is no Meta connection, so the Pages query never
+  // fires. Defensive guard — even if it did, `pages.length === 0` makes
+  // the card render nothing (FR-002). The reconnect note also checks
+  // `connected` and never appears for demo users (FR-027).
+  const isDemo = !!demoAccount;
+  const showPagesNotice = !!status.data?.showPagesNotice && !isDemo;
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -232,6 +260,48 @@ function ConnectScreen({
           )}
         </CardContent>
       </Card>
+
+      {/* Spec 013 / FR-001, FR-002 — Facebook Pages card.
+          Mounted above the ad account picker. Renders nothing when the
+          list is empty (FR-002); the server's gate enforces the
+          "active Meta connection" precondition before this query can
+          return any rows. */}
+      {status.data?.connected && pages.length > 0 && (
+        <FacebookPagesCard pages={pages} />
+      )}
+
+      {/* Spec 013 / FR-025 → FR-028 — one-time dismissible reconnect
+          note for users whose connection lacks Page visibility (legacy
+          grants, declined permissions). It does not gate any existing
+          action — a user who ignores or dismisses it keeps working
+          exactly as before. */}
+      {showPagesNotice && (
+        <Card className="border-v-watch/40 bg-v-watch/10">
+          <CardContent className="flex items-start gap-3 p-4 text-sm">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-v-watch" />
+            <div className="flex-1">
+              <div className="font-bold">
+                أعد التوصيل حتى نتمكن من عرض صفحاتك على فيسبوك.
+              </div>
+              <div className="mt-1 text-muted-foreground">
+                حسابك الحالي ليس فيه صلاحية عرض الصفحات. وصّل حسابك مرة
+                أخرى من زر «وصّل حساب ميتا» أدناه، وسنعرض صفحاتك التي
+                تديرها فوق قائمة الحسابات الإعلانية.
+              </div>
+            </div>
+            <button
+              type="button"
+              data-testid="pages-notice-dismiss"
+              aria-label="إخفاء التنبيه"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={() => dismissPagesNotice.mutate()}
+              disabled={dismissPagesNotice.isPending}
+            >
+              <X className="h-4 w-4" aria-hidden />
+            </button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Real accounts picker */}
       {realAccounts.length > 0 && (

@@ -426,6 +426,19 @@ export interface EngineResult {
   currencySymbol: string;
 }
 
+/**
+ * Spec 013 — display shape for a Facebook Page rendered by the connection
+ * screen. Deliberately omits any token field: the type system makes FR-023
+ * (no per-Page access token ever persisted or returned) hard to violate.
+ */
+export type FacebookPageDisplay = {
+  pageId: string;
+  name: string | null;
+  pictureUrl: string | null;
+  /** null = unavailable → omit the line; 0 = genuine zero */
+  followersCount: number | null;
+};
+
 // ---------- Helpers shared by client & server ----------
 
 export function median(values: number[]): number | null {

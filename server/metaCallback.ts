@@ -4,11 +4,23 @@ import {
   exchangeCodeForToken,
   exchangeForLongLivedToken,
   fetchAdAccounts,
+  fetchGrantedPermissions,
   fetchMe,
+  fetchUserPages,
   META_APP_SECRET,
 } from "./meta";
 import { encryptToken } from "./crypto";
 import * as db from "./db";
+
+/**
+ * The pre-Pages scopes — used as the conservative fallback when
+ * /me/permissions fails. Deliberately excludes `pages_show_list` and
+ * `pages_read_engagement`: falling back to the full *requested* scope
+ * list would claim Page visibility the user may never have granted,
+ * which is the approach research R2 explicitly rejected ("ignores
+ * declines, breaking FR-025").
+ */
+const PRE_PAGES_FALLBACK_SCOPES = ["ads_read", "ads_management"];
 
 /**
  * Meta App Review — verify a `signed_request` payload.
@@ -122,13 +134,34 @@ export function registerMetaCallback(app: Express) {
       }
 
       const me = await fetchMe(token);
+      // Spec 013 / FR-024 / research R2 — store the permissions Meta
+      // ACTUALLY granted, not the literal `"ads_read"` the pre-feature
+      // callback hardcoded. The hardcoded value made every scope-derived
+      // check (including FR-024's "does this connection have Page
+      // visibility?") read a constant; FR-024 requires we tell a
+      // connection with Page visibility apart from one without.
+      //
+      // Best-effort: a transient /me/permissions failure (rate limit,
+      // Meta outage) MUST NOT prevent persisting a successful
+      // authorization — the user just completed OAuth and the redirect
+      // must continue. On /me/permissions failure, fall back to
+      // pre-Pages scopes only. This is conservative: hasPagesVisibility
+      // will return false, triggering the reconnect note (FR-025)
+      // rather than silently claiming Pages access. A future re-authorize
+      // overwrites this column with the truth.
+      let grantedPermissions: string[] = [];
+      try {
+        grantedPermissions = await fetchGrantedPermissions(token);
+      } catch {
+        grantedPermissions = PRE_PAGES_FALLBACK_SCOPES;
+      }
       await db.upsertConnection({
         userId,
         fbUserId: me.id,
         fbUserName: me.name,
         encryptedToken: encryptToken(token),
         tokenExpiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : null,
-        scopes: "ads_read",
+        scopes: grantedPermissions.join(","),
       });
 
       // initial account sync (best effort)
@@ -137,6 +170,27 @@ export function registerMetaCallback(app: Express) {
         if (conn) {
           const accounts = await fetchAdAccounts(token);
           await db.syncAccounts(userId, conn.id, accounts);
+          // Spec 013 / FR-010 / contracts §Non-tRPC surface — Pages are
+          // synced best-effort right after the ad-account sync. Guarded
+          // by whether the granted scope includes Page visibility, so
+          // a user who declined the Pages permissions (or hasn't
+          // completed Meta App Review for them yet) does not silently
+          // have an empty Pages table — they instead see the reconnect
+          // note on next render (FR-025). A Pages failure must NOT
+          // change the `/?meta=connected` redirect; their next re-sync
+          // fills the list (FR-014).
+          const scopes = grantedPermissions;
+          const hasPagesVisibility =
+            scopes.includes("pages_show_list") &&
+            scopes.includes("pages_read_engagement");
+          if (hasPagesVisibility) {
+            try {
+              const pages = await fetchUserPages(token);
+              await db.syncPages(userId, conn.id, pages);
+            } catch {
+              /* best effort — the user can re-sync from UI */
+            }
+          }
         }
       } catch {
         /* user can re-sync from UI */

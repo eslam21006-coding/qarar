@@ -10,6 +10,7 @@ import {
   double,
   bigint,
   index,
+  uniqueIndex,
 } from "drizzle-orm/mysql-core";
 
 /**
@@ -51,11 +52,49 @@ export const metaConnections = mysqlTable("metaConnections", {
   tokenExpiresAt: timestamp("tokenExpiresAt"),
   scopes: text("scopes"),
   status: mysqlEnum("status", ["active", "expired", "revoked"]).default("active").notNull(),
+  /**
+   * Spec 013 — when the user dismissed the "reconnect to see your Pages" note.
+   * NULL = never dismissed. Lives here because the note is only ever shown to
+   * users who have a connection (FR-027), and this row is already deleted by
+   * deleteAllUserData, which satisfies FR-017/FR-019 with no extra wiring.
+   */
+  pagesNoticeDismissedAt: timestamp("pagesNoticeDismissedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export type MetaConnection = typeof metaConnections.$inferSelect;
+
+/**
+ * Facebook Pages the connected user manages — display-only (spec 013).
+ * Refreshed on OAuth callback and explicit re-sync; never by a scheduled job.
+ * The per-Page access token Meta returns is deliberately NOT stored (FR-023):
+ * this feature never acts as a Page, so a write-capable credential has no
+ * reason to exist at rest.
+ * Strictly per-user (constitution IV) — every read filters by userId.
+ */
+export const facebookPages = mysqlTable(
+  "facebookPages",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: varchar("userId", { length: 36 }).notNull(),
+    connectionId: int("connectionId"),
+    /** Meta's Page id, e.g. "1234567890" */
+    pageId: varchar("pageId", { length: 64 }).notNull(),
+    name: text("name"),
+    /** Meta CDN URL from picture{url}; time-limited, may expire between syncs (FR-004) */
+    pictureUrl: text("pictureUrl"),
+    /** NULL = unavailable → omit the line (FR-005). 0 = a genuine zero. */
+    followersCount: int("followersCount"),
+    syncedAt: timestamp("syncedAt").defaultNow().notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  t => ({
+    userPageIdx: uniqueIndex("uq_facebookPages_user_page").on(t.userId, t.pageId),
+  })
+);
+
+export type FacebookPage = typeof facebookPages.$inferSelect;
 
 /**
  * Ad accounts visible to a user's token. `selected` marks the account(s)
