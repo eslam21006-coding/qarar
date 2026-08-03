@@ -25,9 +25,12 @@ import type { FacebookPageDisplay } from "@shared/qarar";
  * expire between syncs, and a broken image is never allowed to break
  * the row.
  *
- * Long names: truncate to a single line via CSS ellipsis; the full
- * name stays reachable via the `title` attribute (spec Edge Cases
- * "Very long Page names").
+ * Long names: truncate to a single line via CSS ellipsis. The full
+ * name stays reachable for mouse users via the `title` attribute AND
+ * for screen readers / keyboard users via `aria-label` — `title` on a
+ * non-focusable `<div>` is invisible to keyboard / touch navigation,
+ * so the accessible label is the source of truth (spec Edge Cases
+ * "Very long Page names"; CodeRabbit review fix).
  */
 const MAX_VISIBLE = 5;
 
@@ -105,6 +108,7 @@ export function FacebookPagesCard({ pages }: { pages: FacebookPageDisplay[] }) {
                 <div
                   className="truncate font-medium"
                   title={p.name ?? p.pageId}
+                  aria-label={p.name ?? p.pageId}
                 >
                   {p.name ?? p.pageId}
                 </div>

@@ -8,6 +8,7 @@ import {
 } from "../drizzle/schema";
 import * as db from "./db";
 import { fetchUserPages } from "./meta";
+import { encryptToken } from "./crypto";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
@@ -73,11 +74,27 @@ beforeAll(async () => {
     subscriptionStatus: "active",
     role: "user",
   });
+  // Both users get an active Meta connection with Page visibility so the
+  // T014a showPagesNotice matrix, the T024 failure-isolation tests,
+  // and the connection-state gate tests can all drive the router through
+  // its production path. Encrypted tokens are real (encryptToken) —
+  // syncAccounts calls decryptToken BEFORE its try block (routers.ts:228),
+  // so a malformed token would throw before reaching fetchAdAccounts and
+  // before any of the auth-error handling we'd want to assert against.
   await db.upsertConnection({
     userId: USER_A_ID,
     fbUserId: "fb_pages_a",
     fbUserName: "Pages A",
-    encryptedToken: "encrypted:fake-a",
+    encryptedToken: encryptToken("test-token-a"),
+    tokenExpiresAt: null,
+    scopes:
+      "ads_read,ads_management,pages_show_list,pages_read_engagement",
+  });
+  await db.upsertConnection({
+    userId: USER_B_ID,
+    fbUserId: "fb_pages_b",
+    fbUserName: "Pages B",
+    encryptedToken: encryptToken("test-token-b"),
     tokenExpiresAt: null,
     scopes:
       "ads_read,ads_management,pages_show_list,pages_read_engagement",
@@ -479,18 +496,21 @@ describe.skipIf(!hasDatabase)("Spec 013 / T023 — replace semantics (FR-013 / S
 // focuses on the lower-layer guarantee: when fetchUserPages rejects, the
 // previously stored rows are unchanged.
 describe.skipIf(!hasDatabase)("Spec 013 / T024 — failure isolation (FR-014 / SC-009)", () => {
+  // USER_B's connection (active status, Page visibility, real encrypted
+  // token) is created in beforeAll — T024's router-driven tests below
+  // share that setup. The connection's token MUST be a real encrypted
+  // value (encryptToken) because syncAccounts calls decryptToken BEFORE
+  // its try block (routers.ts:228) — a malformed token would throw
+  // before reaching fetchAdAccounts and before the auth-error handling
+  // we'd want to assert against.
+
   it("a non-auth Pages fetch failure leaves prior rows intact and reports pagesSynced=false", async () => {
     const d = await db.getDb();
     if (!d) return;
 
-    // Seed User B's connection with Page visibility so meta.syncAccounts
-    // takes the Pages branch, plus one stored Page row.
-    await d
-      .update(metaConnections)
-      .set({
-        scopes: "ads_read,ads_management,pages_show_list,pages_read_engagement",
-      })
-      .where(eq(metaConnections.userId, USER_B_ID));
+    // Seed one stored Page row to prove the failed Pages path did not
+    // touch storage (writes only happen after a successful fetch,
+    // research R5).
     await db.syncPages(USER_B_ID, 0, [
       { pageId: "p-stable", name: "Stable", pictureUrl: null, followersCount: 42 },
     ]);
@@ -530,12 +550,6 @@ describe.skipIf(!hasDatabase)("Spec 013 / T024 — failure isolation (FR-014 / S
     const d = await db.getDb();
     if (!d) return;
 
-    await d
-      .update(metaConnections)
-      .set({
-        scopes: "ads_read,ads_management,pages_show_list,pages_read_engagement",
-      })
-      .where(eq(metaConnections.userId, USER_B_ID));
     await db.syncPages(USER_B_ID, 0, [
       { pageId: "p-stable", name: "Stable", pictureUrl: null, followersCount: 42 },
     ]);

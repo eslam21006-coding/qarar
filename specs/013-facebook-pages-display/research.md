@@ -72,6 +72,8 @@ All Technical Context unknowns are resolved below. Each item states the decision
 
 **Crash-window tradeoff (accepted)**: between the delete and the insert, a crash would leave the user with zero Pages, hiding the section until their next sync. The window is sub-second, writes only begin after a successful fetch, and the damage is a hidden confirmation strip — not lost user data. Wrap in a transaction if the driver path makes it free; do not add a transaction abstraction solely for this.
 
+**Transactional storage guarantee**: `syncPages` wraps the delete + insert in `db.transaction(async tx => ...)` (`server/db.ts`). The `facebookPages` migration (`drizzle/0011_facebook_pages.sql`) does not name a storage engine, so we depend on the deployment default. **The deployment MUST use a transactional engine (InnoDB on MySQL, or any engine on TiDB) — the unique `(userId, pageId)` index and `db.transaction` rely on it.** Without it, a crash between the delete and the insert commits half the sync. A crash before `db.transaction` commits rolls back the entire replacement (no partial state); a crash after commit commits the new set atomically. The deployment guarantee is documented in `quickstart.md` as part of the migration prerequisites.
+
 **Alternatives considered**: diff-and-patch (rejected — more code, same result, and Pages have no identity worth preserving across syncs); soft-delete (rejected — nothing reads history, and it would complicate FR-017's wipe).
 
 ---

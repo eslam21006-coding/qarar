@@ -185,7 +185,7 @@ describe("FacebookPagesCard (T014 / US1 / FR-002/FR-004/FR-005/FR-008/FR-008a)",
     expect(followerText.className).toContain("num");
   });
 
-  it("long names truncate to a single line via ellipsis but stay reachable in the title attribute (spec Edge Cases)", () => {
+  it("long names truncate to a single line via ellipsis but stay reachable in title + aria-label (spec Edge Cases)", () => {
     const longName = "A".repeat(200);
     render(
       <FacebookPagesCard
@@ -199,8 +199,13 @@ describe("FacebookPagesCard (T014 / US1 / FR-002/FR-004/FR-005/FR-008/FR-008a)",
         ]}
       />
     );
+    // Mouse / hover path: native title tooltip.
     const nameEl = screen.getByTitle(longName);
     expect(nameEl).toBeInTheDocument();
+    // Keyboard / screen-reader path: aria-label on the (non-focusable)
+    // div. `title` alone would not be reachable for keyboard or touch
+    // users — CodeRabbit review fix (a11y).
+    expect(nameEl.getAttribute("aria-label")).toBe(longName);
     // The `truncate` Tailwind class applies the CSS ellipsis. We
     // assert on the class list rather than computed style so the test
     // is environment-agnostic.
