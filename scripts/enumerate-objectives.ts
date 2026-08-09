@@ -164,8 +164,8 @@ async function main(): Promise<void> {
     for (const v of entry.values) globalValues.add(v);
   }
 
-  process.stdout.write(
-    `# Objective inventory — ${scope === "all" ? "every user (operator)" : `user <${(scope as { email: string }).email}>`}\n`
+process.stdout.write(
+    `# Objective inventory - ${"all" in scope ? "every user (operator)" : `user <${scope.email}>`}\n`
   );
   process.stdout.write(
     `# Snapshots scanned: ${rows.length} · Users with snapshots: ${byUser.size} · Distinct objectives: ${globalValues.size}\n\n`

@@ -38,13 +38,22 @@ export async function getDb() {
  *
  * Safe to call multiple times — subsequent calls are no-ops once the
  * singleton has been closed and nulled.
+ *
+ * The pool returned by `mysql.createPool({ uri })` exposes a
+ * callback-style `end(cb)` (no promise return) — wrap it in
+ * `new Promise` so `await closeDb()` actually waits for shutdown.
  */
 export async function closeDb(): Promise<void> {
-  const db = _db as unknown as { $client?: { end?: () => Promise<void> } } | null;
-  if (!db) return;
+  if (!_db) return;
+  // Drizzle's `MySql2Database.$client` is typed as `Pool | Connection`
+  // (mysql2 callback API). Narrow at the use-site so the helper stays
+  // defensive against mocks that omit `$client` entirely.
+  const client = (_db as { $client?: { end?: (cb?: (err?: Error | null) => void) => void } }).$client;
   try {
-    if (typeof db.$client?.end === "function") {
-      await db.$client.end();
+    if (client && typeof client.end === "function") {
+      await new Promise<void>((resolve, reject) => {
+        client.end!((err) => (err ? reject(err) : resolve()));
+      });
     }
   } finally {
     _db = null;
