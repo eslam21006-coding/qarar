@@ -60,12 +60,18 @@ the standing evidence so SC-011 is provable from the repository alone.
 
 ## Runtime re-check
 
-The script can be re-run against any environment with a live DB:
+The script can be re-run against any environment with a live DB. The
+`--all` mode is operator-only and requires the explicit `--confirm-all`
+acknowledgement so it cannot be invoked accidentally from a shared shell:
 
 ```bash
 npx tsx scripts/enumerate-objectives.ts --email <user@example.com>
-npx tsx scripts/enumerate-objectives.ts --all
+npx tsx scripts/enumerate-objectives.ts --all --confirm-all
 ```
+
+The userId scope is applied at the SQL level (`where(eq(snapshots.userId,
+userId))`) so the per-user query is bounded to a single user's snapshots
+rather than a full-table read.
 
 Exit codes: 0 = clean, 1 = scope contained no snapshots, 2 = operational
 failure (DB unreachable / bad args).

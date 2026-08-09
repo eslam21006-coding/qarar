@@ -151,8 +151,17 @@ describe("exemption classification (US2 / T011)", () => {
   });
 
   it("via runEngine: ad sets and ads under an exempt campaign inherit exemption (FR-007, SC-004)", () => {
+    // Spec 013 round-2 (CodeRabbit): children must NOT carry the
+    // objective directly — only the campaign does. Inheritance is
+    // exercised by the engine backfilling the child's effective objective
+    // BEFORE evaluation (runEngine early-campaignObjective block). This
+    // proves the inheritance is read at evaluation time, not patched
+    // into the row output after the fact.
     const result = runEngine(
-      buildNonSalesFixture("OUTCOME_AWARENESS", { dailyBudget: 8 }),
+      buildNonSalesFixture("OUTCOME_AWARENESS", {
+        dailyBudget: 8,
+        childObjective: null,
+      }),
       DEMO_FUNNEL as FunnelInputs
     );
     // The fixture carries one ad set and one ad beneath cmp_ns. Both
@@ -163,6 +172,10 @@ describe("exemption classification (US2 / T011)", () => {
     expect(as.verdict).toBe("continue");
     expect(ad.rule).toBe("NS1");
     expect(ad.verdict).toBe("continue");
+    // The engine's objective inheritance also writes the resolved
+    // objective into the EngineRow output (FR-007 surfaces it).
+    expect(as.objective).toBe("OUTCOME_AWARENESS");
+    expect(ad.objective).toBe("OUTCOME_AWARENESS");
   });
 
   it("via runEngine: an exempt campaign with objective=null is NOT exempt (FR-008)", () => {
@@ -185,12 +198,17 @@ describe("exemption classification (US2 / T011)", () => {
 
 function buildNonSalesFixture(
   objective: string,
-  opts: { dailyBudget: number }
+  opts: { dailyBudget: number; childObjective?: string | null }
 ): AccountSnapshotPayload {
   const base = buildDemoSnapshot();
   // Strip every demo object so the fixture is independent.
   for (let i = base.objects.length - 1; i >= 0; i--) base.objects.splice(i, 1);
   base.currency = "USD";
+
+  // Default: children inherit (no objective field). Tests that exercise
+  // inheritance explicitly pass `childObjective: null`; tests that
+  // bypass inheritance can set `childObjective` to a concrete value.
+  const childObjective = opts.childObjective === undefined ? null : opts.childObjective;
 
   const cmp: NormalizedObject = {
     id: "cmp_ns",
@@ -230,7 +248,7 @@ function buildNonSalesFixture(
     campaignId: "cmp_ns",
     dailyBudget: null,
     bidStrategy: null,
-    objective,
+    objective: childObjective,
     createdTime: new Date().toISOString(),
     ageDays: 10,
     w3d: cmp.w3d,
@@ -248,7 +266,7 @@ function buildNonSalesFixture(
     campaignId: "cmp_ns",
     dailyBudget: null,
     bidStrategy: null,
-    objective,
+    objective: childObjective,
     createdTime: new Date().toISOString(),
     ageDays: 10,
     w3d: cmp.w3d,

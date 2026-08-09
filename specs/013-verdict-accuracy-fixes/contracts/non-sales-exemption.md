@@ -99,6 +99,8 @@ resolveDailyRate(o) → { amount, source }
 
 - Span = `ceil((flightEnd − flightStart) / 1 day)`. Zero, negative, unparseable,
   or missing ⇒ unresolvable.
+- Delivery is meaningful when `w3d.spend > 0`. Otherwise rung 3 does not apply
+  and resolution falls to rung 4 (`none`).
 - Observed rate = `w3d.spend / 3`.
 
 **Invariant C4.1** — `NS1` is unreachable with `source === "none"` **when a

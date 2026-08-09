@@ -31,7 +31,7 @@ describe("buildDemoSnapshot — non-regression invariants for spec 013", () => {
     }
   });
 
-  it("every demo object has effectiveStatus !== 'PAUSED' and not undefined", () => {
+  it("every demo object has effectiveStatus === 'ACTIVE' when it is present", () => {
     for (const o of snap.objects) {
       // effectiveStatus is optional; when present it must not be a paused
       // state. The summary-strip active filter (FR-001) collapses to

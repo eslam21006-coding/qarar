@@ -29,6 +29,38 @@ export async function getDb() {
   return _db;
 }
 
+/**
+ * Close the mysql2 pool backing the lazily-initialised Drizzle instance.
+ *
+ * Maintenance CLI scripts (scripts/*.ts) call this in a `finally` block
+ * so the Node.js event loop doesn't stay alive on the open pool —
+ * `drizzle(connectionString)` internally creates a `mysql.createPool`
+ * which keeps idle connections open (see node-mysql2 docs).
+ *
+ * Safe to call multiple times — subsequent calls are no-ops once the
+ * singleton has been closed and nulled.
+ *
+ * The pool returned by `mysql.createPool({ uri })` exposes a
+ * callback-style `end(cb)` (no promise return) — wrap it in
+ * `new Promise` so `await closeDb()` actually waits for shutdown.
+ */
+export async function closeDb(): Promise<void> {
+  if (!_db) return;
+  // Drizzle's `MySql2Database.$client` is typed as `Pool | Connection`
+  // (mysql2 callback API). Narrow at the use-site so the helper stays
+  // defensive against mocks that omit `$client` entirely.
+  const client = (_db as { $client?: { end?: (cb?: (err?: Error | null) => void) => void } }).$client;
+  try {
+    if (client && typeof client.end === "function") {
+      await new Promise<void>((resolve, reject) => {
+        client.end!((err) => (err ? reject(err) : resolve()));
+      });
+    }
+  } finally {
+    _db = null;
+  }
+}
+
 export async function upsertUser(user: InsertUser): Promise<void> {
   if (!user.openId) {
     throw new Error("User openId is required for upsert");
