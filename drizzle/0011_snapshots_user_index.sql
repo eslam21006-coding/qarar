@@ -1,0 +1,34 @@
+-- Spec 013 / CodeRabbit round-2 — `snapshots.userId` index.
+--
+-- !!! THIS FILE IS NOT PICKED UP BY drizzle-kit !!!
+-- !!! DO NOT PUT IT IN drizzle/meta/_journal.json !!!
+-- !!! DO NOT RUN IT VIA `pnpm run db:push` !!!
+--
+-- The per-user query used by `scripts/enumerate-objectives.ts` (the
+-- SC-011 objective-inventory maintenance CLI) is
+-- `where(eq(snapshots.userId, uid))`. Without an index, the column
+-- (`varchar(36)`) is read by table scan; with the index, MySQL/TiDB
+-- uses an index lookup. The index is also available to any future
+-- per-user lookup the engine might add.
+--
+-- WHY THIS FILE IS MANUAL:
+--
+-- The schema in `drizzle/schema.ts` intentionally OMITS the index
+-- declaration. drizzle-kit regenerates migrations from the schema; if
+-- the index were declared there, drizzle-kit would emit a migration on
+-- the next `pnpm run db:push` run, and the production deploy path
+-- (which goes through the existing TiDB-aware applier for non-trivial
+-- changes) would not see this file. The convention matches the
+-- `0010_settings_unique_index.sql` precedent set by Spec 011.
+--
+-- HOW TO APPLY THIS FILE:
+--
+--   npx tsx scripts/apply-migrations.mjs drizzle/0011_snapshots_user_index.sql
+--
+-- Or any equivalent mysql2-compatible connection. The applier does
+-- NOT consult drizzle's journal — it just executes the SQL.
+--
+-- SAFE TO APPLY ANYTIME: `CREATE INDEX` is online for InnoDB / TiDB
+-- and requires no exclusive lock. Existing rows are unaffected.
+
+CREATE INDEX `idx_snapshots_userId` ON `snapshots` (`userId`);

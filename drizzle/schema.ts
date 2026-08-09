@@ -176,6 +176,12 @@ export type FunnelSettings = typeof funnelSettings.$inferSelect;
 /**
  * Cached insights snapshot per ad account. The engine evaluates the cached
  * payload at request time; refresh is on-demand only.
+ *
+ * A `idx_snapshots_userId` index is provided by
+ * `drizzle/0011_snapshots_user_index.sql` — applied manually because the
+ * index is needed by `scripts/enumerate-objectives.ts` but is not part of
+ * drizzle-kit's auto-generated migrations (per the precedent set by
+ * `0010_settings_unique_index.sql`).
  */
 export const snapshots = mysqlTable("snapshots", {
   id: int("id").autoincrement().primaryKey(),

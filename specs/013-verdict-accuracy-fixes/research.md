@@ -47,10 +47,19 @@ are required for coverage (see R8).
 
 ## R2 — Objective inheritance
 
-**Decision.** Reuse as-is. `server/engine.ts:1241-1253` already backfills
-ad-set/ad `objective` from a `Map<campaignId, objective>` before evaluation, and
-`server/engine.test.ts:270-288` already covers both inheritance and the
+**Decision.** Reuse, but resolve inheritance BEFORE evaluation. `server/engine.ts:1340`
+backfills ad-set/ad `objective` from a `Map<campaignId, objective>` at the top of
+`runEngine` — runs against `snapshot.objects` so the backfilled value is what
+`evaluateAd` / `evaluateAdset` see, not just what the EngineRow output carries.
+`server/engine.test.ts:270-288` covers both inheritance and the
 objective-less→`null` case.
+
+**Round-2 correction.** The pre-round-1 implementation backfilled objectives
+into `EngineRow` AFTER evaluation, which left children seeing `objective === null`
+during the per-object evaluator. Under an exempt campaign that meant the
+exempt branch returned `null` and the sales rulebook fired on children —
+exactly the bug CodeRabbit round-2 caught (`server/engine.ts:1340` now resolves
+inheritance on the underlying snapshot objects before any evaluator runs).
 
 **Consequence.** The exemption predicate reads `o.objective` and needs no
 level-specific logic; by the time evaluators run, every object carries its
