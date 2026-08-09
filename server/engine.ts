@@ -31,6 +31,8 @@ import {
   RuleCode,
   TopAction,
   Verdict,
+  convertCurrency,
+  isNonSalesExempt,
   median,
   deriveTargets,
   DISCOVERY_CALL_URL,
@@ -886,6 +888,170 @@ export function diagnose(
 }
 
 // ============================================================
+// Spec 013 / US2 — non-sales exemption branch (FR-006..FR-014,
+// contracts/non-sales-exemption.md §C1..C4). Evaluated as the FIRST
+// statement of every per-object evaluator (FR-009b) and ONLY for exempt
+// objects — non-exempt objects see the existing pipeline byte-identical
+// (FR-020, SC-010).
+// ============================================================
+
+/**
+ * Resolve the daily-rate figure an exempt object is judged against.
+ * Returns BOTH the amount and its provenance (C4) so FR-012b can be
+ * enforced structurally: `NS1` is unreachable with `source === "none"`
+ * when a lifetime budget is present.
+ *
+ *   1. `dailyBudget` present → "daily"
+ *   2. `lifetimeBudget` present and span resolves to ≥ 1 day → "lifetime"
+ *   3. `lifetimeBudget` present, span unresolvable, delivery meaningful
+ *      → "observed" (w3d.spend / 3)
+ *   4. otherwise → "none"
+ *
+ * Span rule (R4 / C4): `ceil((flightEnd − flightStart) / 1 day)`.
+ * Zero, negative, unparseable, or missing → unresolvable → next rung.
+ * Never divide by zero (C4.2).
+ *
+ * `hadLifetime` flags whether the resolution path entered the
+ * lifetime-budget branch at all — needed by the caller to distinguish
+ * the genuine-no-budget `none` (FR-012c ⇒ NS1) from the lifetime-no-
+ * resolvable-rate `none` (FR-009c ⇒ ⏳ GATE). Collapsing the two
+ * re-opens the FR-012b hole.
+ */
+type DailyRateSource = "daily" | "lifetime" | "observed" | "none";
+
+interface DailyRate {
+  amount: number | null;
+  source: DailyRateSource;
+  hadLifetime: boolean;
+}
+
+function resolveDailyRate(o: NormalizedObject): DailyRate {
+  if (o.dailyBudget != null) {
+    return { amount: o.dailyBudget, source: "daily", hadLifetime: false };
+  }
+  if (o.lifetimeBudget != null) {
+    const start = o.flightStart ?? null;
+    const end = o.flightEnd ?? null;
+    if (start !== null && end !== null) {
+      const t0 = Date.parse(start);
+      const t1 = Date.parse(end);
+      if (Number.isFinite(t0) && Number.isFinite(t1) && t1 > t0) {
+        const ms = t1 - t0;
+        const days = Math.max(1, Math.ceil(ms / 86400000));
+        return {
+          amount: o.lifetimeBudget / days,
+          source: "lifetime",
+          hadLifetime: true,
+        };
+      }
+    }
+    // Span unresolvable — try the observed rung (3-day insight average).
+    if (o.w3d.spend > 0) {
+      return {
+        amount: o.w3d.spend / 3,
+        source: "observed",
+        hadLifetime: true,
+      };
+    }
+    // Lifetime budget present but neither span nor delivery — unjudgeable.
+    return { amount: null, source: "none", hadLifetime: true };
+  }
+  // Genuine no-budget case (ad row, CBO ad set, ABO campaign).
+  return { amount: null, source: "none", hadLifetime: false };
+}
+
+/**
+ * Non-sales exemption branch — entered FIRST in every evaluator and
+ * ONLY for exempt objects (FR-009b). Returns `null` for non-exempt
+ * objects so the existing pipeline continues untouched (C2.1, SC-010).
+ *
+ * Ladder (C3):
+ *   1. paused ⇒ existing paused GATE Fired verbatim (FR-009)
+ *   2. daily rate resolves, ≤ threshold ⇒ NS1 continue (FR-013)
+ *   3. daily rate resolves, > threshold ⇒ NS2 watch (FR-014)
+ *   4. no budget at this level (genuine absence) ⇒ NS1 (FR-012c)
+ *   5. lifetime budget with no resolvable rate ⇒ ⏳ GATE (FR-009c, FR-012b)
+ *
+ * The boundary is inclusive on the compliant side: equal-to-threshold ⇒
+ * NS1 (C3.1).
+ *
+ * NS2 reason/action copy is simple Arabic at ≤6th-grade reading level
+ * with the threshold rendered through the existing `money()` helper
+ * bound to the account currency (FR-018, FR-019).
+ */
+function evaluateNonSales(
+  o: NormalizedObject,
+  threshold: number
+): Fired | null {
+  // C1 — membership-only exemption predicate. Null / unknown / future
+  // values fall through and return `null` so the existing pipeline runs.
+  if (!isNonSalesExempt(o.objective ?? null)) return null;
+
+  // Row 1 (C3) — paused wins over the non-sales branch (FR-009). The
+  // existing paused branch in gateVerdict produces the same GATE Fired
+  // we want here — emit it verbatim so the Arabic copy stays in one
+  // place rather than being duplicated across two files.
+  const effectiveDelivered = o.effectiveStatus ?? o.status;
+  if (effectiveDelivered !== "ACTIVE") {
+    return {
+      verdict: "too_early",
+      rule: "GATE",
+      reason: "هذا الإعلان موقوف الآن — لا يصرف ولا يجمع بيانات",
+      action: "شغّله إن أردت تقييمه، أو احذفه إن لم تعد تحتاجه",
+    };
+  }
+
+  const rate = resolveDailyRate(o);
+
+  // Row 4 (C3) — genuine no-budget at this level. Threshold is enforced
+  // once at the level that actually holds the budget; the rest of the
+  // tree is exempt by inheritance (FR-012c, FR-015). The `none` source
+  // here means a LIFETIME-BUDGET OBJECT WITH NO RESOLVABLE RATE is
+  // handled separately on row 5 (C3.3) — collapsing the two would
+  // re-open the FR-012b hole.
+  if (rate.source === "none" && !rate.hadLifetime) {
+    return {
+      verdict: "continue",
+      rule: "NS1",
+      reason:
+        "هذه الحملة هدفها التوعية أو جذب الزيارات، لا تُحكم على المبيعات المباشرة — استمر بنفس الميزانية",
+      action: "تابع أداء الحملة على المدى الطويل — الميزانية اليومية ضمن الحد المسموح",
+    };
+  }
+
+  // Rows 2 & 3 (C3) — daily-rate ladder reached.
+  if (rate.amount !== null && rate.amount <= threshold) {
+    return {
+      verdict: "continue",
+      rule: "NS1",
+      reason:
+        "هذه الحملة هدفها التوعية أو جذب الزيارات، لا تُحكم على المبيعات المباشرة — ميزانيتها اليومية ضمن الحد المسموح",
+      action: "تابع أداء الحملة على المدى الطويل — الميزانية اليومية ضمن الحد المسموح",
+    };
+  }
+  if (rate.amount !== null && rate.amount > threshold) {
+    return {
+      verdict: "watch",
+      rule: "NS2",
+      reason: `هذه الحملة هدفها غير مباشر (التوعية أو جذب الزيارات)، لكن ميزانيتها اليومية ${money(rate.amount)} أعلى من الحد المسموح ${money(threshold)} — قلّلها`,
+      action: `قلّل الميزانية اليومية إلى ${money(threshold)} أو أقل لتعود إلى المستوى المناسب`,
+    };
+  }
+
+  // Row 5 (C3) — lifetime budget present, no resolvable rate. The
+  // single FR-009c carve-out that lets an active exempt object read ⏳.
+  // Crucially distinct from the no-budget row above (C3.3) — collapsing
+  // the two re-opens the FR-012b hole.
+  return {
+    verdict: "too_early",
+    rule: "GATE",
+    reason:
+      "ميزانية هذه الحملة lifetime ولا يوجد جدول زمني أو بيانات صرف كافية لتحديد المعدل اليومي — البيانات لم تكتمل بعد",
+    action: "شغّل الحملة لفترة كافية لجمع بيانات، أو اضبط ميزانية يومية واضحة بدل lifetime",
+  };
+}
+
+// ============================================================
 // Campaign-level evaluation (5.0: judged by العائد الكلي على الإنفاق)
 // ============================================================
 
@@ -894,8 +1060,15 @@ function evaluateCampaign(
   t: JudgeableTargets,
   childRows: EngineRow[],
   htoUnderperforming: boolean,
-  archetype: FunnelInputs["archetype"]
+  archetype: FunnelInputs["archetype"],
+  nsThreshold: number
 ): Fired {
+  // Spec 013 / T025 — exempt branch entered FIRST and ONLY for exempt
+  // objects (FR-009b). Non-exempt objects continue with the existing
+  // pipeline byte-identically (FR-020, SC-010).
+  const ns = evaluateNonSales(o, nsThreshold);
+  if (ns) return ns;
+
   // T026 — pre-separation snapshot guard (see evaluateAd for the rationale).
   // For appointment/webinar with `leadConversions === undefined` we cannot
   // judge at the campaign level either (campaign totals include those
@@ -1005,8 +1178,16 @@ function evaluateAd(
   parent: NormalizedObject | undefined,
   t: JudgeableTargets,
   archetype: FunnelInputs["archetype"],
-  baselines: Baselines
+  baselines: Baselines,
+  nsThreshold: number
 ): Fired {
+  // Spec 013 / T023 — exempt branch entered FIRST and ONLY for exempt
+  // objects (FR-009b). Reaches before preSeparationGate, K3 explicit
+  // kill, and the starved matrix (C2.2). Non-exempt objects continue
+  // with the existing pipeline byte-identically (FR-020, SC-010).
+  const ns = evaluateNonSales(ad, nsThreshold);
+  if (ns) return ns;
+
   // T026 — pre-separation snapshot guard. For `appointment` / `webinar`,
   // `leadConversions === undefined` means the snapshot predates the
   // lead/purchase split (research R6, FR-035). The unit is unknown — do
@@ -1069,8 +1250,16 @@ function evaluateAdset(
   o: NormalizedObject,
   t: JudgeableTargets,
   archetype: FunnelInputs["archetype"],
-  baselines: Baselines
+  baselines: Baselines,
+  nsThreshold: number
 ): Fired {
+  // Spec 013 / T024 — exempt branch entered FIRST and ONLY for exempt
+  // objects (FR-009b). Reaches before preSeparationGate and the circuit
+  // breaker (C2.2). Non-exempt objects continue with the existing
+  // pipeline byte-identically (FR-020, SC-010).
+  const ns = evaluateNonSales(o, nsThreshold);
+  if (ns) return ns;
+
   // T026 — pre-separation snapshot guard (see evaluateAd for the rationale).
   const preSep = preSeparationGate(o, archetype);
   if (preSep) return preSep;
@@ -1114,6 +1303,13 @@ export function runEngine(
   // in this file (K1–K7, CB1/CB2, F1/F2, W1–W6, S1–S4, campaign reasons,
   // buildSummary) renders the account's currency, not a hardcoded "$".
   _currency = currencySymbolFor(snapshot.currency);
+  // Spec 013 / T020 — compute the non-sales exemption threshold once per
+  // run, beside the existing `deriveTargets` call. Direction is
+  // USD → account currency; reversing these arguments produces the
+  // ÷-instead-of-× bug (C5 — AED 10 ⇒ ≈2.72 instead of ≈36.70).
+  // convertCurrency() is a safe no-op for null/undefined/unknown codes
+  // so unknown account currencies fall back to the raw 10 USD figure.
+  const nsThreshold = convertCurrency(10, "USD", snapshot.currency);
 
   // T015 + plan §Compile-time enforcement — every per-object evaluator below
   // takes a `JudgeableTargets` (with `unitTarget: number`). The narrow
@@ -1194,18 +1390,24 @@ export function runEngine(
 
   for (const ad of ads) {
     const parent = ad.parentId ? byId.get(ad.parentId) : undefined;
-    const fired = evaluateAd(ad, parent, judgeable, funnel.archetype, baselines);
+    const fired = evaluateAd(ad, parent, judgeable, funnel.archetype, baselines, nsThreshold);
+    // Spec 013 / T026 — hard skip at the call site, not a filter inside
+    // diagnose() (FR-010a, C6.1). Exempt objects always carry
+    // `findings: []` regardless of verdict; non-exempt objects follow
+    // the existing verdict-based skip.
+    const exempt = isNonSalesExempt(ad.objective ?? null);
     const findings =
-      fired.verdict === "kill" || fired.verdict === "watch"
+      !exempt && (fired.verdict === "kill" || fired.verdict === "watch")
         ? diagnose(ad, baselines, funnel.archetype)
         : [];
     rows.push(toRow(ad, fired, findings));
   }
 
   for (const s of adsets) {
-    const fired = evaluateAdset(s, judgeable, funnel.archetype, baselines);
+    const fired = evaluateAdset(s, judgeable, funnel.archetype, baselines, nsThreshold);
+    const exempt = isNonSalesExempt(s.objective ?? null);
     const findings =
-      fired.verdict === "kill" || fired.verdict === "watch"
+      !exempt && (fired.verdict === "kill" || fired.verdict === "watch")
         ? diagnose(s, baselines, funnel.archetype)
         : [];
     rows.push(toRow(s, fired, findings));
@@ -1213,9 +1415,10 @@ export function runEngine(
 
   for (const c of campaigns) {
     const childRows = rows.filter(r => r.campaignId === c.id && r.level === "adset");
-    const fired = evaluateCampaign(c, judgeable, childRows, !!funnel.htoUnderperforming, funnel.archetype);
+    const fired = evaluateCampaign(c, judgeable, childRows, !!funnel.htoUnderperforming, funnel.archetype, nsThreshold);
     let findings: Finding[] = [];
-    if (fired.verdict === "kill" || fired.verdict === "watch") {
+    const exempt = isNonSalesExempt(c.objective ?? null);
+    if (!exempt && (fired.verdict === "kill" || fired.verdict === "watch")) {
       findings = diagnose(c, baselines, funnel.archetype);
       // W5 campaign: ensure the discovery-call ctaUrl is present. If diagnose()
       // already produced a step-6 fallback, attach the CTA to it instead of
@@ -1433,22 +1636,45 @@ function buildSummary(
   snapshot: AccountSnapshotPayload,
   targets: DerivedTargets
 ): AccountSummary {
+  // Spec 013 / US1 — the three live-state elements (counts, bleed,
+  // top_3_actions) describe only the LIVE account. `EngineRow` has no
+  // `effectiveStatus`; `NormalizedObject` does. Build the snapshot-object
+  // map once and resolve status with the same three-step fallback the
+  // DecisionTable applies (research R7, contracts/summary-strip.md §S1):
+  //   effectiveStatus ?? snapshotObject.status ?? row.status
+  const snapObjById = new Map<string, NormalizedObject>();
+  for (const o of snapshot.objects) snapObjById.set(o.id, o);
+  const isActive = (row: EngineRow): boolean => {
+    const o = snapObjById.get(row.id);
+    const status = o?.effectiveStatus ?? o?.status ?? row.status;
+    return status === "ACTIVE";
+  };
+
   const counts: Record<Verdict, number> = {
     kill: 0, watch: 0, continue: 0, rescue: 0, too_early: 0,
   };
-  for (const r of rows) counts[r.verdict]++;
+  for (const r of rows) {
+    if (!isActive(r)) continue; // FR-001 — active rows only
+    counts[r.verdict]++;
+  }
 
-  // Spend totals from campaign level (avoid double counting)
+  // Spend totals from campaign level (avoid double counting).
+  // FR-005b — historical, not live-state; remain computed over ALL rows.
   const campaignRows = rows.filter(r => r.level === "campaign");
   const total_spend_3d = round2(campaignRows.reduce((s, r) => s + r.spend_3d, 0));
   const total_spend_today = round2(campaignRows.reduce((s, r) => s + r.spend_today, 0));
 
   // Bleed: daily budgets of kill-verdict units (adset/campaign level only to
-  // avoid double counting; ads inherit parent budgets)
+  // avoid double counting; ads inherit parent budgets).
+  // Spec 013 / T008 — filter BEFORE populating killAdsetIds so a paused
+  // kill ad set does not erroneously suppress its active kill child's
+  // bleed (which would enter via the "ad" loop and be skipped as a
+  // parent-already-counted duplicate).
   let bleed = 0;
   const killAdsetIds = new Set<string>();
   for (const r of rows) {
     if (r.verdict !== "kill") continue;
+    if (!isActive(r)) continue; // FR-005 — paused kill rows contribute nothing
     if (r.level === "adset") {
       bleed += r.daily_budget ?? r.spend_3d / 3;
       killAdsetIds.add(r.id);
@@ -1456,6 +1682,7 @@ function buildSummary(
   }
   for (const r of rows) {
     if (r.verdict !== "kill" || r.level !== "ad") continue;
+    if (!isActive(r)) continue; // FR-005
     if (r.parentId && killAdsetIds.has(r.parentId)) continue; // parent already counted
     // estimate ad's share of parent budget by its today spend
     bleed += r.spend_today > 0 ? r.spend_today : r.spend_3d / 3;
@@ -1463,16 +1690,20 @@ function buildSummary(
   // campaign-level kills (CBO) where no adset already counted
   for (const r of rows) {
     if (r.verdict !== "kill" || r.level !== "campaign") continue;
+    if (!isActive(r)) continue; // FR-005
     const childCounted = rows.some(
       x => x.level === "adset" && x.campaignId === r.id && killAdsetIds.has(x.id)
     );
     if (!childCounted) bleed += r.daily_budget ?? r.spend_3d / 3;
   }
 
-  // Top-3: kills with biggest bleed first, then rescues, then scales (S1)
+  // Top-3: kills with biggest bleed first, then rescues, then scales (S1).
+  // Spec 013 / T009 — paused objects never enter the recommended-actions
+  // list (SC-002b); no element can recommend "stop this ad" for an ad
+  // that is already paused.
   const actions: TopAction[] = [];
   const killRows = rows
-    .filter(r => r.verdict === "kill")
+    .filter(r => r.verdict === "kill" && isActive(r))
     .sort((a, b) => (b.daily_budget ?? b.spend_3d / 3) - (a.daily_budget ?? a.spend_3d / 3));
   for (const r of killRows) {
     const impact = r.daily_budget ?? round2(r.spend_3d / 3);
@@ -1491,7 +1722,7 @@ function buildSummary(
       impactValue: impact,
     });
   }
-  const rescueRows = rows.filter(r => r.verdict === "rescue");
+  const rescueRows = rows.filter(r => r.verdict === "rescue" && isActive(r));
   for (const r of rescueRows) {
     actions.push({
       key: `${r.id}:${r.rule}`,
@@ -1508,7 +1739,11 @@ function buildSummary(
       impactValue: r.ctr_link,
     });
   }
-  const scaleRows = rows.filter(r => r.promotion_eligible);
+  // Scale-ready rows are inherently produced by the sales rulebook and
+  // only ever fire for non-exempt objects (FR-010c). The isActive filter
+  // mirrors the kill / rescue filters so the three live-state elements
+  // never disagree about what counts as live.
+  const scaleRows = rows.filter(r => r.promotion_eligible && isActive(r));
   for (const r of scaleRows) {
     actions.push({
       key: `${r.id}:${r.rule}`,
