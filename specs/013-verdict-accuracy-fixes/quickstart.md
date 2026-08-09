@@ -30,9 +30,11 @@ assertion:
 npm test 2>&1 | Select-String -Pattern "Tests|passed|failed" | Select-Object -Last 5
 ```
 
-Record the pass/skip counts. **SC-010 requires this exact count afterwards, with
-no test file modified.** Research R8 established that no current test asserts
-either behaviour being corrected — so a failure here is a real regression, not an
+Record the pass/skip counts. **SC-010 requires that every test passing at
+baseline still passes after implementation, with no existing test file
+modified** — the total passing count WILL grow because this feature adds new
+test files. Research R8 established that no current test asserts either
+behaviour being corrected — so a failure here is a real regression, not an
 expected update. Do not amend a failing test without first proving it asserted
 old behaviour.
 
@@ -165,7 +167,7 @@ as primary copy (FR-017). Confirm the strip's Arabic copy still reads at
 ## Definition of done
 
 - [ ] `npm run check` clean
-- [ ] `npm test` — same pass count as baseline, **no existing test file modified**
+- [ ] `npm test` — every baseline test still passes, **no existing test file modified** (the total passing count grows by the new test files)
 - [ ] All six validations above covered by new tests
 - [ ] `CONVERSIONS` / `MESSAGES` negative tests present (SC-011)
 - [ ] Unrecognised-objective negative test present (SC-012)

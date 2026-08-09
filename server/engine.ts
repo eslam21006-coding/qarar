@@ -1335,6 +1335,34 @@ export function runEngine(
   const judgeable: JudgeableTargets = targets as JudgeableTargets;
 
   const byId = new Map(snapshot.objects.map(o => [o.id, o]));
+
+  // Spec 013 / CodeRabbit round-2 — objective inheritance must be resolved
+  // BEFORE the evaluation loops so child ad sets and ads read the
+  // effective (inherited) objective during evaluation. The prior
+  // implementation backfilled the EngineRow output AFTER evaluation,
+  // which left children seeing `objective === null` for the duration of
+  // `evaluateAd` / `evaluateAdset` — so an `OUTCOME_AWARENESS` campaign
+  // would have its children incorrectly routed into the sales rulebook.
+  //
+  // Mutating `snapshot.objects` in place is safe here: meta.ts and the
+  // buildSnapshot() / demo builders construct a fresh array on every
+  // refresh and do not retain references past the engine call. The
+  // mutation is reflected in both the EngineRow output (via `toRow`) and
+  // the per-object evaluator (via `o.objective`).
+  const campaignObjective = new Map<string, string | null>();
+  for (const o of snapshot.objects) {
+    if (o.level === "campaign") {
+      campaignObjective.set(o.id, o.objective ?? null);
+    }
+  }
+  for (const o of snapshot.objects) {
+    if (o.level !== "campaign" && o.campaignId !== null) {
+      if (o.objective === null || o.objective === undefined) {
+        o.objective = campaignObjective.get(o.campaignId) ?? null;
+      }
+    }
+  }
+
   const rows: EngineRow[] = [];
 
   const toRow = (o: NormalizedObject, fired: Fired, findings: Finding[]): EngineRow => {
@@ -1441,20 +1469,11 @@ export function runEngine(
     rows.push(toRow(c, fired, findings));
   }
 
-  // Objective inheritance: objective exists only at campaign level in Meta.
-  // Backfill ad-set/ad rows from a Map<campaignId, objective> so children
-  // inherit their campaign's objective when their own is null.
-  const campaignObjective = new Map<string, string | null>();
-  for (const r of rows) {
-    if (r.level === "campaign") {
-      campaignObjective.set(r.id, r.objective);
-    }
-  }
-  for (const r of rows) {
-    if (r.objective === null && r.campaignId !== null) {
-      r.objective = campaignObjective.get(r.campaignId) ?? null;
-    }
-  }
+  // Objective inheritance is now resolved at the top of runEngine — see
+  // the early `campaignObjective` backfill block above. Each EngineRow
+  // already carries the effective objective through `toRow`'s
+  // `o.objective ?? null` read, so no per-row backfill is required here.
+  // The shape of the output (`EngineRow.objective`) is unchanged.
 
   const summary = buildSummary(rows, snapshot, targets);
   return { rows, summary, targets, currencySymbol: _currency };

@@ -111,6 +111,34 @@ describe("buildSummary — strip self-consistency (US1 / T005)", () => {
     }
   });
 
+  it("effectiveStatus 'PAUSED' (delivery won) excludes the row from bleed and top_3_actions even when configured status stays ACTIVE (FR-002, S1.1)", () => {
+    // Spec 013 round-2 (CodeRabbit): the prior round mutated both
+    // configured `status` AND `effectiveStatus`. A regression that
+    // filters bleed / actions by configured `status` only would still
+    // pass. Lock in the effectiveStatus precedence: delivery wins.
+    const snap = buildDemoSnapshot();
+    const beforeRun = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+    const killIds = beforeRun.rows.filter(r => r.verdict === "kill").map(r => r.id);
+    expect(killIds.length).toBeGreaterThan(0);
+    // Set ONLY effectiveStatus — leave configured status as ACTIVE.
+    for (const o of snap.objects) {
+      if (killIds.includes(o.id)) {
+        o.effectiveStatus = "PAUSED";
+      }
+    }
+
+    const afterRun = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+    // The kill counter must drop by the number of kill rows we paused.
+    expect(afterRun.summary.counts.kill).toBe(beforeRun.summary.counts.kill - killIds.length);
+    // The bleed must drop too — paused kill rows contribute nothing.
+    expect(afterRun.summary.bleed_daily).toBeLessThan(beforeRun.summary.bleed_daily);
+    // The recommended-actions list must not include any paused kill row.
+    const pausedKillIds = new Set(killIds);
+    for (const action of afterRun.summary.top_3_actions) {
+      expect(pausedKillIds.has(action.objectId)).toBe(false);
+    }
+  });
+
   it("total_spend_3d and total_spend_today are unchanged from the all-rows basis (FR-005b)", () => {
     // Capture spend totals on the unmutated demo (baseline). They are
     // historical figures — a paused object's past spend genuinely

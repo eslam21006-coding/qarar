@@ -15,8 +15,9 @@ count after implementation; any difference is a regression signal.
 
 ## Test counts
 
-- Test files: **42 passing (41 fully run + 1 e2e that's a pre-existing DB
-  connection failure)** — none of the 42 were modified by this feature.
+- Test files: **41 passing**, plus 1 e2e file (`auth-flow.e2e.test.ts`) that
+  fails on a pre-existing DB connection error — none were modified by this
+  feature.
 - Tests: **484 passed, 24 skipped**.
 - Skipped (pre-existing):
   - `server/auth-flow.e2e.test.ts` (11 tests) — e2e, needs MySQL

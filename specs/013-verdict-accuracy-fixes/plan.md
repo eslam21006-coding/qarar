@@ -160,6 +160,20 @@ last produces ⏳ (FR-009c). Encoding provenance rather than a bare number keeps
 FR-012b enforceable in tests: `NS1` must never be reachable with provenance
 `none`.
 
+**Two `none` cases are distinct and must not be collapsed.** The `DailyRate`
+return shape carries an additional `hadLifetime: boolean` discriminator so the
+caller can distinguish:
+
+- **Genuine no-budget** (`dailyBudget == null`, `lifetimeBudget == null`,
+  `hadLifetime === false`) — the threshold is enforced once at the level
+  holding the budget (FR-012c). Verdict: `NS1`.
+- **Lifetime budget with no resolvable rate** (`lifetimeBudget != null`,
+  span unresolvable, no meaningful delivery, `hadLifetime === true`) — the
+  FR-012b / FR-009c carve-out. Verdict: `⏳ GATE`.
+
+Collapsing the two re-opens the FR-012b hole (a lifetime-budget object
+without a dailyBudget field would pass as compliant).
+
 ### D5 — Status resolved in `buildSummary` from the snapshot
 
 `EngineRow` has no `effectiveStatus`; `NormalizedObject` does. `buildSummary`

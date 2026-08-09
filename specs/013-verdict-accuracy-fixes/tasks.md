@@ -72,7 +72,7 @@ Existing repo layout: `shared/qarar.ts`, `server/*.ts`, `client/src/`. Server te
 
 ### Implementation for User Story 1
 
-- [ ] T006 [US1] In `server/engine.ts#buildSummary` (~line 1431), build a `Map<id, NormalizedObject>` from `snapshot.objects` and add an `isActive(row)` helper implementing `effectiveStatus ?? snapObj.status ?? row.status === "ACTIVE"`, matching `client/src/components/DecisionTable.tsx:560-564` exactly (FR-002, data-model §7)
+- [ ] T006 [US1] In `server/engine.ts#buildSummary` (~line 1431), build a `Map<id, NormalizedObject>` from `snapshot.objects` and add an `isActive(row)` helper implementing `(snapObj?.effectiveStatus ?? snapObj?.status ?? row.status) === "ACTIVE"` (the parens make the precedence explicit — `??` has lower precedence than `===`, so the fallback chain must be assigned or parenthesised before comparison), matching `client/src/components/DecisionTable.tsx:560-564` exactly (FR-002, data-model §7)
 - [ ] T007 [US1] Apply `isActive` to the counter tally in `server/engine.ts` (~line 1436-1439) so only active rows are counted (FR-001)
 - [ ] T008 [US1] Apply `isActive` to all three bleed loops in `server/engine.ts` (~lines 1450, 1457, 1464) so paused kill rows contribute nothing (FR-005). **Apply the filter before `killAdsetIds` is populated, not after**: that set drives the "parent already counted" dedup, so a paused kill ad set must not enter it — which correctly leaves an *active* kill ad beneath it to be counted on its own. Add an assertion for exactly that shape (active kill ad under a paused kill ad set ⇒ its spend appears in `bleed_daily` exactly once)
 - [ ] T009 [US1] Apply `isActive` to `killRows`, `rescueRows`, and `scaleRows` in `server/engine.ts` (~lines 1474, 1494, 1511) so paused objects never enter `top_3_actions` (FR-005, SC-002b)
@@ -126,7 +126,7 @@ Existing repo layout: `shared/qarar.ts`, `server/*.ts`, `client/src/`. Server te
 ## Phase 5: Polish & Cross-Cutting Concerns
 
 - [ ] T028 Run `npm run check` and confirm it is clean, including that `RULES` covers the extended `RuleCode` union
-- [ ] T029 Run `npm test` and compare against `baseline.md`: the pass count must match and **no existing test file may have been modified**. Per research R8 no current test asserts the corrected behaviour, so any failure is a genuine regression — investigate it, do not amend the test (SC-010)
+- [ ] T029 Run `npm test` and compare against `baseline.md`: **every test that existed at baseline must still pass**, and **no existing test file may have been modified**. The total passing test count WILL grow because this feature adds new test files — what SC-010 forbids is modification of existing tests, not growth of the count. Per research R8 no current test asserts the corrected behaviour, so any failure is a genuine regression — investigate it, do not amend the test (SC-010).
 - [ ] T030 [P] Review the new `NS1`/`NS2` copy in `shared/qarar.ts` (`RULES` entries) and `server/engine.ts` (reason/action strings) against constitution III: ≤6th-grade MSA, no jargon, monetary figures rendered through the existing `money()` helper so they stay LTR and carry the account currency (FR-018, FR-019, SC-007)
 - [ ] T031 [P] Verify in the running app (`npm run dev`) that `NS1`/`NS2` render faded through `client/src/components/Verdict.tsx` (`RuleChip`/`RuleTitle`) with no edit to that file, and never as primary copy (FR-017)
 - [ ] T032 Walk `specs/013-verdict-accuracy-fixes/quickstart.md` Validations 1–6 end to end and tick its Definition of Done

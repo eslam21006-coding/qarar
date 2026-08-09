@@ -51,6 +51,18 @@ describe("non-sales containment + ordering (US2 / T014)", () => {
     const row = result.rows.find(r => r.id === "cmp_ns")!;
     expect(row.rule).toBe("NS1");
     expect(row.findings).toEqual([]);
+    // Spec 013 round-2 (CodeRabbit): children inherit the exempt
+    // objective from their campaign — they too must carry empty
+    // findings, prove the engine resolves the inheritance BEFORE
+    // evaluation.
+    const as = result.rows.find(r => r.id === "as_ns")!;
+    const ad = result.rows.find(r => r.id === "ad_ns")!;
+    expect(as.rule).toBe("NS1");
+    expect(as.findings).toEqual([]);
+    expect(ad.rule).toBe("NS1");
+    expect(ad.findings).toEqual([]);
+    expect(as.objective).toBe("OUTCOME_AWARENESS");
+    expect(ad.objective).toBe("OUTCOME_AWARENESS");
   });
 
   it("diagnose() is NOT called for exempt objects at any of the three call sites (FR-010a, C6.1)", () => {
@@ -126,6 +138,32 @@ describe("non-sales containment + ordering (US2 / T014)", () => {
     const ad = result.rows.find(r => r.id === "ad_k3_style")!;
     expect(ad.rule).toBe("NS1");
     expect(ad.verdict).toBe("continue");
+  });
+
+  it("an exempt ad set whose metrics would trip CB1 or CB2 fires neither circuit-breaker rule (FR-009b)", () => {
+    // Spec 013 round-2 (CodeRabbit): the prior round only proved the
+    // ad-level K3 bypass. The exempt branch must ALSO short-circuit the
+    // circuit breaker at ad-set level (research R5 — CB1/CB2 fire BEFORE
+    // the paused check). Build an exempt-campaign fixture whose ad set
+    // meets today's CB2 trigger (today spend ≥ 2.5× target, 0 conv).
+    const result = runEngine(
+      buildCbExemptFixture(),
+      DEMO_FUNNEL as FunnelInputs
+    );
+    const as = result.rows.find(r => r.id === "as_cb_exempt")!;
+    // Without the exempt branch the row would carry CB2 (kill). With it,
+    // the budget-based NS1/NS2 verdict reaches first.
+    expect(["CB1", "CB2"]).not.toContain(as.rule);
+    expect(["NS1", "NS2"]).toContain(as.rule);
+    // And no findings — diagnose() is skipped at the ad-set call site
+    // (FR-010a, C6.1).
+    expect(as.findings).toEqual([]);
+    // The child ad beneath it (which inherits the campaign objective) is
+    // also exempt; even if its own metrics would trigger a sales rule,
+    // none fires.
+    const ad = result.rows.find(r => r.id === "ad_cb_exempt")!;
+    expect(["NS1", "NS2"]).toContain(ad.rule);
+    expect(ad.findings).toEqual([]);
   });
 
   it("a paused exempt object reads ⏳ with the existing paused copy (FR-009)", () => {
@@ -227,7 +265,10 @@ function buildContainmentFixture(opts: {
     campaignId: "cmp_ns",
     dailyBudget: null,
     bidStrategy: null,
-    objective,
+    // Spec 013 round-2 (CodeRabbit): children do NOT carry the
+    // objective directly — inheritance is exercised by the engine
+    // backfilling the child's effective objective BEFORE evaluation.
+    objective: null,
     createdTime: new Date().toISOString(),
     ageDays,
     w3d,
@@ -270,11 +311,95 @@ function buildContainmentFixture(opts: {
     campaignId: "cmp_ns",
     dailyBudget: null,
     bidStrategy: null,
-    objective,
+    // Spec 013 round-2 (CodeRabbit): child objective is null —
+    // inheritance is exercised by the engine backfill at runEngine top.
+    objective: null,
     createdTime: new Date().toISOString(),
     ageDays,
     w3d: adW3d,
     today: adToday,
+    daily7: [],
+    spendSharePct: 100,
+  });
+  return base;
+}
+
+// Spec 013 round-2 (CodeRabbit) — exempt-campaign + CB-style ad-set
+// fixture. The ad set's today spend / 0 conversions would trip CB2 in
+// the non-exempt path; the exempt branch must short-circuit before the
+// circuit-breaker evaluation (research R5 — CB1/CB2 fire BEFORE the
+// paused check at ad-set level).
+function buildCbExemptFixture(): AccountSnapshotPayload {
+  const base = buildDemoSnapshot();
+  for (let i = base.objects.length - 1; i >= 0; i--) base.objects.splice(i, 1);
+  base.currency = "USD";
+
+  // DEMO_FUNNEL unitTarget = $43 (paid_lto AOV/ROAS). Today spend ≥
+  // 2.5×$43 = $107.50 with 0 conversions ⇒ CB2 fires pre-exempt-branch.
+  const today = {
+    spend: 120, impressions: 9000, reach: 7000, frequency: 1.3,
+    clicks: 90, linkClicks: 70, ctrAll: 1.0, ctrLink: 0.78,
+    cpm: 13, cpc: 1.71, conversions: 0, conversionValue: 0,
+    lpViews: 60, cpa: null,
+  };
+  const w3d = {
+    spend: 200, impressions: 14000, reach: 10000, frequency: 1.4,
+    clicks: 140, linkClicks: 110, ctrAll: 1.0, ctrLink: 0.79,
+    cpm: 14, cpc: 1.82, conversions: 1, conversionValue: 43,
+    lpViews: 95, cpa: 200,
+  };
+
+  base.objects.push({
+    id: "cmp_cb",
+    name: "Awareness campaign",
+    status: "ACTIVE",
+    effectiveStatus: "ACTIVE",
+    level: "campaign",
+    parentId: null,
+    campaignId: "cmp_cb",
+    dailyBudget: 5,
+    bidStrategy: null,
+    objective: "OUTCOME_AWARENESS",
+    createdTime: new Date().toISOString(),
+    ageDays: 30,
+    w3d,
+    today,
+    daily7: [],
+    spendSharePct: null,
+  });
+  base.objects.push({
+    id: "as_cb_exempt",
+    name: "Awareness ad set — would trip CB2",
+    status: "ACTIVE",
+    effectiveStatus: "ACTIVE",
+    level: "adset",
+    parentId: "cmp_cb",
+    campaignId: "cmp_cb",
+    dailyBudget: null,
+    bidStrategy: null,
+    objective: null,
+    createdTime: new Date().toISOString(),
+    ageDays: 30,
+    w3d,
+    today,
+    daily7: [],
+    spendSharePct: null,
+  });
+  base.objects.push({
+    id: "ad_cb_exempt",
+    name: "Awareness ad beneath CB-prone ad set",
+    status: "ACTIVE",
+    effectiveStatus: "ACTIVE",
+    level: "ad",
+    parentId: "as_cb_exempt",
+    campaignId: "cmp_cb",
+    dailyBudget: null,
+    bidStrategy: null,
+    objective: null,
+    createdTime: new Date().toISOString(),
+    ageDays: 30,
+    w3d,
+    today,
     daily7: [],
     spendSharePct: 100,
   });
