@@ -414,7 +414,12 @@ async function fetchHierarchy(
   const campaigns = await graphGetAll(
     `/${accountId}/campaigns`,
     {
-      fields: "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,created_time",
+      // Spec 013 / M1 — `lifetime_budget` was already requested but
+      // discarded at mapping (meta.ts:944). Spec 013 makes it reach the
+      // snapshot by adding `start_time` and `stop_time` (campaign end
+      // is `stop_time` — M2.1 end-field asymmetry: campaign reads
+      // `stop_time`, ad set reads `end_time`).
+      fields: "id,name,status,effective_status,objective,daily_budget,lifetime_budget,bid_strategy,created_time,start_time,stop_time",
       limit: "200",
       access_token: token,
     },
@@ -424,7 +429,11 @@ async function fetchHierarchy(
   const adsets = await graphGetAll(
     `/${accountId}/adsets`,
     {
-      fields: "id,name,status,effective_status,daily_budget,campaign_id,created_time,learning_stage_info",
+      // Spec 013 / M1 — ad sets previously had no lifetime budget and no
+      // flight window. We add all three here on the EXISTING request —
+      // no new call, no new scope (FR-021, constitution V). Ad-set end
+      // is `end_time`, not `stop_time` (M2.1).
+      fields: "id,name,status,effective_status,daily_budget,lifetime_budget,campaign_id,created_time,learning_stage_info,start_time,end_time",
       limit: "500",
       access_token: token,
     },
@@ -952,6 +961,17 @@ export async function buildSnapshot(
       daily30: toDaily(dailyMaps.get("campaign")!.get(c.id)),
       spendSharePct: null,
       effectiveStatus: c.effective_status ?? null,
+      // Spec 013 / M3-M4 — `lifetime_budget` already requested but
+      // previously discarded. Divide by 100 exactly like `daily_budget`
+      // (M3.1) — the same minor→major unit conversion. Default to null
+      // when absent (M4.1).
+      lifetimeBudget: c.lifetime_budget ? parseInt(c.lifetime_budget) / 100 : null,
+      // Spec 013 / M2 — campaign end is `stop_time`. Reading `end_time`
+      // on a campaign would yield undefined and silently collapse the
+      // scheduled daily equivalent rung for every lifetime-budget
+      // campaign (M2.1). Use the level-specific field.
+      flightStart: c.start_time ?? null,
+      flightEnd: c.stop_time ?? null,
     });
   }
 
@@ -976,6 +996,12 @@ export async function buildSnapshot(
       spendSharePct: null,
       learningPhase: !!learning,
       effectiveStatus: s.effective_status ?? null,
+      // Spec 013 / M3-M4 — lifetime budget is brand-new at ad-set
+      // level (M1). Same /100 conversion as daily_budget.
+      lifetimeBudget: s.lifetime_budget ? parseInt(s.lifetime_budget) / 100 : null,
+      // Spec 013 / M2 — ad-set end is `end_time` (M2.1).
+      flightStart: s.start_time ?? null,
+      flightEnd: s.end_time ?? null,
     });
   }
 
