@@ -23,10 +23,21 @@
 --
 -- HOW TO APPLY THIS FILE:
 --
---   npx tsx scripts/apply-migrations.mjs drizzle/0011_snapshots_user_index.sql
+--   scripts/apply-migrations.mjs is hard-coded to migrations 0005 and
+--   0006 (a special-case early-TiDB bootstrapping path) — it does NOT
+--   accept arbitrary files. Use a direct mysql2 / mysql command instead:
 --
--- Or any equivalent mysql2-compatible connection. The applier does
--- NOT consult drizzle's journal — it just executes the SQL.
+--     npx tsx -e 'import {readFileSync} from "fs"; import {createConnection} from "mysql2/promise"; import {URL} from "url"; (async()=>{const c=await createConnection({host:new URL(process.env.DATABASE_URL).hostname,user:new URL(process.env.DATABASE_URL).username,password:new URL(process.env.DATABASE_URL).password,database:new URL(process.env.DATABASE_URL).pathname.slice(1),ssl:{rejectUnauthorized:false},multipleStatements:true});try{await c.query(readFileSync("drizzle/0011_snapshots_user_index.sql","utf-8"));console.log("OK");}finally{await c.end();}})()'
+--
+--   Or the equivalent single-statement invocation:
+--
+--     mysql -h<host> -u<user> -p<password> <database> < drizzle/0011_snapshots_user_index.sql
+--
+-- IDEMPOTENCY: the statement is NOT idempotent — `CREATE INDEX` fails
+-- with `ER_DUP_KEYNAME` (1061) on a second run. Either guard the
+-- command (`SELECT ... FROM information_schema.statistics WHERE ...`)
+-- or accept the failure and rely on the row-count check to confirm
+-- the index exists.
 --
 -- SAFE TO APPLY ANYTIME: `CREATE INDEX` is online for InnoDB / TiDB
 -- and requires no exclusive lock. Existing rows are unaffected.
