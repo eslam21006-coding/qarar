@@ -36,6 +36,10 @@ import type { AccountSnapshotPayload } from "../shared/qarar";
 type Row = { userId: string; adAccountId: number; payload: unknown };
 type AccountSummary = { adAccountId: number; values: Set<string | null> };
 
+/**
+ * Print the script's usage to stdout. Exit codes follow the convention
+ * documented in the script header.
+ */
 function printUsage(): void {
   process.stdout.write(
     "Usage:\n" +
@@ -44,11 +48,28 @@ function printUsage(): void {
   );
 }
 
+/**
+ * Classify a single objective value against the allow-list exported
+ * from `shared/qarar.ts`. `null` / unknown / unrecognised values are
+ * non-exempt (FR-006b fail-safe).
+ *
+ * @param value The objective string from the snapshot, or `null`.
+ * @returns `"exempt"` if the value is in the allow-list, `"non-exempt"` otherwise.
+ */
 function classify(value: string | null): "exempt" | "non-exempt" {
   if (value === null) return "non-exempt";
   return NON_SALES_OBJECTIVES.has(value) ? "exempt" : "non-exempt";
 }
 
+/**
+ * Load the snapshot rows for the requested scope.
+ *
+ * @param scope Operator-only `{ all: true }` (requires `--confirm-all`),
+ *              or a user-scoped `{ email }` query that resolves the
+ *              `userId` and applies it at the SQL level (no full-table
+ *              read).
+ * @returns The matching `(userId, adAccountId, payload)` triples.
+ */
 async function loadRows(scope: { all: true } | { email: string }): Promise<Row[]> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
@@ -66,6 +87,16 @@ async function loadRows(scope: { all: true } | { email: string }): Promise<Row[]
     .where(eq(snapshots.userId, uid))) as Row[];
 }
 
+/**
+ * Bucket the loaded snapshot rows by user and collect the distinct
+ * `objective` values seen on each user's campaigns. Children (ad sets
+ * and ads) inherit from the campaign at evaluation time and are not
+ * listed directly here — the classification contract reads only the
+ * campaign objective.
+ *
+ * @param rows The rows returned by `loadRows`.
+ * @returns A map keyed by `userId` with the per-user objective set.
+ */
 function summarise(rows: Row[]): Map<string, AccountSummary> {
   const byUser = new Map<string, AccountSummary>();
   for (const r of rows) {
@@ -83,6 +114,12 @@ function summarise(rows: Row[]): Map<string, AccountSummary> {
   return byUser;
 }
 
+/**
+ * CLI entry point. Parses `--email <addr>` (per-user scope) or
+ * `--all --confirm-all` (operator-only across every user), runs the
+ * inventory, prints a markdown table, and always closes the mysql2
+ * pool via the `finally` hook.
+ */
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.length === 0) {
