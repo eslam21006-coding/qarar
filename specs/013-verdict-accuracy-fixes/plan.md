@@ -38,6 +38,12 @@ byte-for-byte.
 inside the existing JSON snapshot payload, so no migration.
 
 **Testing**: Vitest. `npm test`, `npm run check` (tsc, must be clean).
+Final result: 558 passed / 39 skipped / 2 failed. The two failures are
+pre-existing — `server/auth-flow.e2e.test.ts` (DB-connection failure;
+CI runs against MySQL, the local sandbox does not) and
+`server/funnelIntegrity.test.ts` (full-suite-only mock-pollution
+flakiness; passes 7/7 in isolation; pre-existed at `bbaba1d`). No
+existing test file was modified (SC-010).
 
 **Target Platform**: Node server + browser SPA
 

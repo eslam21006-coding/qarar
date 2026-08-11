@@ -409,15 +409,158 @@ list of 9 files that mock `./db`).
 🤖 Generated with [opencode (MiniMax-M3)](https://opencode.ai)
 ```
 
-**STEP 7 complete. PR URL: https://github.com/eslam21006-coding/qarar/pull/29**
+**STEP 7 complete. PR URL: https://github.com/eslam21006-coding/qarar/pull/28** (PR #28 was updated; no PR #29 was created in this session)
 
 ---
 
-## Final end-state
+## Final end-state (post-amend)
 
-- **HEAD commit**: `9836979 merge origin/main into feature/verdict-fixes (spec 013)` (amended)
+- **HEAD commit**: `926df21 chore(013): stage auto-merged files + add merge-completion-report`
+- **HEAD~1**: `9836979 merge origin/main into feature/verdict-fixes (spec 013)` (the amended merge commit with all three conflict resolutions)
 - **Branch**: `feature/verdict-fixes`, pushed to `origin/feature/verdict-fixes`
-- **PR**: https://github.com/eslam21006-coding/qarar/pull/29 (open, awaiting review)
+- **PR**: https://github.com/eslam21006-coding/qarar/pull/28 (open, body updated; see PR #28's body for the corrected `inactiveAccess` description per STEP 4)
 - **Test status**: 558 passed / 39 skipped / 2 failed (pre-existing full-suite-only flakiness; both pass in isolation)
 - **Type-check**: clean
-- **Working tree**: 8 unstaged real changes, 1 untracked `.md` report file; no stray untracked files
+- **Working tree**: 1 untracked `merge-review.md` file; no stray untracked files
+
+---
+
+## Addendum: incomplete-push investigation (2026-08-09, post-STEP 8)
+
+The user reported that PR #28 (not PR #29 — no PR #29 was created) is showing
+conflicts across ~20 files and asked to fix what they described as
+"8 files were still unstaged and never got committed."
+
+### What I found
+
+**The user's premise was incorrect.** `git status` at the start of this
+investigation shows the working tree is clean of the 8 named files —
+they were committed in `926df21 chore(013): stage auto-merged files +
+add merge-completion-report` (the follow-up commit during STEP 7 that
+staged the 8 auto-merged files from origin/main). Specifically:
+
+```
+git status at the start of this investigation
+On branch feature/verdict-fixes
+Your branch is up to date with 'origin/feature/verdict-fixes'.
+
+Untracked files:
+	specs/013-verdict-accuracy-fixes/merge-review.md
+
+nothing added to commit but untracked files present
+```
+
+### The actual root cause of PR #28's CONFLICTING status
+
+PR #28's mergeStateStatus is `DIRTY` and mergeable is `CONFLICTING`
+because **`origin/main` has 23 commits that this branch (`feature/verdict-fixes`)
+does not have**:
+
+```
+$ git log --oneline origin/main ^HEAD | wc -l
+23
+```
+
+These 23 commits are the spec 013-fb-pages follow-up work that landed on
+main after the merge was prepared on this branch:
+
+- `5a08b1d feat(013): add Pages fetchers and update OAuth scope`
+- `89c9f00 feat(013): add FacebookPageDisplay type (no token field)`
+- `410a953 feat(013): add facebookPages table and pagesNoticeDismissedAt column`
+- `ee5ac4a feat(013): add meta.pages query, dismissPagesNotice, and reconnect-note status`
+- `c675269 feat(013): add FacebookPagesCard component`
+- `74ef6a1 feat(013): mount FacebookPagesCard and reconnect note in Home.tsx`
+- `5e79c35 fix(013): move useState before early return in FacebookPagesCard`
+- `2fe52ea fix(013): guard pageId in fetchUserPages + extract nextPagination helper`
+- `629c8b6 test(013): cross-user isolation coverage for Facebook Pages`
+- `6d0e856 test(013): add Pages tests for sync, gates, and client rendering`
+- `cc018be chore(013): include spec 013 documents and tooling state`
+- `ee1863b fix(013): make fetchGrantedPermissions best-effort in OAuth callback`
+- `c89380d refactor(013): extract shared hasPagesVisibility helper in routers.ts`
+- `071fe17 refactor(013): wrap syncPages in transaction + dedup by pageId`
+- `aa72bf0 test(013): exercise production paths in pages.test.ts`
+- `82aa247 docs(013): address CodeRabbit review on spec 013 checklists + quickstart`
+- `f5a4be3 docs(013): drop hardcoded source line numbers from spec artefacts`
+- `edea0c2 fix(013): resolve T024 test failures and address CodeRabbit feedback`
+- `ab0c170 docs(013): align Crash-window tradeoff with the transactional reality`
+- `0aaf07e fix(013): constitutional gate fixes — permissions fallback, MSA Arabic, DB test verification`
+- `618e8af Merge pull request #27 from eslam21006-coding/feature/pages-read-engagement-display`
+
+`git merge-tree origin/main HEAD` confirms 20 file-level conflicts (8 content
++ 12 add/add), all in fb-pages files. The 8 named files that the user
+flagged (`.specify/feature.json`, `CLAUDE.md`, `client/src/pages/Home.tsx`,
+`drizzle/meta/_journal.json`, `drizzle/schema.ts`, `server/isolation.test.ts`,
+`server/metaCallback.ts`, `server/routers.ts`) are part of this set, but the
+remaining 12 conflicts are also fb-pages files (the spec 013-fb-pages
+planning folder, `drizzle/0011_facebook_pages.sql`,
+`drizzle/meta/0011_snapshot.json`, `client/src/components/FacebookPagesCard.{tsx,test.tsx}`,
+`server/pages.test.ts`, `server/meta.ts`, `shared/qarar.ts`).
+
+### Why the branch is 23 commits behind
+
+The original `feature/verdict-fixes` branch was based on `bbaba1d`, which
+predates PR #27 (the spec 013-fb-pages merge to main on 2026-08-03).
+The "merge" in commit `cb26e80` (later amended to `9836979`) was a
+manual conflict-application, not a `git merge origin/main` — it captured
+an early snapshot of the fb-pages work (the implementation at one
+point in time) but did not pull in any of the 23 follow-up commits that
+landed on main after the merge base was captured.
+
+### Resolution (this turn's scope)
+
+**I did NOT push a new merge.** The user said "If [the PR] still does
+[show conflicts], STOP and report exactly what it says — do not attempt
+another push." PR #28 still shows CONFLICTING. Per that instruction
+I have not pushed. The fix the user described (stage 8 files, commit,
+push) is based on a wrong premise — staging the 8 files would not
+resolve the add/add conflicts on the other 12 fb-pages files.
+
+**The proper fix requires a real `git merge origin/main`** (or rebase)
+to pull in all 23 main commits, then resolving the resulting 20 file
+conflicts. That's a substantial merge resolution that needs user
+direction on:
+- Whether to merge or rebase (merge is simpler, rebase gives a linear
+  history but rewrites my commit hashes)
+- How to handle the 12 add/add conflicts on fb-pages files (which
+  side wins? the branch's "manual merge" content, or main's
+  "committed" content, or a hybrid?)
+- How to handle the 8 content conflicts (likely trivial: main's
+  content includes the spec 013 verdict-accuracy-fixes changes that
+  this branch's manual merge already included)
+
+### PR description correction
+
+The user also flagged a contradiction: STEP 4 of the prior turn
+proved `inactiveAccess.test.ts` PASSED pre-merge (line 469 of
+`pre-merge-test.txt`: `✓ server/inactiveAccess.test.ts (4 tests) 4554ms`),
+but the PR body in commit `926df21` described it as "pre-existing
+flakiness". I corrected the PR body to match STEP 4's actual finding:
+
+- The pre-merge run at `bbaba1d` showed all 4 `inactiveAccess` tests
+  passing in 4554ms (line 469 of `pre-merge-test.txt`).
+- The failure observed in some post-merge full-suite runs is
+  **intermittent and new** (not pre-existing).
+- It is most likely the same `vi.mock` mock-pollution mechanism as
+  `funnelIntegrity`, but did not reproduce in the final verification
+  run.
+- Updated PR #28 body via `gh pr edit 28 --body-file ...`.
+
+### Action taken in this turn
+
+1. Verified current state via `git status` and `gh pr view 28` — PR
+   is still CONFLICTING.
+2. Diagnosed the actual root cause: 23 commits behind origin/main, not
+   "8 unstaged files". The 8 named files are already committed in
+   `926df21`.
+3. Corrected the PR #28 body to match STEP 4's actual `inactiveAccess`
+   finding (intermittent new failure, not pre-existing).
+4. Appended this section to `merge-completion-report.md` documenting
+   the actual root cause.
+5. **Did not push.** Per the user's instruction, conflicts persist and
+   pushing is forbidden until the conflict is fully resolved.
+
+The user should be aware that the prior turn's push was structurally
+incomplete: the branch captured a manual snapshot of the fb-pages
+work rather than a full merge, and is now 23 commits behind main. A
+real `git merge origin/main` is needed, with the 20 file conflicts
+resolved, before the PR can be merged cleanly.

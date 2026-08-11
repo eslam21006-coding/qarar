@@ -12,7 +12,13 @@ npm install
 ```
 
 Two verification commands, both must be clean (constitution, Engineering
-constraints):
+constraints). **Both must pass cleanly.** Local-exception note: in the
+local sandbox (no MySQL) one e2e suite (`server/auth-flow.e2e.test.ts`)
+reports a pre-existing DB-connection failure; CI runs against MySQL where
+this passes. Additionally `server/funnelIntegrity.test.ts` shows
+full-suite-only mock-pollution flakiness (T009 + T010 fail in the full
+suite but pass 7/7 in isolation, pre-existing at `bbaba1d`). Both are
+documented in `merge-review.md`.
 
 ```powershell
 npm run check     # tsc --noEmit
@@ -70,8 +76,9 @@ object is `ACTIVE`. Leave it alone — it is a weaker assertion, not a wrong one
 
 | Objective | Expected |
 |-----------|----------|
-| `OUTCOME_AWARENESS`, `OUTCOME_TRAFFIC`, `OUTCOME_ENGAGEMENT` | exempt ⇒ `NS1`/`NS2` |
-| `BRAND_AWARENESS`, `REACH`, `VIDEO_VIEWS`, `LINK_CLICKS`, `POST_ENGAGEMENT` | exempt |
+| `OUTCOME_AWARENESS`, `OUTCOME_TRAFFIC`, `OUTCOME_ENGAGEMENT`, `OUTCOME_APP_PROMOTION` | exempt ⇒ `NS1`/`NS2` |
+| `BRAND_AWARENESS`, `REACH`, `VIDEO_VIEWS`, `LINK_CLICKS`, `POST_ENGAGEMENT`, `PAGE_LIKES`, `EVENT_RESPONSES`, `LOCAL_AWARENESS` | exempt |
+| `APP_INSTALLS`, `MOBILE_APP_INSTALLS`, `MOBILE_APP_ENGAGEMENT`, `CANVAS_APP_ENGAGEMENT`, `CANVAS_APP_INSTALLS` | exempt (legacy app family) |
 | `OUTCOME_LEADS`, `OUTCOME_SALES` | not exempt ⇒ ordinary verdict |
 | `CONVERSIONS`, `PRODUCT_CATALOG_SALES`, `LEAD_GENERATION` | **not exempt** (SC-011) |
 | `MESSAGES` | **not exempt** (SC-011) |
@@ -110,10 +117,11 @@ without this assertion the bug ships looking plausible.
 | `dailyBudget` present | `daily` | `NS1`/`NS2` |
 | Lifetime 700, 7-day window | `lifetime` (100/day) | `NS2` |
 | Lifetime 70, 7-day window | `lifetime` (10/day) | `NS1` |
-| Lifetime present, no/broken window, delivering | `observed` | per `w3d.spend / 3` |
+| Lifetime present, no/broken window, delivering (`w3d.spend > 0`) | `observed` | per `w3d.spend / 3` |
+| Lifetime present, broken window, no delivery (`w3d.spend === 0`) | `none` | ⏳ `GATE` — **never `NS1`** |
 | Lifetime present, no window, no delivery | `none` | ⏳ `GATE` — **never `NS1`** |
 | No budget at all (ad row, CBO ad set, ABO campaign) | `none` | `NS1` |
-| Window with zero/negative span | falls to `observed` | no divide-by-zero |
+| Window with zero/negative span | falls to `observed` if `w3d.spend > 0`, else `none` | no divide-by-zero |
 
 **Two assertions that catch quiet failures** (see contracts/meta-import-fields.md):
 
@@ -157,10 +165,14 @@ reason the user is told their offer or funnel is broken.
 npm run dev
 ```
 
-On the demo account: rule codes render faded via the existing `RuleChip`, so
-`NS1`/`NS2` need no UI work — confirm they appear faded and in the tooltip, never
-as primary copy (FR-017). Confirm the strip's Arabic copy still reads at
-6th-grade level and figures render LTR inside the RTL layout (FR-019).
+Use an exempt seeded snapshot (or a dedicated fixture) when verifying `NS1`/`NS2`
+fade, tooltip, and LTR-figure rendering — the demo account has no objectives so
+its objects are non-exempt and cannot render those rule codes. Keep the demo
+account check for unchanged non-exempt rendering. The faded/tooltip path is
+inherited from `client/src/components/Verdict.tsx` (`RuleChip` / `RuleTitle`)
+via the shared `RULES` lookup — `NS1`/`NS2` need no UI work. Confirm the
+strip's Arabic copy still reads at 6th-grade level and figures render LTR
+inside the RTL layout (FR-019).
 
 ---
 

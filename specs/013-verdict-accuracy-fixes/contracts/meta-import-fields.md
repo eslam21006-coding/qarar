@@ -68,9 +68,12 @@ absent-tolerant pattern the payload already uses for `asOfDate` and `daily30`.
 ## M5 — Backward compatibility
 
 **Invariant M5.1** — snapshots cached before this feature carry none of these
-fields. Such objects resolve their daily rate from the observed-spend rung, or
-fall to ⏳ when there is no meaningful delivery data. They must never resolve to
-a false `NS1` (FR-012b).
+newly introduced fields (`lifetimeBudget`, `flightStart`, `flightEnd`).
+The pre-existing `dailyBudget` field remains available on every snapshot and is
+still the first resolution rung; only when `dailyBudget` is absent does the
+system fall back to the observed-spend rung, and then to ⏳ `GATE` (FR-012a.3).
+Such older snapshots can therefore still resolve to `NS1` via their pre-existing
+daily budget. They never resolve to a false `NS1` (FR-012b).
 
 **Invariant M5.2** — no migration and no schema change. These fields live inside
 the existing JSON snapshot payload.

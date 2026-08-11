@@ -55,10 +55,13 @@ incorrect regardless of how the set is populated.
 | `flightStart` | `string \| null` | `start_time` (both levels) | ISO timestamp |
 | `flightEnd` | `string \| null` | campaign `stop_time`, ad set `end_time` | **Field name differs by level** — see contracts/meta-import-fields.md |
 
-All three are optional and absent-tolerant. Snapshots cached before this feature
-carry none of them; such objects resolve their daily rate from the observed-spend
-rung or fall to ⏳, never to a false `NS1`. This mirrors the established
-tolerance pattern for `asOfDate` and `daily30`.
+All three are optional and absent-tolerant. Only the newly introduced
+fields (`lifetimeBudget`, `flightStart`, `flightEnd`) are absent from older
+snapshots. The pre-existing `dailyBudget` field remains available and continues
+to be the first resolution rung; only when `dailyBudget` is absent does the
+system fall back to the observed-spend rung, then to ⏳. Older snapshots can
+still resolve to `NS1` via their pre-existing `dailyBudget`. This mirrors the
+established tolerance pattern for `asOfDate` and `daily30`.
 
 **Ad-level invariant preserved**: ads set `dailyBudget: null` today
 (`server/meta.ts:1000`) and gain no budget fields. FR-015 holds structurally.
@@ -72,7 +75,7 @@ tolerance pattern for `asOfDate` and `daily30`.
 Not persisted. Produced by budget resolution during evaluation:
 
 ```
-{ amount: number | null, source: "daily" | "lifetime" | "observed" | "none" }
+{ amount: number | null, source: "daily" | "lifetime" | "observed" | "none", hadLifetime: boolean }
 ```
 
 | `source` | Produced when | Permitted verdicts |

@@ -65,7 +65,7 @@ The script can be re-run against any environment with a live DB. The
 acknowledgement so it cannot be invoked accidentally from a shared shell:
 
 ```bash
-npx tsx scripts/enumerate-objectives.ts --email <user@example.com>
+npx tsx scripts/enumerate-objectives.ts --email "user@example.com"
 npx tsx scripts/enumerate-objectives.ts --all --confirm-all
 ```
 

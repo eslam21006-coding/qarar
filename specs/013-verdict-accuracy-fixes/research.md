@@ -124,9 +124,13 @@ absent-tolerant, matching how `asOfDate` and `daily30` handle snapshots cached
 before the field existed (`qarar.ts:230-238`) — cached snapshots stay readable
 and fall to the observed-spend rung.
 
-**Daily-equivalent formula.** `lifetimeBudget ÷ max(1, ceil((flightEnd −
-flightStart) / 1 day))`. A zero, negative, unparseable, or missing span is
-treated as unresolvable and drops to the next rung — never a division by zero.
+**Daily-equivalent formula.** `lifetimeBudget ÷ ceil((flightEnd −
+flightStart) / 1 day)`, applied only when the span is a positive, parseable
+interval. A zero, negative, unparseable, or missing span is treated as
+unresolvable and drops to the next rung — the ladder's
+`source === "none" && hadLifetime === true` branch produces ⏳ `GATE`
+instead of a synthetic 1-day fallback. No `max(1, …)` clamp is applied;
+`ceil` is not called on an invalid span.
 
 ---
 

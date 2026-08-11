@@ -440,7 +440,10 @@ verdict, while every sales object's verdict is byte-identical to before.
 - **Daily-rate figure**: the per-day amount an exempt object is judged against.
   Sourced from the daily budget when present, otherwise derived from a lifetime
   budget over its flight window, otherwise observed from recent average daily
-  spend. Absence of all three is a judgeable state (⏳), not a pass.
+  spend. The two absence cases are distinct and must not be collapsed:
+  genuine no-budget (no daily budget, no lifetime budget) is compliant and
+  receives `NS1`; lifetime budget present but neither span nor delivery data
+  is usable is unjudgeable and falls through to ⏳ `GATE`.
 - **Summary strip counters**: five per-verdict tallies displayed above the
   decision table, describing the live state of the account.
 - **Rule catalog**: the fixed list of rule codes with Arabic titles and
@@ -464,11 +467,17 @@ verdict, while every sales object's verdict is byte-identical to before.
   recommended action is a no-op at the moment it is shown.
 - **SC-003**: Zero objects with a lead or sales objective change verdict, rule
   code, reason, or action as a result of this feature.
-- **SC-004**: 100% of active objects under an awareness, engagement, or traffic
-  campaign receive `NS1`, `NS2`, or the lifetime-budget ⏳ fallback of FR-009c,
-  and none receives a rule from the sales rulebook. The ⏳ fallback is included
-  because an exempt object with a lifetime budget but no resolvable daily rate
-  has nothing to judge (FR-012b); it is not a sales verdict.
+- **SC-004**: 100% of active objects under an exempt campaign (every member
+  of `NON_SALES_OBJECTIVES`: current-era `OUTCOME_AWARENESS`,
+  `OUTCOME_ENGAGEMENT`, `OUTCOME_TRAFFIC`, `OUTCOME_APP_PROMOTION`, plus
+  legacy `BRAND_AWARENESS`, `REACH`, `VIDEO_VIEWS`, `LINK_CLICKS`,
+  `POST_ENGAGEMENT`, `PAGE_LIKES`, `EVENT_RESPONSES`, `LOCAL_AWARENESS`,
+  and legacy app `APP_INSTALLS`, `MOBILE_APP_INSTALLS`,
+  `MOBILE_APP_ENGAGEMENT`, `CANVAS_APP_ENGAGEMENT`, `CANVAS_APP_INSTALLS`)
+  receive `NS1`, `NS2`, or the lifetime-budget ⏳ fallback of FR-009c, and none
+  receives a rule from the sales rulebook. The ⏳ fallback is included because
+  an exempt object with a lifetime budget but no resolvable daily rate has
+  nothing to judge (FR-012b); it is not a sales verdict.
 - **SC-005**: An account denominated in a currency other than the US dollar
   produces the same exempt/over-budget classification as an equivalent
   dollar-denominated account with the same real spend level.

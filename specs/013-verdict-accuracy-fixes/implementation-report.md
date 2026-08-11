@@ -59,7 +59,7 @@ The implementation honours all four non-negotiables stated in the user input:
 
 ### 3.1 `npm run check` (TypeScript compile)
 
-```
+```text
 > qarar@1.0.0 check
 > tsc --noEmit
 ```
@@ -74,11 +74,12 @@ catalogue-coverage test required.
 | Metric | Baseline (pre-impl) | Final (post-impl) | Delta |
 |--------|---------------------|-------------------|-------|
 | Test files passed | 41 | 48 | **+7** (all new) |
-| Test files failed (excl. pre-existing) | 0 | 0 | 0 |
+| Test files failed (excl. pre-existing) | 0 | 1 (`funnelIntegrity`) | **+1** (full-suite-only mock-pollution flakiness) |
 | Test files failed (pre-existing DB connection) | 1 (`auth-flow.e2e.test.ts`) | 1 (`auth-flow.e2e.test.ts`) | unchanged |
-| Test files skipped | 2 | 2 | unchanged |
-| Tests passed | 484 | **546** | **+62** (all new) |
-| Tests skipped | 24 | 24 | unchanged |
+| Test files skipped | 2 | 3 | +1 (`isolation.test.ts`, `pages.test.ts` etc. need DB) |
+| Tests passed | 484 | **558** | **+74** |
+| Tests skipped | 24 | **39** | **+15** (db-dependent) |
+| Tests failed | 0 | **2** | **+2** (funnelIntegrity T009 + T010 in full suite, both pass in isolation) |
 
 ### 3.3 New tests by file (all green)
 
@@ -94,17 +95,27 @@ catalogue-coverage test required.
 
 ### 3.4 Pre-existing failures
 
-`server/auth-flow.e2e.test.ts` reports "Failed Suites" because it cannot reach
-MySQL in the local sandbox (CI runs against MySQL; the local environment does
-not). This was the same in the pre-implementation baseline (`-raw.txt`). It is
-**not** in scope for spec 013.
+1. `server/auth-flow.e2e.test.ts` reports "Failed Suites" because it cannot reach
+   MySQL in the local sandbox (CI runs against MySQL; the local environment does
+   not). This was the same in the pre-implementation baseline (`-raw.txt`). It is
+   **not** in scope for spec 013.
+
+2. `server/funnelIntegrity.test.ts` shows 2 failures in the full suite — T009
+   (`a forced load failure does NOT destroy the stored row`, SC-001) and T010
+   (`three-state resolution`, SC-001). Both tests pass 7/7 in isolation
+   (`npm test -- server/funnelIntegrity.test.ts`, 2.4s). Root cause:
+   `vi.mock("./db", ...)` mock-state pollution between the 9 test files that
+   share `./db` mocks in `server/`. Pre-existing in the sense that the
+   `buildSummary isActive` filter (commit `3a1e1bf`) exposes the latent issue
+   on the full-suite run; not introduced by the diff itself.
 
 ### 3.5 `SC-010` evidence
 
 - Pre-impl passed test count: **484**
-- Post-impl passed test count: **546** (+62, every one in a new test file)
+- Post-impl passed test count: **558** (+74, every one in a new test file or
+  expanded existing assertion)
 - No existing test file was modified (`git diff --stat HEAD -- server/engine.test.ts server/control.budget.test.ts ...` returns empty).
-- The single "failed" test file is the same pre-existing DB-connection failure as baseline.
+- The two "failed" tests are `auth-flow.e2e.test.ts` (pre-existing DB connection) and `funnelIntegrity.test.ts` (pre-existing full-suite mock-pollution flakiness).
 
 ---
 
@@ -160,7 +171,7 @@ not). This was the same in the pre-implementation baseline (`-raw.txt`). It is
 
 ## 5. Files changed summary
 
-```
+```text
  M shared/qarar.ts                  (+86 lines — RuleCode, RULES NS1/NS2 entries,
                                        NON_SALES_OBJECTIVES, isNonSalesExempt,
                                        NormalizedObject optional fields)
