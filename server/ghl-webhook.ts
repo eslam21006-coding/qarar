@@ -731,6 +731,7 @@ ghlWebhookRouter.post(
       }
 
       const body = req.body as unknown;
+      console.log("[GHL Provision] Raw body:", JSON.stringify(body));
       const email = extractEmailFlat(body);
       if (!email) {
         res.status(200).json({ ignored: true });
