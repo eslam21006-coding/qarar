@@ -133,7 +133,7 @@ Existing repo layout: `shared/qarar.ts`, `server/*.ts`, `client/src/`. Server te
 - [x] T033 Documentation hygiene, three items: (a) add `scripts/` to the Source Code tree in `specs/013-verdict-accuracy-fixes/plan.md`, since T003a creates `scripts/enumerate-objectives.ts` and the tree currently lists only `shared/`, `server/`, and `client/`; (b) add a line to the Format section of this file permitting sub-lettered task IDs (`T003a`) for post-hoc insertions, matching the convention this feature already uses for `FR-005a` / `FR-009c` / `SC-002a` and avoiding a 30-task renumber; (c) confirm the `server/demo.ts` entry in plan.md's tree still reads NOT MODIFIED with the clone-`buildDemoSnapshot()` rationale — kept as an explicit unchecked verification
   - [x] T033.a — `scripts/` added to the Source Code tree in `plan.md`. **Done.**
   - [x] T033.b — sub-lettered task-ID line added to the Format section of this file. **Done.**
-  - [ ] T033.c — confirm via `git diff --stat` that `server/demo.ts` was not modified by this feature and that the `plan.md` tree still records "NOT MODIFIED" with the clone-`buildDemoSnapshot()` rationale. Verification, not an edit.
+  - [ ] T033.c — confirm that `git diff --name-only origin/main...HEAD -- server/demo.ts` returns no output (i.e. the file is unchanged across the full PR range, not only the working tree) and that the `plan.md` tree still records "NOT MODIFIED" with the clone-`buildDemoSnapshot()` rationale. Verification, not an edit.
 
 ---
 
