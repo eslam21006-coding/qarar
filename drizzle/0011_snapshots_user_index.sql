@@ -27,11 +27,14 @@
 --   0006 (a special-case early-TiDB bootstrapping path) — it does NOT
 --   accept arbitrary files. Use a direct mysql2 / mysql command instead:
 --
---     npx tsx -e 'import {readFileSync} from "fs"; import {createConnection} from "mysql2/promise"; import {URL} from "url"; (async()=>{const c=await createConnection({host:new URL(process.env.DATABASE_URL).hostname,user:new URL(process.env.DATABASE_URL).username,password:new URL(process.env.DATABASE_URL).password,database:new URL(process.env.DATABASE_URL).pathname.slice(1),ssl:{rejectUnauthorized:false},multipleStatements:true});try{await c.query(readFileSync("drizzle/0011_snapshots_user_index.sql","utf-8"));console.log("OK");}finally{await c.end();}})()'
+--     npx tsx -e 'import {readFileSync} from "fs"; import {createConnection} from "mysql2/promise"; import {URL} from "url"; (async()=>{const dbUrl=new URL(process.env.DATABASE_URL);const c=await createConnection({host:dbUrl.hostname,port:dbUrl.port?Number(dbUrl.port):undefined,user:dbUrl.username,password:dbUrl.password,database:dbUrl.pathname.slice(1),ssl:{rejectUnauthorized:false},multipleStatements:true});try{await c.query(readFileSync("drizzle/0011_snapshots_user_index.sql","utf-8"));console.log("OK");}finally{await c.end();}})()'
 --
---   Or the equivalent single-statement invocation:
+--   Or the equivalent single-statement invocation (the mysql client prompts
+--   for the password, and `-P<port>` is included only when the database
+--   listens on a non-default port):
 --
---     mysql -h<host> -u<user> -p<password> <database> < drizzle/0011_snapshots_user_index.sql
+--     mysql -h<host> -u<user> -p<database> < drizzle/0011_snapshots_user_index.sql
+--     mysql -h<host> -P<port> -u<user> -p<database> < drizzle/0011_snapshots_user_index.sql
 --
 -- IDEMPOTENCY: the statement is NOT idempotent — `CREATE INDEX` fails
 -- with `ER_DUP_KEYNAME` (1061) on a second run. Either guard the

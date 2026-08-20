@@ -124,9 +124,15 @@ absent-tolerant, matching how `asOfDate` and `daily30` handle snapshots cached
 before the field existed (`qarar.ts:230-238`) — cached snapshots stay readable
 and fall to the observed-spend rung.
 
-**Daily-equivalent formula.** `lifetimeBudget ÷ max(1, ceil((flightEnd −
-flightStart) / 1 day))`. A zero, negative, unparseable, or missing span is
-treated as unresolvable and drops to the next rung — never a division by zero.
+**Daily-equivalent formula.** `lifetimeBudget ÷ ceil((flightEnd − flightStart)
+/ 1 day)`, but **only when the span is positive, parseable, and meaningful**
+(both `flightStart` and `flightEnd` present, parsable as ISO timestamps, and
+`flightEnd − flightStart > 0`). When the span fails any of those checks the
+lifetime rung is **unresolvable** and the resolver drops to the next rung — it
+must never clamp a zero / negative span to a sentinel and divide. In
+particular, the `max(1, …)` clamp is forbidden: an invalid span must fall to
+the observed rung (and onward from there), not silently produce a daily
+equivalent that drives `NS1`/`NS2`.
 
 ---
 

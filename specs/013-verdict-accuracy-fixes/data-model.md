@@ -56,9 +56,11 @@ incorrect regardless of how the set is populated.
 | `flightEnd` | `string \| null` | campaign `stop_time`, ad set `end_time` | **Field name differs by level** — see contracts/meta-import-fields.md |
 
 All three are optional and absent-tolerant. Snapshots cached before this feature
-carry none of them; such objects resolve their daily rate from the observed-spend
-rung or fall to ⏳, never to a false `NS1`. This mirrors the established
-tolerance pattern for `asOfDate` and `daily30`.
+carry none of the newly-introduced `lifetimeBudget`, `flightStart`, or
+`flightEnd` fields, but the pre-existing `dailyBudget` field remains available
+and continues to be resolved as the first rung of the FR-012a ladder; only the
+new fields are absent, the resolution order is unchanged. This mirrors the
+established tolerance pattern for `asOfDate` and `daily30`.
 
 **Ad-level invariant preserved**: ads set `dailyBudget: null` today
 (`server/meta.ts:1000`) and gain no budget fields. FR-015 holds structurally.
@@ -72,7 +74,11 @@ tolerance pattern for `asOfDate` and `daily30`.
 Not persisted. Produced by budget resolution during evaluation:
 
 ```
-{ amount: number | null, source: "daily" | "lifetime" | "observed" | "none" }
+{
+  amount: number | null,
+  source: "daily" | "lifetime" | "observed" | "none",
+  hadLifetime: boolean   // discriminator — see "two `none` cases" below
+}
 ```
 
 | `source` | Produced when | Permitted verdicts |
@@ -80,15 +86,26 @@ Not persisted. Produced by budget resolution during evaluation:
 | `daily` | `dailyBudget` is non-null | `NS1` / `NS2` |
 | `lifetime` | `lifetimeBudget` present **and** flight span resolves to ≥ 1 day | `NS1` / `NS2` |
 | `observed` | lifetime present but span unresolvable, and delivery data is meaningful | `NS1` / `NS2` |
-| `none` | no budget of any kind at this level (ad row, CBO ad set, ABO campaign) | `NS1` only — threshold enforced once at the level holding the budget (FR-012c) |
-| `none` | lifetime budget present but neither span nor delivery data usable | ⏳ `GATE` only (FR-009c, FR-012b) |
+| `none` | no budget of any kind at this level (ad row, CBO ad set, ABO campaign); `hadLifetime === false` | `NS1` only — threshold enforced once at the level holding the budget (FR-012c) |
+| `none` | lifetime budget present but neither span nor delivery data usable; `hadLifetime === true` | ⏳ `GATE` only (FR-009c, FR-012b) |
 
-**The two `none` cases are distinct and must not be collapsed.** Absence of any
-budget is compliant by design; a lifetime budget with no resolvable rate is
-unjudgeable. Collapsing them reintroduces exactly the hole FR-012b closes.
+**The two `none` cases are distinct and must not be collapsed.** The
+`hadLifetime` discriminator separates them:
+
+- `source: "none"` **and** `hadLifetime: false` ⇒ genuine no-budget ⇒ `NS1`
+  (FR-012c — the threshold is enforced once at the level holding the budget).
+- `source: "none"` **and** `hadLifetime: true` ⇒ lifetime budget with no
+  resolvable rate ⇒ ⏳ `GATE` (FR-009c, FR-012b — a data-availability
+  fallback, not a sales judgement).
+
+Absence of any budget is compliant by design; a lifetime budget with no
+resolvable rate is unjudgeable. Collapsing them reintroduces exactly the hole
+FR-012b closes.
 
 **Span rule**: `ceil((flightEnd − flightStart) / 1 day)`; zero, negative,
 unparseable, or missing ⇒ unresolvable ⇒ next rung. Never divide by zero.
+Invalid spans must remain unresolvable and fall to the next rung rather than
+clamping to a sentinel.
 
 ---
 

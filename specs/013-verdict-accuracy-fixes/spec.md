@@ -464,11 +464,17 @@ verdict, while every sales object's verdict is byte-identical to before.
   recommended action is a no-op at the moment it is shown.
 - **SC-003**: Zero objects with a lead or sales objective change verdict, rule
   code, reason, or action as a result of this feature.
-- **SC-004**: 100% of active objects under an awareness, engagement, or traffic
-  campaign receive `NS1`, `NS2`, or the lifetime-budget ⏳ fallback of FR-009c,
-  and none receives a rule from the sales rulebook. The ⏳ fallback is included
-  because an exempt object with a lifetime budget but no resolvable daily rate
-  has nothing to judge (FR-012b); it is not a sales verdict.
+- **SC-004**: 100% of active objects under any campaign whose objective is a
+  member of `NON_SALES_OBJECTIVES` (current-era: `OUTCOME_AWARENESS`,
+  `OUTCOME_TRAFFIC`, `OUTCOME_ENGAGEMENT`, `OUTCOME_APP_PROMOTION`; legacy:
+  `BRAND_AWARENESS`, `REACH`, `LINK_CLICKS`, `POST_ENGAGEMENT`, `PAGE_LIKES`,
+  `EVENT_RESPONSES`, `VIDEO_VIEWS`, `LOCAL_AWARENESS`, `APP_INSTALLS`,
+  `MOBILE_APP_INSTALLS`, `MOBILE_APP_ENGAGEMENT`, `CANVAS_APP_ENGAGEMENT`,
+  `CANVAS_APP_INSTALLS`) receive `NS1`, `NS2`, or the lifetime-budget ⏳
+  fallback of FR-009c, and none receives a rule from the sales rulebook. The
+  ⏳ fallback is included because an exempt object with a lifetime budget
+  but no resolvable daily rate has nothing to judge (FR-012b); it is not a
+  sales verdict.
 - **SC-005**: An account denominated in a currency other than the US dollar
   produces the same exempt/over-budget classification as an equivalent
   dollar-denominated account with the same real spend level.
@@ -537,6 +543,15 @@ verdict, while every sales object's verdict is byte-identical to before.
   continue (`NS1`) and watch (`NS2`). Rescue is never reachable. Too_early is
   reachable by exactly two paths: the paused gate, and the lifetime-budget
   no-figure fallback (FR-009c).
+- **Glossary — no-budget vs lifetime-no-rate.** A "genuine no-budget" exempt
+  object (no `dailyBudget`, no `lifetimeBudget`) maps to 🟢 `NS1`: the budget
+  threshold is enforced once, at the level that actually holds the budget
+  (FR-012c). An exempt lifetime-budget object lacking a usable daily-rate
+  figure (lifetime present but neither schedule nor observed-spend resolves
+  to a meaningful value) maps to ⏳ `GATE`: a data-availability fallback, not
+  a sales judgement (FR-009c, FR-012b). The two cases are distinguished by
+  the `hadLifetime` discriminator on the internal `DailyRate` result, not by
+  reading `o.lifetimeBudget` again at the call site.
 - **Presentation of `NS1` / `NS2`.** These codes flow into the existing
   rule-code display mechanism with no new interface component; the faded/tooltip
   treatment is inherited.

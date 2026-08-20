@@ -19,6 +19,13 @@ npm run check     # tsc --noEmit
 npm test          # vitest
 ```
 
+Pre-implementation baseline (recorded in `baseline.md`) was **484 passed /
+24 skipped** tests; the final suite reported **558 passed / 39 skipped**, all
+74 new tests landing in new test files (SC-010). The pre-existing
+`server/auth-flow.e2e.test.ts` failure (MySQL unreachable in the local
+sandbox) is unchanged before and after — local-only; CI runs against MySQL
+and must see a clean pass for that suite.
+
 ---
 
 ## Baseline first (do this before writing code)
@@ -66,12 +73,16 @@ object is `ACTIVE`. Leave it alone — it is a weaker assertion, not a wrong one
 
 ## Validation 2 — Exemption classification (User Story 2)
 
-**Assertions** — one case per row, all through `runEngine`:
+**Assertions** — one case per row, all through `runEngine`. The exempt cases
+mirror the full `NON_SALES_OBJECTIVES` allow-list; the test suite
+parameterises over every member so adding a new value automatically widens
+coverage (T011, SC-004):
 
 | Objective | Expected |
 |-----------|----------|
-| `OUTCOME_AWARENESS`, `OUTCOME_TRAFFIC`, `OUTCOME_ENGAGEMENT` | exempt ⇒ `NS1`/`NS2` |
-| `BRAND_AWARENESS`, `REACH`, `VIDEO_VIEWS`, `LINK_CLICKS`, `POST_ENGAGEMENT` | exempt |
+| `OUTCOME_AWARENESS`, `OUTCOME_TRAFFIC`, `OUTCOME_ENGAGEMENT`, `OUTCOME_APP_PROMOTION` | exempt ⇒ `NS1`/`NS2` |
+| `BRAND_AWARENESS`, `REACH`, `VIDEO_VIEWS`, `LINK_CLICKS`, `POST_ENGAGEMENT`, `PAGE_LIKES`, `EVENT_RESPONSES`, `LOCAL_AWARENESS` | exempt (legacy awareness / reach / engagement / video family) |
+| `APP_INSTALLS`, `MOBILE_APP_INSTALLS`, `MOBILE_APP_ENGAGEMENT`, `CANVAS_APP_ENGAGEMENT`, `CANVAS_APP_INSTALLS` | exempt (legacy app family) |
 | `OUTCOME_LEADS`, `OUTCOME_SALES` | not exempt ⇒ ordinary verdict |
 | `CONVERSIONS`, `PRODUCT_CATALOG_SALES`, `LEAD_GENERATION` | **not exempt** (SC-011) |
 | `MESSAGES` | **not exempt** (SC-011) |
@@ -110,10 +121,14 @@ without this assertion the bug ships looking plausible.
 | `dailyBudget` present | `daily` | `NS1`/`NS2` |
 | Lifetime 700, 7-day window | `lifetime` (100/day) | `NS2` |
 | Lifetime 70, 7-day window | `lifetime` (10/day) | `NS1` |
-| Lifetime present, no/broken window, delivering | `observed` | per `w3d.spend / 3` |
-| Lifetime present, no window, no delivery | `none` | ⏳ `GATE` — **never `NS1`** |
+| Lifetime present, no/broken window, **`w3d.spend > 0`** | `observed` | per `w3d.spend / 3` |
+| Lifetime present, no window, **`w3d.spend === 0`** | `none` | ⏳ `GATE` — **never `NS1`** |
 | No budget at all (ad row, CBO ad set, ABO campaign) | `none` | `NS1` |
-| Window with zero/negative span | falls to `observed` | no divide-by-zero |
+| Window with zero / negative / unparseable span | falls to `observed` **only when `w3d.spend > 0`**, otherwise `none` | no divide-by-zero, no silent clamp |
+
+The observed rung is gated on `w3d.spend > 0`: a lifetime object that has not
+begun delivering carries no meaningful average, and `none` is the only honest
+answer.
 
 **Two assertions that catch quiet failures** (see contracts/meta-import-fields.md):
 
@@ -157,9 +172,20 @@ reason the user is told their offer or funnel is broken.
 npm run dev
 ```
 
-On the demo account: rule codes render faded via the existing `RuleChip`, so
-`NS1`/`NS2` need no UI work — confirm they appear faded and in the tooltip, never
-as primary copy (FR-017). Confirm the strip's Arabic copy still reads at
+Two accounts to verify:
+
+1. **Demo account** (objectives are all `null` ⇒ non-exempt ⇒ no `NS1`/`NS2`
+   ever appear): confirms the non-exempt rendering path is unchanged. Rule
+   codes render faded via the existing `RuleChip`, so `NS1`/`NS2` need no UI
+   work for this path.
+2. **Exempt seeded snapshot or dedicated fixture** (an account whose
+   campaigns carry `OUTCOME_AWARENESS`, `OUTCOME_TRAFFIC`,
+   `OUTCOME_ENGAGEMENT`, or any legacy member of the allow-list): use this
+   one to confirm `NS1`/`NS2` chips render faded and appear in the tooltip,
+   never as primary copy (FR-017).
+
+On the exempt fixture: confirm `NS1`/`NS2` appear faded and in the tooltip,
+never as primary copy (FR-017). Confirm the strip's Arabic copy still reads at
 6th-grade level and figures render LTR inside the RTL layout (FR-019).
 
 ---

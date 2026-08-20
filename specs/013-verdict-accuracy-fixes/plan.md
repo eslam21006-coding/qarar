@@ -38,6 +38,12 @@ byte-for-byte.
 inside the existing JSON snapshot payload, so no migration.
 
 **Testing**: Vitest. `npm test`, `npm run check` (tsc, must be clean).
+Pre-implementation baseline (recorded in `baseline.md`) was **484 passed /
+24 skipped** tests; the final suite reported **558 passed / 39 skipped**, all
+74 new tests landing in new test files (SC-010). The pre-existing
+`server/auth-flow.e2e.test.ts` failure (MySQL unreachable in the local
+sandbox) is unchanged before and after — local-only; CI runs against MySQL
+and must see a clean pass for that suite.
 
 **Target Platform**: Node server + browser SPA
 

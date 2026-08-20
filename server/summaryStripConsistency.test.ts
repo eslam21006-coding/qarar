@@ -53,7 +53,7 @@ describe("buildSummary — strip self-consistency (US1 / T005)", () => {
     expect(afterRun.summary.counts.kill).toBeLessThan(beforeRun.summary.counts.kill);
   });
 
-  it("an account whose only kill-verdict rows are paused yields counts.kill=0 + bleed_daily=0 + empty actions (SC-002a)", () => {
+  it("an account whose only kill-verdict rows are paused yields counts.kill=0 + bleed_daily=0 + no kill actions (SC-002a)", () => {
     const snap = buildDemoSnapshot();
     // Pause every kill row that exists. The demo's kill rows are reachable
     // through K1, K3, K4, CB2. Identify them by the rule each carries.
@@ -68,7 +68,11 @@ describe("buildSummary — strip self-consistency (US1 / T005)", () => {
     }
 
     const afterRun = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
-    // SC-002a — zero kills, zero bleed, empty actions.
+    // SC-002a — zero kills, zero bleed, no kill-verdict actions. Other
+    // action-eligible rows (rescue, scale-ready) are deliberately NOT
+    // paused here — the contract this test locks in is that pausing every
+    // kill row removes every kill action from the strip, not that the
+    // strip is empty in general.
     expect(afterRun.summary.counts.kill).toBe(0);
     expect(afterRun.summary.bleed_daily).toBe(0);
     expect(afterRun.summary.top_3_actions.filter(a => a.verdict === "kill")).toEqual([]);

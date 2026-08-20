@@ -150,12 +150,14 @@ async function main(): Promise<void> {
     rows = await loadRows(scope);
   } catch (e) {
     process.stderr.write(`✗ ${(e as Error).message}\n`);
-    process.exit(2);
+    process.exitCode = 2;
+    return;
   }
 
   if (rows.length === 0) {
     process.stderr.write("✗ no snapshots found in scope\n");
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const byUser = summarise(rows);
@@ -182,7 +184,7 @@ process.stdout.write(
 main()
   .catch((e: unknown) => {
     process.stderr.write(`✗ Unexpected error: ${(e as Error).message}\n`);
-    process.exit(2);
+    process.exitCode = 2;
   })
   .finally(async () => {
     // Always close the mysql2 pool so the script exits cleanly.
