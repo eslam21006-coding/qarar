@@ -1,0 +1,48 @@
+-- Spec 013 / CodeRabbit round-2 — `snapshots.userId` index.
+--
+-- !!! THIS FILE IS NOT PICKED UP BY drizzle-kit !!!
+-- !!! DO NOT PUT IT IN drizzle/meta/_journal.json !!!
+-- !!! DO NOT RUN IT VIA `pnpm run db:push` !!!
+--
+-- The per-user query used by `scripts/enumerate-objectives.ts` (the
+-- SC-011 objective-inventory maintenance CLI) is
+-- `where(eq(snapshots.userId, uid))`. Without an index, the column
+-- (`varchar(36)`) is read by table scan; with the index, MySQL/TiDB
+-- uses an index lookup. The index is also available to any future
+-- per-user lookup the engine might add.
+--
+-- WHY THIS FILE IS MANUAL:
+--
+-- The schema in `drizzle/schema.ts` intentionally OMITS the index
+-- declaration. drizzle-kit regenerates migrations from the schema; if
+-- the index were declared there, drizzle-kit would emit a migration on
+-- the next `pnpm run db:push` run, and the production deploy path
+-- (which goes through the existing TiDB-aware applier for non-trivial
+-- changes) would not see this file. The convention matches the
+-- `0010_settings_unique_index.sql` precedent set by Spec 011.
+--
+-- HOW TO APPLY THIS FILE:
+--
+--   scripts/apply-migrations.mjs is hard-coded to migrations 0005 and
+--   0006 (a special-case early-TiDB bootstrapping path) — it does NOT
+--   accept arbitrary files. Use a direct mysql2 / mysql command instead:
+--
+--     npx tsx -e 'import {readFileSync} from "fs"; import {createConnection} from "mysql2/promise"; import {URL} from "url"; (async()=>{const dbUrl=new URL(process.env.DATABASE_URL);const c=await createConnection({host:dbUrl.hostname,port:dbUrl.port?Number(dbUrl.port):undefined,user:dbUrl.username,password:dbUrl.password,database:dbUrl.pathname.slice(1),ssl:{rejectUnauthorized:false},multipleStatements:true});try{await c.query(readFileSync("drizzle/0011_snapshots_user_index.sql","utf-8"));console.log("OK");}finally{await c.end();}})()'
+--
+--   Or the equivalent single-statement invocation (the mysql client prompts
+--   for the password, and `-P<port>` is included only when the database
+--   listens on a non-default port):
+--
+--     mysql -h<host> -u<user> -p<database> < drizzle/0011_snapshots_user_index.sql
+--     mysql -h<host> -P<port> -u<user> -p<database> < drizzle/0011_snapshots_user_index.sql
+--
+-- IDEMPOTENCY: the statement is NOT idempotent — `CREATE INDEX` fails
+-- with `ER_DUP_KEYNAME` (1061) on a second run. Either guard the
+-- command (`SELECT ... FROM information_schema.statistics WHERE ...`)
+-- or accept the failure and rely on the row-count check to confirm
+-- the index exists.
+--
+-- SAFE TO APPLY ANYTIME: `CREATE INDEX` is online for InnoDB / TiDB
+-- and requires no exclusive lock. Existing rows are unaffected.
+
+CREATE INDEX `idx_snapshots_userId` ON `snapshots` (`userId`);

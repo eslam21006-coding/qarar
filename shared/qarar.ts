@@ -27,6 +27,7 @@ export type RuleCode =
   | "F1" | "F2"
   | "W1" | "W2" | "W3" | "W4" | "W5" | "W6"
   | "S1" | "S2" | "S3" | "S4"
+  | "NS1" | "NS2"
   | "GATE";
 
 export const RULES: Record<RuleCode, { titleAr: string; defAr: string }> = {
@@ -118,7 +119,70 @@ export const RULES: Record<RuleCode, { titleAr: string; defAr: string }> = {
     titleAr: "البيانات ما زالت قليلة",
     defAr: "لا نحكم على إعلان قبل أن تكتمل بياناته — أكثر القرارات الخاسرة سببها الحكم المبكر.",
   },
+  // Spec 013 / US2 — non-sales objective exemption rule codes.
+  // These are RULE codes only — the verdict vocabulary stays exactly
+  // five values (kill, watch, continue, rescue, too_early). `NS1`
+  // emits `continue`, `NS2` emits `watch`. The copy below is rendered
+  // faded / tooltip-only, never as primary copy (FR-017). Arabic is
+  // ≤6th-grade reading level (FR-018, FR-019) — figures (where
+  // present) render through the engine's existing money() helper bound
+  // to the account currency so they stay LTR.
+  NS1: {
+    titleAr: "واصل — حملة غير مباشرة",
+    defAr: "هذه الحملة للتوعية أو جذب الزيارات. لا نقيسها بالمبيعات المباشرة. استمر بهذا المعدل اليومي.",
+  },
+  NS2: {
+    titleAr: "راقب — ميزانية مرتفعة لحملة غير مباشرة",
+    defAr: "المعدل اليومي لهذه الحملة أعلى من الحد للحملات غير المباشرة. قلّله إلى المستوى المناسب.",
+  },
 };
+
+/**
+ * Spec 013 / US2 — explicit allow-list of campaign objectives that exempt
+ * an object from the sales rulebook.
+ *
+ * Membership is the only way to grant exemption (C1.1 — never negation
+ * of the conversion objectives). Anything absent from this set, plus
+ * `null` and unknown values, is non-exempt and runs the full rulebook
+ * (FR-006b — fail-safe direction: never silently exempt).
+ *
+ * Research R1 enumerates the membership. `STORE_VISITS` and `OFFER_CLAIMS`
+ * are deliberately omitted (conversion-adjacent; under FR-006b uncertainty
+ * resolves to non-exempt; adding either later is a safe additive change).
+ */
+export const NON_SALES_OBJECTIVES: ReadonlySet<string> = new Set<string>([
+  // Current-era (ODAX) non-sales objectives
+  "OUTCOME_AWARENESS",
+  "OUTCOME_TRAFFIC",
+  "OUTCOME_ENGAGEMENT",
+  "OUTCOME_APP_PROMOTION",
+  // Legacy equivalents
+  "BRAND_AWARENESS",
+  "REACH",
+  "LINK_CLICKS",
+  "POST_ENGAGEMENT",
+  "PAGE_LIKES",
+  "EVENT_RESPONSES",
+  "VIDEO_VIEWS",
+  "LOCAL_AWARENESS",
+  // Legacy app install / engagement
+  "APP_INSTALLS",
+  "MOBILE_APP_INSTALLS",
+  "MOBILE_APP_ENGAGEMENT",
+  "CANVAS_APP_ENGAGEMENT",
+  "CANVAS_APP_INSTALLS",
+]);
+
+/**
+ * Spec 013 / US2 — predicate. Membership-only (C1.1). `null` / `undefined` /
+ * unknown values are non-exempt (FR-006b, FR-008).
+ */
+export function isNonSalesExempt(
+  objective: string | null | undefined
+): boolean {
+  if (objective === null || objective === undefined) return false;
+  return NON_SALES_OBJECTIVES.has(objective);
+}
 
 // ---------- Metric shapes ----------
 
@@ -198,6 +262,28 @@ export interface NormalizedObject {
   effectiveStatus?: string | null;
   /** last 30 days, daily — powers the date-range selector (display only) */
   daily30?: DailyMetrics[];
+  /**
+   * Spec 013 / FR-012 — optional lifetime budget in account-currency major
+   * units (Meta returns minor units; meta.ts divides by 100). Absent on
+   * snapshots cached before this feature, and `null` whenever Meta did
+   * not report it (the field is optional). Absent-tolerant: see
+   * `asOfDate` / `daily30` for the same pattern (data-model §3, §5.1).
+   */
+  lifetimeBudget?: number | null;
+  /**
+   * Spec 013 / FR-012a — start of the flight window (ISO). Absent on
+   * pre-feature snapshots and `null` when Meta did not report it. The
+   * platform requires start/end whenever a lifetime budget is set; a
+   * missing end with a present lifetime budget falls to the
+   * observed-spend rung in `resolveDailyRate`.
+   */
+  flightStart?: string | null;
+  /**
+   * Spec 013 / FR-012a — end of the flight window. Note Meta names the
+   * field differently by level: campaign end is `stop_time`, ad-set end
+   * is `end_time`. See contracts/meta-import-fields.md §M2.
+   */
+  flightEnd?: string | null;
 }
 
 export interface Baselines {
