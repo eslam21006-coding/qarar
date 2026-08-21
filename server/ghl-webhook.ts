@@ -750,6 +750,35 @@ ghlWebhookRouter.post(
 
       const result = await setUserSubscriptionByEmail(email, "active", contactId);
       if (result === "updated") {
+        // Update the name on the existing user if the webhook provides a
+        // real one (not just the email-prefix fallback). Accounts created
+        // before the name was captured correctly, or repeat buyers, get
+        // their display name corrected here.
+        try {
+          const emailPrefix = email.split("@")[0];
+          if (name && name !== emailPrefix) {
+            const db = await getDb();
+            if (db) {
+              const rows = await db
+                .select({ id: user.id })
+                .from(user)
+                .where(eq(user.email, email))
+                .limit(1);
+              if (rows[0]) {
+                await db
+                  .update(user)
+                  .set({ name })
+                  .where(eq(user.id, rows[0].id));
+              }
+            }
+          }
+        } catch (nameErr: unknown) {
+          const nameMsg =
+            nameErr instanceof Error ? nameErr.message : String(nameErr);
+          console.error(
+            `[GHL Provision] name update failed email=${email} message=${nameMsg}`
+          );
+        }
         console.log(`[GHL Provision] email=${email} newUser=false`);
         res.status(200).json({ ok: true, status: "active", newUser: false });
         return;

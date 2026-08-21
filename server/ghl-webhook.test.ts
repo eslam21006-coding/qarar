@@ -1644,10 +1644,15 @@ describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
     expect(res.body).toEqual({ ok: true, status: "active", newUser: false });
     expect(res.body).not.toHaveProperty("setPasswordUrl");
 
-    // Activation update fired exactly once.
-    expect(calls.updateCalls).toHaveLength(1);
+    // Activation update fired once; the name-update branch then fires a
+    // second update because the webhook's name ("Known") differs from the
+    // email prefix ("buyer-known") and therefore carries a real name.
+    expect(calls.updateCalls).toHaveLength(2);
     expect(calls.updateCalls[0].set).toEqual({
       subscriptionStatus: "active",
+    });
+    expect(calls.updateCalls[1].set).toEqual({
+      name: "Known",
     });
     // Provisioner / token generator never reached for an existing user.
     expect(authMock.linkCalls).toHaveLength(0);
