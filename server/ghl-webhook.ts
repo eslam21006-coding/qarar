@@ -539,14 +539,22 @@ export function extractContactIdFlat(body: unknown): string | null {
  */
 export function extractNameFlat(body: unknown, email: string): string {
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
-  const fromName = typeof b.name === "string" ? b.name.trim() : null;
-  if (fromName && fromName.length > 0) {
-    return fromName.replace(/\s+/g, " ");
+  const cd = (b.customData && typeof b.customData === "object" ? b.customData : {}) as Record<string, unknown>;
+
+  for (const src of [b, cd]) {
+    const fromName = typeof src.name === "string" ? src.name.trim() : null;
+    if (fromName && fromName.length > 0) return fromName.replace(/\s+/g, " ");
+
+    const fromFullName = typeof src.full_name === "string" ? src.full_name.trim() : null;
+    if (fromFullName && fromFullName.length > 0) return fromFullName.replace(/\s+/g, " ");
+
+    const first = typeof src.firstName === "string" ? src.firstName.trim()
+                : typeof src.first_name === "string" ? src.first_name.trim() : "";
+    const last = typeof src.lastName === "string" ? src.lastName.trim()
+               : typeof src.last_name === "string" ? src.last_name.trim() : "";
+    const joined = `${first} ${last}`.replace(/\s+/g, " ").trim();
+    if (joined.length > 0) return joined;
   }
-  const first = typeof b.firstName === "string" ? b.firstName.trim() : "";
-  const last = typeof b.lastName === "string" ? b.lastName.trim() : "";
-  const joined = `${first} ${last}`.replace(/\s+/g, " ").trim();
-  if (joined.length > 0) return joined;
 
   const normalizedEmail = (email ?? "").trim();
   const atIndex = normalizedEmail.indexOf("@");
@@ -731,7 +739,6 @@ ghlWebhookRouter.post(
       }
 
       const body = req.body as unknown;
-      console.log("[GHL Provision] Raw body:", JSON.stringify(body));
       const email = extractEmailFlat(body);
       if (!email) {
         res.status(200).json({ ignored: true });

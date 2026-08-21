@@ -1526,6 +1526,15 @@ describe("extractEmailFlat / extractContactIdFlat / extractNameFlat", () => {
   it("extractNameFlat falls back to email prefix", () => {
     expect(extractNameFlat({}, "jane.doe@example.com")).toBe("jane.doe");
   });
+  it("extractNameFlat reads snake_case full_name from GHL standard data", () => {
+    expect(extractNameFlat({ full_name: "Islam Ramadan" }, "x@y.co")).toBe("Islam Ramadan");
+  });
+  it("extractNameFlat reads snake_case first_name + last_name", () => {
+    expect(extractNameFlat({ first_name: "Islam", last_name: "Ramadan" }, "x@y.co")).toBe("Islam Ramadan");
+  });
+  it("extractNameFlat reads name from customData", () => {
+    expect(extractNameFlat({ customData: { name: "Islam Ramadan" } }, "x@y.co")).toBe("Islam Ramadan");
+  });
 });
 
 describe("POST /api/webhooks/ghl/provision (workflow integration)", () => {
