@@ -5,7 +5,8 @@
 
 This is the normative contract for `diagnose()` after Spec 014. Where this document and prose
 elsewhere disagree, this document governs the implementation. Clause IDs (C1..C9) are stable and are
-cited by `tasks.md` and by the test names.
+cited by `tasks.md` and by the test names. (The range is C1..C10; the "C1..C9" in earlier drafts
+predates C10.)
 
 **Interface under contract**
 
@@ -14,7 +15,8 @@ diagnose(
   o: NormalizedObject,
   baselines: Baselines,
   archetype: FunnelInputs["archetype"],
-  fired: RuleResult,          // NEW — FR-009
+  fired: RuleResult,                        // NEW — FR-009
+  htoUnderperforming: boolean = false,      // NEW — C4.2 condition 1, per C4.2a
 ): Finding[]
 ```
 
@@ -164,9 +166,29 @@ Where **either** is absent, the campaign resolves through the ordinary C2.2 prec
 funnel-fault rule with unevaluable conversion rungs means `INSUFFICIENT_DATA` (clause 5), with no
 `ctaUrl`.
 
+**C4.2a — How each condition is read (normative).** Both conditions were previously read through
+proxies that did not carry the information they were assumed to carry. Both are now pinned:
+
+| Condition | MUST be read as | MUST NOT be read as |
+|-----------|-----------------|---------------------|
+| 1 — the funnel flag | An **explicit parameter** on `diagnose()`, supplied by the caller from `funnel.htoUnderperforming`. It defaults to `false`, so the path fails closed for any caller that does not state it | `fired.ctaUrl`, or any other field of `Fired`. `evaluateCampaign` attaches the discovery CTA to **every** W5 `Fired` it returns, so that check is structurally always true and enforces nothing |
+| 2 — the cost per customer | **`effectiveCpa(o, archetype)`** — the archetype-aware selector, so `appointment` / `webinar` are judged on cost-per-**lead**, the same judgement unit W5's own firing condition uses (T025) | `o.w3d.cpa`, the legacy cost-per-**purchase** field. It is null for exactly the archetypes whose purchase happens off-platform, so reading it denies the evidence path to the campaigns T025 exists to protect |
+
+The unit is pinned here so it cannot drift back: **condition 2 is a cost per customer in the
+archetype's own judgement unit**, not a cost per purchase.
+
 **C4.3** — The exemption MUST NEVER open on the mere absence of an ad-fault rule. That is the
 binary-default failure mode rejected in clarification Q1, and C4.2's two-condition guard is what
 prevents it appearing one level up at the campaign.
+
+**C4.3a — How C4.3 MUST be tested.** The guard's **closed** state MUST be exercised by calling
+`diagnose()` directly with a W5 `Fired`, not by driving `runEngine`. W5's own firing condition
+already requires the funnel flag and a measured CPA, so any `runEngine` fixture that closes the
+guard also stops W5 from firing — such a test passes because `diagnose()` never saw a W5 at all,
+which is no evidence about the guard. The fixture MUST hold rungs 4 and 5 **unevaluable**, so that
+C2.2 clause 4 cannot match and `FUNNEL_CONFIRMED` is reachable only through C4; and it MUST include
+an **open control** differing only in the guard's inputs, so the closed cases are demonstrably
+attributable to the guard.
 
 **C4.4 (FR-009c)** — The `FUNNEL_CONFIRMED` line produced by the W5 path MUST carry the measured
 cost-per-customer figure, so the claim is provable from the campaign's own numbers.
@@ -182,7 +204,7 @@ identical `WindowMetrics` shape. Per ladder step:
 | 2 — link clicks | **Available** — `w3d.linkClicks` is populated at every level | MUST be printed |
 | 2 — account median link CTR (the comparison) | **Never a like-for-like figure.** `baselines.ctrLinkMedian90` is fetched with `level: "ad"` (`server/meta.ts:1320-1340`) — a median over ad-days. Comparing a campaign aggregate against it is not a valid comparison | MUST be stated unavailable **for a campaign**, in the C3.4a form, whether or not the baseline is null |
 | 3 — landing-page views as a share of link clicks | **Available when `lpViews > 0`**; `lpViews === 0` against real clicks is the untracked case of research §R2.2 | Printed when available; stated unavailable when `lpViews === 0` |
-| 4 — conversions as a share of landing-page views | **Available when `lpViews > 0`** — the denominator is step 3's numerator | Printed when available; stated unavailable when `lpViews === 0` |
+| 4 — conversions as a share of landing-page views | **Available when `lpViews > 0`** — the denominator is step 3's numerator | Printed when available; stated unavailable when `lpViews === 0`. The numerator MUST be the archetype's own unit — see C4.4a |
 | 5 — conclusion + measured cost per customer | **Always available on this path** — C4.2 condition 2 makes a measured campaign CPA a precondition for opening it at all | MUST be printed (FR-009c) |
 
 So the W5 line always carries at least two figures (impressions, link clicks) plus the cost per customer
@@ -194,12 +216,32 @@ internal fallback presented as the account's median. Because a campaign can meas
 original text assumed, SC-004a binds here in its rescoped form: **only the steps enumerated as
 unavailable above may be stated unknown.** Any step whose figure is present MUST be printed.
 
-**C4.5** — Exactly one funnel line per row. The current campaign block
-(`server/engine.ts:~1451-1466`) appends a second step-6 finding when `diagnose()` did not already
-produce one, and patches `ctaUrl` onto an existing step-6 when it did. Both halves are replaced: the
+**C4.4a — The ladder's figures MUST be computed with the same archetype the rung evaluation used.**
+This binds both `FUNNEL_CONFIRMED` routes, not only the W5 one. Rung 5 counts
+`leadConversions` for `appointment` / `webinar` and `conversions` otherwise; step 4 of the ladder
+MUST use that same selector. An `appointment` campaign whose rung 5 is `clean` on 50 leads and whose
+ladder prints `0.0%` from zero purchases states a number that contradicts the evidence licensing the
+claim — the precise dishonesty this feature exists to remove, relocated into the copy layer. The
+archetype is therefore a **required** argument to the ladder builder, never defaulted and never
+assumed to be `paid_lto`.
+
+*Known follow-on, out of scope here:* step 4's verb is «اشتروا» ("bought") on every archetype, and
+rung 5's own broken-wording at `server/engine.ts:~1200` says «يشترون» likewise. For an
+appointment/webinar account the counted unit is a booked lead, not a purchase. The **figure** is now
+correct on every archetype; the **noun** is not. Changing it alters existing rung-5 finding copy and
+belongs in its own change.
+
+**C4.5** — Exactly one funnel line per row. The original campaign block
+(`server/engine.ts:~1451-1466`) appended a second step-6 finding when `diagnose()` did not already
+produce one, and patched `ctaUrl` onto an existing step-6 when it did. Both halves are replaced: the
 W5 evidence is passed **into** `diagnose()` so the outcome selector produces the single correct
 finding, and the post-hoc patching is deleted. A row MUST NOT carry two findings whose outcome is a
 terminal member (data-model V8).
+
+"Passed into `diagnose()`" means the two C4.2 conditions, per C4.2a — the flag as its own argument
+and the CPA re-derived inside the selector from `effectiveCpa`. The call site MUST NOT rebuild the
+`Fired` to signal the guard; a `Fired` that already carries `ctaUrl` from `evaluateCampaign` conveys
+nothing, and a hand-built one is indistinguishable from the rule's own output.
 
 ---
 
@@ -381,7 +423,7 @@ one (C9.5).
 | C1 | FR-001, FR-002, FR-003, FR-003a, FR-014 | 1, 6 |
 | C2 | FR-004, FR-005, FR-006, FR-006a, FR-006b, FR-008, FR-008a | 1, 2, 5, 6, 9, 18 |
 | C3 | FR-004, FR-005, FR-006a, FR-007, FR-007a | 1, 2, 5, 9 |
-| C4 | FR-009a, FR-009b, FR-009c | 7, 8 |
+| C4 | FR-009a, FR-009b, FR-009c | 7, 7b, 8, 8b |
 | C5 | Constitution III | 5, 7 |
 | C6 | FR-010, FR-010a, FR-010b, FR-011a | 12, 14, 17 |
 | C7 | FR-011, FR-012, FR-012a | 12 |
@@ -395,4 +437,4 @@ them is reachable in production:
 | Route | Clause | Scenario | Status |
 |-------|--------|----------|--------|
 | Rung precondition | C2.2 clause 4 | 5, 6 | Synthetic selector unit tests — unreachable via `runEngine` per C2.6 |
-| W5 evidence | C4.2 | 7, 8 | **The production route.** Carries SC-004 and SC-004a |
+| W5 evidence | C4.2 | 7, 7b, 8, 8b | **The production route.** Scenario 7 carries SC-004 and SC-004a; 7b pins C4.4a; 8 exercises the guard's closed state per C4.3a |

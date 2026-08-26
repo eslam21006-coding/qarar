@@ -106,9 +106,12 @@ vi.mock("@/components/TodayActions", () => ({
 vi.mock("@/components/PromotionList", () => ({
   PromotionList: () => null,
 }));
-vi.mock("@/components/DiagnosisSection", () => ({
-  DiagnosisSection: () => null,
-}));
+// NOTE: there is deliberately no `DiagnosisSection` mock here.
+// `DiagnosisSection` is defined inside `@/pages/Dashboard` itself — the
+// module under test — so it cannot be stubbed from outside. An earlier
+// `vi.mock("@/components/DiagnosisSection", ...)` pointed at a path that
+// has never existed and was silently inert (self-review F6). The real
+// component renders; `DiagnosisSection.test.tsx` covers it directly.
 
 import Dashboard from "@/pages/Dashboard";
 

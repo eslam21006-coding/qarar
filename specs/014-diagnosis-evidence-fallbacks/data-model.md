@@ -247,8 +247,9 @@ operationally defines "no ad-health claim" is `AD_HEALTH_CLAIMS` in contract §C
 
 ```
 NormalizedObject ──┐
-                   ├──> diagnose(o, baselines, archetype, fired) ──> Finding[]
-RuleResult (fired)─┘         │
+                   ├──> diagnose(o, baselines, archetype, fired,
+RuleResult (fired)─┘                  htoUnderperforming) ──> Finding[]
+                             │
                              ├─ builds RungEvaluation (§3)  ── V1..V5
                              ├─ broken rungs      ──> rung Findings (RUNG_*)
                              └─ if no rung broke:
@@ -260,9 +261,22 @@ Finding[] ──> EngineRow.findings ──> buildSummary ──> account_funnel
                                  └─> DiagnosisSection / FindingRow (§8 V17)
 ```
 
-The only new input to `diagnose()` is `fired: RuleResult` (FR-009). All three call sites in
-`runEngine` — ad (`server/engine.ts:~1429`), ad set (`~1439`), campaign (`~1450`) — already have
-`fired` in scope, so no plumbing is needed above them.
+`diagnose()` takes **two** new inputs.
+
+1. `fired: RuleResult` (FR-009). All three call sites in `runEngine` — ad, ad set, campaign — already
+   have `fired` in scope, so no plumbing is needed above them.
+2. `htoUnderperforming: boolean` — the account-level funnel flag, condition 1 of the C4 guard. It is
+   passed **explicitly** from `funnel.htoUnderperforming` at all three call sites, and defaults to
+   `false` so the W5 evidence path fails closed for any caller that omits it.
+
+**Why the flag is its own argument (V20).** An earlier design inferred it from `fired.ctaUrl` being
+set. That carries no information: `evaluateCampaign` attaches the discovery CTA to *every* W5
+`RuleResult` it returns, so the check was structurally always true and the guard enforced nothing —
+it agreed with the intended behaviour only because W5's own firing condition happens to require the
+same flag. State-bearing inputs to the selector MUST be arguments, never fields borrowed from a
+`RuleResult` for a purpose that field does not serve. This is the same principle as FR-015 (no
+selection on Arabic copy) applied to a non-textual field: the selector reads what it was given, not
+what it can infer. Normative statement: contract C4.2a.
 
 ---
 

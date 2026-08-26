@@ -1061,16 +1061,22 @@ function noBlameAssignableText(
  * `mode` selects the route:
  *   - "clause4" — the rung-precondition route (C2.2 clause 4).
  *   - "w5" — the campaign W5 evidence path (C4). The cost-per-customer
- *     figure is required by C4.4 and printed at step 5.
+ *     figure is required by C4.4 and printed at step 5. It also
+ *     suppresses the account-median comparison at step 2, because
+ *     `ctrLinkMedian90` is fetched at ad level and is not like-for-like
+ *     for a campaign aggregate (C4.4).
  *
- * `isCampaign` indicates the W5 path — affects which steps use
- * `baselines.ctrLinkMedian90` (which is undefined for campaigns per
- * C4.4).
+ * `archetype` is REQUIRED, not defaulted. Step 4's conversion figure
+ * must be computed with the same archetype `evaluateRungs` used for
+ * rung 5 — otherwise an appointment/webinar account can print a
+ * purchase-based percentage under a claim that rung 5 licensed on
+ * leads, and the ladder contradicts its own evidence (self-review F1).
  */
 function funnelConfirmedText(
   o: NormalizedObject,
   ev: RungEvaluation,
   baselines: Baselines,
+  archetype: FunnelInputs["archetype"],
   mode: "clause4" | "w5",
   campaignCpa: number | null
 ): string {
@@ -1107,9 +1113,12 @@ function funnelConfirmedText(
     lines.push(`نسبة الوصول للصفحة غير متاحة (لم تُسجَّل زيارات)`);
   }
 
-  // Step 4 — conversions as a share of landing-page views.
+  // Step 4 — conversions as a share of landing-page views. The unit
+  // is archetype-dependent (`leadConversions` for appointment/webinar,
+  // `conversions` otherwise) and MUST match the unit rung 5 was
+  // evaluated on — see `evaluateRungs`.
   if (w.lpViews > 0) {
-    const conv = effectiveConversionsLocal(o, "paid_lto") ?? 0;
+    const conv = effectiveConversionsLocal(o, archetype) ?? 0;
     const cvr = (conv / w.lpViews) * 100;
     lines.push(`${cvr.toFixed(1)}% من زوار الصفحة اشتروا`);
   } else {
@@ -1132,11 +1141,22 @@ function funnelConfirmedText(
   return lines.join(" — ");
 }
 
+/**
+ * `htoUnderperforming` is the account-level funnel flag from
+ * `FunnelInputs`, passed EXPLICITLY (self-review F2). It was previously
+ * inferred from `fired.ctaUrl` being set, which is not a signal at all:
+ * `evaluateCampaign` attaches the discovery CTA to every W5 `Fired` it
+ * returns, so that check was structurally always true and the C4 guard
+ * only agreed with the intended behaviour by accident, via W5's own
+ * firing condition. It defaults to `false` so the evidence path fails
+ * closed for any caller that does not state the flag.
+ */
 export function diagnose(
   o: NormalizedObject,
   baselines: Baselines,
   archetype: FunnelInputs["archetype"],
-  fired: Fired
+  fired: Fired,
+  htoUnderperforming: boolean = false
 ): Finding[] {
   const w = o.w3d;
   const findings: Finding[] = [];
@@ -1219,18 +1239,19 @@ export function diagnose(
     const isW5Campaign =
       fired.rule === "W5" && o.level === "campaign";
     if (isW5Campaign) {
-      const cpa = o.w3d.cpa;
-      // The campaign-level funnel flag is read from
-      // `funnel.htoUnderperforming` at the call site; the engine
-      // sees it through `fired.ctaUrl` being set (today's W5 path
-      // attaches the CTA there). We re-derive from the W5 Fired
-      // contract: W5 sets `fired.ctaUrl` and the guard opens only
-      // when the call site passed `true` (see runEngine).
-      if (fired.ctaUrl && cpa !== null) {
+      // (b) the measured campaign CPA, read through the archetype-aware
+      // selector so appointment / webinar are judged on cost-per-lead —
+      // the same unit W5's own firing condition uses (T025). Reading the
+      // legacy `o.w3d.cpa` here denied the evidence path to exactly the
+      // archetypes T025 exists to protect (self-review F3).
+      const cpa = effectiveCpa(o, archetype);
+      // (a) the account-level funnel flag, passed explicitly by the
+      // caller — never inferred from copy or from `fired.ctaUrl`.
+      if (htoUnderperforming && cpa !== null) {
         terminal = {
           step: 6,
           outcome: "FUNNEL_CONFIRMED",
-          text_ar: funnelConfirmedText(o, ev, baselines, "w5", cpa),
+          text_ar: funnelConfirmedText(o, ev, baselines, archetype, "w5", cpa),
           primary: false,
           ctaUrl: DISCOVERY_CALL_URL,
         };
@@ -1274,7 +1295,7 @@ export function diagnose(
         terminal = {
           step: 6,
           outcome: "FUNNEL_CONFIRMED",
-          text_ar: funnelConfirmedText(o, ev, baselines, "clause4", null),
+          text_ar: funnelConfirmedText(o, ev, baselines, archetype, "clause4", null),
           primary: false,
           ctaUrl: DISCOVERY_CALL_URL,
         };
@@ -1840,7 +1861,7 @@ export function runEngine(
     const exempt = isNonSalesExempt(ad.objective ?? null);
     const findings =
       !exempt && (fired.verdict === "kill" || fired.verdict === "watch")
-        ? diagnose(ad, baselines, funnel.archetype, fired)
+        ? diagnose(ad, baselines, funnel.archetype, fired, !!funnel.htoUnderperforming)
         : [];
     rows.push(toRow(ad, fired, findings));
   }
@@ -1850,31 +1871,26 @@ export function runEngine(
     const exempt = isNonSalesExempt(s.objective ?? null);
     const findings =
       !exempt && (fired.verdict === "kill" || fired.verdict === "watch")
-        ? diagnose(s, baselines, funnel.archetype, fired)
+        ? diagnose(s, baselines, funnel.archetype, fired, !!funnel.htoUnderperforming)
         : [];
     rows.push(toRow(s, fired, findings));
   }
 
   for (const c of campaigns) {
     const childRows = rows.filter(r => r.campaignId === c.id && r.level === "adset");
-    // Spec 014 / T034 — for a W5 campaign with the funnel flag and a
-    // measured CPA, hand-build a Fired carrying the discovery CTA so
-    // diagnose() can open its own evidence path. Otherwise diagnose()
-    // sees the literal W5 Fired the rule produced.
-    const rawFired = evaluateCampaign(c, judgeable, childRows, !!funnel.htoUnderperforming, funnel.archetype, nsThreshold);
-    const fired: Fired =
-      rawFired.rule === "W5" &&
-      !!funnel.htoUnderperforming &&
-      c.w3d.cpa !== null
-        ? { ...rawFired, ctaUrl: DISCOVERY_CALL_URL }
-        : rawFired;
+    // Spec 014 / T034 — `diagnose()` receives the account-level funnel
+    // flag as its own argument (see the C4 guard). The previous
+    // hand-built `Fired` that re-attached `ctaUrl` here was a no-op:
+    // `evaluateCampaign` already sets `ctaUrl` on every W5 `Fired`, so
+    // it carried no information the guard could read (self-review F2).
+    const fired = evaluateCampaign(c, judgeable, childRows, !!funnel.htoUnderperforming, funnel.archetype, nsThreshold);
     let findings: Finding[] = [];
     const exempt = isNonSalesExempt(c.objective ?? null);
     if (!exempt && (fired.verdict === "kill" || fired.verdict === "watch")) {
       // Spec 014 / T035 / C4.5 — diagnose() now produces the single
       // correct FUNNEL_CONFIRMED line for a guarded W5. The old
       // post-hoc step-6 patch/append block is removed.
-      findings = diagnose(c, baselines, funnel.archetype, fired);
+      findings = diagnose(c, baselines, funnel.archetype, fired, !!funnel.htoUnderperforming);
     }
     rows.push(toRow(c, fired, findings));
   }

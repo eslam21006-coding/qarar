@@ -357,7 +357,7 @@ describe("[synthetic selector] Scenario 6 — funnel-fault + unevaluable rung 5 
 // ============================================================
 
 describe("Scenario 7 — W5 with funnel flag and measured campaign CPA → FUNNEL_CONFIRMED via runEngine", () => {
-  it("renders exactly one funnel line, the cost-per-customer figure, ctaUrl, account card set", () => {
+  it("renders the C4.4 ladder: three distinct figures, arrival and conversion printed, only the ad-level median stated unavailable", () => {
     const funnel = { ...DEMO_FUNNEL, htoUnderperforming: true } as any;
     const snap = buildW5Snapshot(true, /* cpa */ 20);
     const r = runEngine(snap, funnel);
@@ -369,33 +369,278 @@ describe("Scenario 7 — W5 with funnel flag and measured campaign CPA → FUNNE
     const f = w5!.findings[0];
     expect(f.outcome).toBe("FUNNEL_CONFIRMED");
     expect(f.ctaUrl).toBe(DISCOVERY_CALL_URL);
-    // C4.4 — the cost-per-customer figure appears in the text.
-    expect(f.text_ar).toMatch(/[0-9]+(\.[0-9]+)?/);
+
+    // --- The ordered ladder (C3.4). Steps 1..5, with step 2's median
+    // clause and step 5's advice clause each adding a separator.
+    const parts = f.text_ar.split(" — ");
+    expect(parts.length).toBeGreaterThanOrEqual(5);
+
+    // --- This is the C4 route, NOT clause 4. Only `mode: "w5"` prints
+    // the cost-per-customer figure, so asserting it verbatim also
+    // proves which branch produced the finding — the fixture's rungs 4
+    // and 5 are both clean, so clause 4 would otherwise have matched
+    // too and the outcome alone cannot tell them apart.
+    // spend 1000 / 50 conversions = 20 → money(20) === "$20".
+    expect(f.text_ar).toContain("($20 للعميل)");
+
+    // --- SC-004: at least three DISTINCT figures from this object's
+    // own 3-day window.
+    const figures = new Set(f.text_ar.match(/[0-9][0-9,]*(?:\.[0-9]+)?/g) ?? []);
+    expect(figures.size).toBeGreaterThanOrEqual(3);
+    expect(f.text_ar).toContain("50,000"); // impressions
+    expect(f.text_ar).toContain("2,000"); // link clicks
+
+    // --- SC-004a: never render as unknown a step it COULD have
+    // measured. `buildW5Snapshot` sets lpViews = 2000, so both the
+    // arrival and the page-conversion steps are measurable and must
+    // be printed rather than declared unavailable.
+    expect(f.text_ar).not.toContain("نسبة الوصول للصفحة غير متاحة");
+    expect(f.text_ar).not.toContain("نسبة التحويل على الصفحة غير متاحة");
+    expect(f.text_ar).toContain("ممن ضغطوا وصلوا لصفحتك");
+    expect(f.text_ar).toContain("من زوار الصفحة اشتروا");
+
+    // --- C4.4's one deliberate exception. `ctrLinkMedian90` is fetched
+    // at `level: "ad"` (server/meta.ts), so it is not a like-for-like
+    // comparison for a campaign aggregate. This is a step the campaign
+    // genuinely could NOT measure, so SC-004a permits — and C4.4
+    // requires — stating it unavailable.
+    expect(f.text_ar).toContain("متوسط حسابك للمقارنة غير متاح على مستوى الحملة");
+
     // The account card is set (the campaign is the qualifying row).
     expect(r.summary.account_funnel_cta).not.toBeNull();
   });
 });
 
 // ============================================================
-// Scenario 8 — W5 with incomplete evidence → INSUFFICIENT_DATA
+// Scenario 7b — the ladder's step-4 figure uses the SAME archetype
+// the rung-5 evaluation used (self-review F1).
+//
+// `funnelConfirmedText` previously hardcoded `"paid_lto"` for step 4
+// while `evaluateRungs` used the real archetype. On appointment /
+// webinar accounts rung 5 is evaluated on `leadConversions` but the
+// ladder printed a `conversions`-based percentage — so a campaign
+// whose rung 5 was clean on 50 leads printed "0.0% من زوار الصفحة
+// اشتروا" underneath a claim that the funnel was confirmed healthy.
+// The number contradicted the evidence that licensed it.
 // ============================================================
 
-describe("Scenario 8 — W5 with incomplete evidence → no card contribution", () => {
-  it("flag-only: W5 guard fails; the campaign resolves through ordinary C2.2; no card contribution", () => {
+describe("Scenario 7b — FUNNEL_CONFIRMED's conversion figure matches the rung-5 unit", () => {
+  it("appointment archetype: step 4 prints the LEAD-based percentage, not the purchase-based one", () => {
+    const o = makeObject({
+      level: "campaign",
+      w3d: makeWindow({
+        spend: 1000,
+        impressions: 5000,
+        linkClicks: 200,
+        ctrLink: 2.0,
+        ctrAll: 2.0,
+        cpm: 5,
+        lpViews: 200, // 200/200 = 1.0 → rung 4 clean; >= 100 → rung 5 gated
+        conversions: 0, // zero PURCHASES — the appointment is booked off-platform
+        leadConversions: 50, // 50/200 = 25% → well above the 2% floor
+        cpa: null,
+      } as Partial<WindowMetrics>),
+    });
+    const baselines = makeBaselines();
+
+    // Rung 5 is clean, and it is clean *on leads*.
+    const findings = diagnose(
+      o,
+      baselines,
+      "appointment",
+      makeFired("W5", "watch"),
+      /* htoUnderperforming */ true
+    );
+    expect(findings).toHaveLength(1);
+    const f = findings[0];
+    expect(f.outcome).toBe("FUNNEL_CONFIRMED");
+
+    // The ladder must report 25.0% — the same 50/200 that rung 5 was
+    // judged on — and must NOT report the 0.0% that `conversions`
+    // would yield.
+    expect(f.text_ar).toContain("25.0% من زوار الصفحة اشتروا");
+    expect(f.text_ar).not.toContain("0.0% من زوار الصفحة اشتروا");
+  });
+
+  it("paid_lto archetype is unchanged: step 4 still prints the purchase-based percentage", () => {
+    const o = makeObject({
+      level: "campaign",
+      w3d: makeWindow({
+        spend: 1000,
+        impressions: 5000,
+        linkClicks: 200,
+        ctrLink: 2.0,
+        ctrAll: 2.0,
+        cpm: 5,
+        lpViews: 200,
+        conversions: 50,
+        leadConversions: 0,
+        cpa: 20,
+      } as Partial<WindowMetrics>),
+    });
+    const findings = diagnose(
+      o,
+      makeBaselines(),
+      "paid_lto",
+      makeFired("W5", "watch"),
+      /* htoUnderperforming */ true
+    );
+    expect(findings[0].outcome).toBe("FUNNEL_CONFIRMED");
+    expect(findings[0].text_ar).toContain("25.0% من زوار الصفحة اشتروا");
+  });
+});
+
+// ============================================================
+// Scenario 8 — the C4 guard's CLOSED state (C4.3, FR-009b)
+//
+// These call `diagnose()` directly with a W5 `Fired`, the way
+// scenarios 5 and 6 do. That is deliberate: routed through
+// `runEngine`, W5's own firing condition already requires the funnel
+// flag and a measured CPA, so any fixture that closes the guard also
+// stops W5 from firing — and the resulting test passes because
+// `diagnose()` never saw a W5 at all, not because the guard closed.
+// Driving the selector directly is the only way to hold every other
+// input fixed and vary just the two guard conditions.
+//
+// Shared fixture: a campaign with rungs 1–3 clean and rungs 4–5
+// UNEVALUABLE (lpViews = 0). That matters — with rungs 4 and 5
+// unevaluable, C2.2 clause 4 cannot match, so `FUNNEL_CONFIRMED` is
+// reachable ONLY through the C4 guard. Every difference below is
+// therefore attributable to the guard itself.
+// ============================================================
+
+function makeW5Campaign(conversions: number): NormalizedObject {
+  return makeObject({
+    level: "campaign",
+    w3d: makeWindow({
+      spend: 1000,
+      impressions: 5000, // > 500 and >= 1000 → rungs 1..3 evaluable
+      linkClicks: 200,
+      ctrLink: 2.0, // > median 1.5 → rung 2 clean
+      ctrAll: 2.0,
+      cpm: 5, // < 1.3 * 18 → rung 1 clean
+      lpViews: 0, // → rungs 4 and 5 unevaluable
+      conversions,
+      cpa: conversions > 0 ? 1000 / conversions : null,
+    }),
+  });
+}
+
+describe("Scenario 8 — the C4 W5 guard closes on incomplete evidence", () => {
+  it("control — both conditions met: the guard OPENS and reaches FUNNEL_CONFIRMED past the rung precondition", () => {
+    const findings = diagnose(
+      makeW5Campaign(50),
+      makeBaselines(),
+      "paid_lto",
+      makeFired("W5", "watch"),
+      /* htoUnderperforming */ true
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0].outcome).toBe("FUNNEL_CONFIRMED");
+    expect(findings[0].ctaUrl).toBe(DISCOVERY_CALL_URL);
+    // Proof this came through C4 and not clause 4: clause 4 requires
+    // rungs 4 and 5 clean, and both are unevaluable here.
+    expect(findings[0].text_ar).toContain("($20 للعميل)");
+  });
+
+  it("flag-only — measured CPA but the funnel flag is false: the guard CLOSES → INSUFFICIENT_DATA", () => {
+    const findings = diagnose(
+      makeW5Campaign(50), // CPA is measurable: 1000 / 50 = 20
+      makeBaselines(),
+      "paid_lto",
+      makeFired("W5", "watch"),
+      /* htoUnderperforming */ false
+    );
+    expect(findings).toHaveLength(1);
+    // C2.2 clause 5 — W5 is funnel-fault, clause 4's rung precondition
+    // is unmet, so it falls through rather than claiming the funnel.
+    expect(findings[0].outcome).toBe("INSUFFICIENT_DATA");
+    expect(findings[0].ctaUrl).toBeUndefined();
+    for (const claim of BLAME_CLAIMS) {
+      expect(findings[0].text_ar).not.toContain(claim);
+    }
+  });
+
+  it("CPA-only — funnel flag set but no measured CPA: the guard CLOSES → INSUFFICIENT_DATA", () => {
+    const findings = diagnose(
+      makeW5Campaign(0), // effectiveCpa === null
+      makeBaselines(),
+      "paid_lto",
+      makeFired("W5", "watch"),
+      /* htoUnderperforming */ true
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0].outcome).toBe("INSUFFICIENT_DATA");
+    expect(findings[0].ctaUrl).toBeUndefined();
+  });
+
+  it("the flag is read from the parameter, never from fired.ctaUrl (self-review F2)", () => {
+    // `evaluateCampaign` attaches the discovery CTA to every W5 Fired,
+    // so a Fired carrying `ctaUrl` must NOT be enough on its own.
+    const findings = diagnose(
+      makeW5Campaign(50),
+      makeBaselines(),
+      "paid_lto",
+      makeFired("W5", "watch", { ctaUrl: DISCOVERY_CALL_URL }),
+      /* htoUnderperforming */ false
+    );
+    expect(findings[0].outcome).toBe("INSUFFICIENT_DATA");
+  });
+
+  it("the CPA half reads effectiveCpa, so an appointment campaign is judged on cost-per-lead (self-review F3)", () => {
+    // Appointment archetype: purchases are zero and `w3d.cpa` is null,
+    // but 50 leads at $1000 spend is a measured cost-per-lead of $20.
+    // Reading the legacy `w3d.cpa` here would close the guard and deny
+    // this campaign its own evidence path.
+    const o = makeObject({
+      level: "campaign",
+      w3d: makeWindow({
+        spend: 1000,
+        impressions: 5000,
+        linkClicks: 200,
+        ctrLink: 2.0,
+        ctrAll: 2.0,
+        cpm: 5,
+        lpViews: 0,
+        conversions: 0,
+        leadConversions: 50,
+        cpa: null, // cost-per-PURCHASE is genuinely absent
+      } as Partial<WindowMetrics>),
+    });
+    const findings = diagnose(
+      o,
+      makeBaselines(),
+      "appointment",
+      makeFired("W5", "watch"),
+      /* htoUnderperforming */ true
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0].outcome).toBe("FUNNEL_CONFIRMED");
+    expect(findings[0].text_ar).toContain("($20 للعميل)");
+  });
+});
+
+// ============================================================
+// Scenario 8b — the same incomplete evidence through runEngine.
+// This covers FR-010a (no card without evidence), NOT the C4 guard:
+// in both fixtures below W5 never fires in the first place, because
+// its own firing condition already requires the flag and a CPA.
+// ============================================================
+
+describe("Scenario 8b — incomplete W5 evidence never funds the account card", () => {
+  it("flag set but no measured CPA: W5 does not fire; no card contribution", () => {
     const funnel = { ...DEMO_FUNNEL, htoUnderperforming: true } as any;
     const snap = buildW5Snapshot(true, /* cpa */ null);
     const r = runEngine(snap, funnel);
-    // The W5 guard fails (no measured CPA) — W5 does NOT fire (FR-009b,
-    // C4.3). The campaign resolves through ordinary C2.2 precedence,
-    // and without a clean RUNG_CONVERSION or FUNNEL_CONFIRMED
-    // finding the account card is null.
+    expect(r.rows.some(x => x.rule === "W5")).toBe(false);
     expect(r.summary.account_funnel_cta).toBeNull();
   });
 
-  it("CPA-only: W5 guard fails (flag false); no card contribution", () => {
+  it("measured CPA but flag false: W5 does not fire; no card contribution", () => {
     const funnel = { ...DEMO_FUNNEL, htoUnderperforming: false } as any;
     const snap = buildW5Snapshot(false, /* cpa */ 20);
     const r = runEngine(snap, funnel);
+    expect(r.rows.some(x => x.rule === "W5")).toBe(false);
     expect(r.summary.account_funnel_cta).toBeNull();
   });
 });
@@ -538,7 +783,7 @@ describe("Scenario 13 — verdict/rule/reason/action byte-identical to baseline"
 // Scenario 14 — Ad-fault row excluded from the account card
 // ============================================================
 
-describe("Scenario 14 — ad-fault � row does NOT fund the account card", () => {
+describe("Scenario 14 — ad-fault 🔴 row does NOT fund the account card", () => {
   it("the row's RUNG_CONVERSION stands, but the account card is null without a second qualifying row", () => {
     const snap = buildAdFaultRowWithRung5();
     const r = runEngine(snap, DEMO_FUNNEL as any);
@@ -588,7 +833,7 @@ describe("Scenario 15 — sweep: zero rows display BLAME_CLAIMS with zero evalua
 // Scenario 16 — No self-contradiction, swept (SC-003, C9.5)
 // ============================================================
 
-describe("Scenario 16 — sweep: zero ad-fault � rows carry AD_HEALTH_CLAIMS", () => {
+describe("Scenario 16 — sweep: zero ad-fault 🔴 rows carry AD_HEALTH_CLAIMS", () => {
   it("every ad-fault kill row's findings carry no AD_HEALTH_CLAIMS on any line", () => {
     const r = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as any);
     for (const row of r.rows) {
