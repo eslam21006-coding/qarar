@@ -108,11 +108,20 @@ describe("SC-007 — exactly one full-width booking button per page", () => {
     );
     // Three row-level + one account-level = 4 anchors total.
     expect(bookingAnchors).toHaveLength(4);
-    // Of those, exactly ONE has the Button styling (inline-flex).
+    // Of those, exactly ONE is the full-width button. `inline-flex`
+    // only identifies the Button component — it says nothing about
+    // width, so C7.1 is asserted on `w-full` itself.
     const fullWidth = bookingAnchors.filter(a =>
-      (a.getAttribute("class") || "").includes("inline-flex")
+      (a.getAttribute("class") || "").includes("w-full")
     );
     expect(fullWidth).toHaveLength(1);
+    // It is a Button, not a bare link.
+    expect(fullWidth[0].getAttribute("class") || "").toContain("inline-flex");
+    // And no OTHER anchor carries Button styling.
+    const buttonStyled = bookingAnchors.filter(a =>
+      (a.getAttribute("class") || "").includes("inline-flex")
+    );
+    expect(buttonStyled).toHaveLength(1);
     // The single full-width button lives inside the account-level
     // card (the div with `border-primary/40`).
     const accountCard = container.querySelector(".border-primary\\/40");

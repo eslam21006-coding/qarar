@@ -80,8 +80,20 @@ All 23 scenarios present and green:
 | Baseline | 18 rows | `specs/014-diagnosis-evidence-fallbacks/verdict-baseline.json` |
 | Impl log | — | `docs/impl-log-014.md` |
 
-`npx vitest run` — 620 pass, 11 skipped (auth-flow e2e needs a DB),
-0 fail. `npm run check` — zero errors. Snapshot diff — empty.
+**Verification at the end of the initial implementation** (before the
+self-review remediation pass recorded at the bottom of this file):
+
+- `npx vitest run` — 620 passed, 11 skipped, **1 suite failed**:
+  `server/auth-flow.e2e.test.ts`, which throws `Database connection
+  failed` in `beforeAll` because no database is reachable in this
+  environment. It is untouched by this feature. An earlier draft of this
+  line read "0 fail", which was wrong — vitest exits `0` even with a
+  failed suite, and that exit code was mistaken for a green run.
+- `npm run check` — zero errors.
+- Snapshot diff — empty.
+
+The final, post-remediation numbers are in *Verification* at the end of
+this file.
 
 
 ---

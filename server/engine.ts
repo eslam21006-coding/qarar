@@ -210,7 +210,7 @@ function evaluateRungs(
       archetype === "free_lead"
         ? DIAGNOSIS_GATES.CVR_FLOOR_FREE_LEAD_PCT
         : DIAGNOSIS_GATES.CVR_FLOOR_DEFAULT_PCT;
-    const conv = effectiveConversionsLocal(o, archetype);
+    const conv = effectiveConversions(o, archetype);
     if (conv === undefined) {
       // Pre-separation snapshot — unit unknown. Spec A7 / FR-035.
       ev[5] = "unevaluable";
@@ -221,16 +221,6 @@ function evaluateRungs(
   }
 
   return ev;
-}
-
-function effectiveConversionsLocal(
-  o: NormalizedObject,
-  archetype: FunnelInputs["archetype"]
-): number | undefined {
-  if (archetype === "appointment" || archetype === "webinar") {
-    return o.w3d.leadConversions;
-  }
-  return o.w3d.conversions;
 }
 
 // ============================================================
@@ -267,6 +257,22 @@ function killCpaGateMet(o: NormalizedObject, target: number): boolean {
  *                        coalesce to `0`. The caller MUST treat this as
  *                        "not yet measurable" and skip judgement.
  */
+/**
+ * Spec 014 / contract C4.4a — the NOUN that matches
+ * `effectiveConversions`. For `appointment` / `webinar` the counted
+ * event is a captured lead, not a purchase, so copy that says "bought"
+ * mislabels the very figure the ladder just computed. Perfect and
+ * imperfect forms, to fit both the rung-5 and ladder sentences.
+ */
+function conversionVerb(
+  archetype: FunnelInputs["archetype"],
+  tense: "past" | "present"
+): string {
+  const isLead = archetype === "appointment" || archetype === "webinar";
+  if (isLead) return tense === "past" ? "سجّلوا بياناتهم" : "يسجّلون بياناتهم";
+  return tense === "past" ? "اشتروا" : "يشترون";
+}
+
 function effectiveConversions(
   o: NormalizedObject,
   archetype: FunnelInputs["archetype"]
@@ -1033,7 +1039,7 @@ function noBlameAssignableText(
     const median = baselines.ctrLinkMedian90;
     parts.push(
       median !== null
-        ? `نسبة الضغط أعلى من متوسط حسابك (${w.ctrLink.toFixed(2)}% مقابل ${median}%)`
+        ? `نسبة الضغط أعلى من متوسط حسابك (${w.ctrLink.toFixed(2)}% مقابل ${median.toFixed(2)}%)`
         : `نسبة الضغط أعلى من عتبة 1.0% (${w.ctrLink.toFixed(2)}%)`
     );
   }
@@ -1118,9 +1124,11 @@ function funnelConfirmedText(
   // `conversions` otherwise) and MUST match the unit rung 5 was
   // evaluated on — see `evaluateRungs`.
   if (w.lpViews > 0) {
-    const conv = effectiveConversionsLocal(o, archetype) ?? 0;
+    const conv = effectiveConversions(o, archetype) ?? 0;
     const cvr = (conv / w.lpViews) * 100;
-    lines.push(`${cvr.toFixed(1)}% من زوار الصفحة اشتروا`);
+    lines.push(
+      `${cvr.toFixed(1)}% من زوار الصفحة ${conversionVerb(archetype, "past")}`
+    );
   } else {
     lines.push(`نسبة التحويل على الصفحة غير متاحة (لم تُسجَّل زيارات)`);
   }
@@ -1207,7 +1215,7 @@ export function diagnose(
     // ad-fault AND rungs 1–4 are ALL `clean`. C8.3 / FR-017b: the
     // outcome identity stays `RUNG_CONVERSION` in both wordings and
     // the finding keeps its `ctaUrl` in both.
-    const conv = effectiveConversionsLocal(o, archetype);
+    const conv = effectiveConversions(o, archetype);
     const cvr = conv !== undefined && w.lpViews > 0 ? (conv / w.lpViews) * 100 : 0;
     const adClean =
       RULE_FAULT[fired.rule] !== "ad-fault" &&
@@ -1219,8 +1227,8 @@ export function diagnose(
       step: 5,
       outcome: "RUNG_CONVERSION",
       text_ar: adClean
-        ? `الناس تصل لصفحتك لكن ${cvr.toFixed(1)}% فقط يشترون — المشكلة في الصفحة أو العرض أو السعر — ⚠️ الإعلان بريء، لا تعدّله`
-        : `قلة ممن يصلون لصفحتك يشترون (${cvr.toFixed(1)}%) — راجع الصفحة أو العرض أو السعر أيضًا`,
+        ? `الناس تصل لصفحتك لكن ${cvr.toFixed(1)}% فقط ${conversionVerb(archetype, "present")} — المشكلة في الصفحة أو العرض أو السعر — ⚠️ الإعلان بريء، لا تعدّله`
+        : `قلة ممن يصلون لصفحتك ${conversionVerb(archetype, "present")} (${cvr.toFixed(1)}%) — راجع الصفحة أو العرض أو السعر أيضًا`,
       primary: false,
       ctaUrl: DISCOVERY_CALL_URL,
     });

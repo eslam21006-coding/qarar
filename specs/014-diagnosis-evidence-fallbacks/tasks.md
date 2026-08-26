@@ -10,7 +10,7 @@ description: "Task list for Diagnosis Evidence & Honest Fallbacks"
 [data-model.md](./data-model.md), [contracts/diagnosis-outcomes.md](./contracts/diagnosis-outcomes.md),
 [quickstart.md](./quickstart.md)
 
-**Tests**: **REQUIRED.** The spec's *Required Test Scenarios* section states the 17 scenarios "land
+**Tests**: **REQUIRED.** The spec's *Required Test Scenarios* section states the 18 scenarios "land
 as failing tests **before** implementation", and *Deliverables* asks for tasks "phased so the tests
 land before the implementation". Every story phase below opens with its tests.
 
@@ -126,7 +126,7 @@ reasoning, and carries no booking link.
 
 ### Implementation for User Story 2
 
-- [ ] T023 [US2] Add a `RuleCode`-keyed Arabic copy map for the five ad-fault codes (K1, K3, K4, F1, F2) to `server/engine.ts`, each restating that code's own reasoning and pointing at the ad; derive the wording from `RULES[code].defAr` but do **not** echo `fired.reason_ar` verbatim and do **not** print the code (C3.2, Constitution II)
+- [ ] T023 [US2] Add a `RuleCode`-keyed Arabic copy map for the five ad-fault codes (K1, K3, K4, F1, F2) to `server/engine.ts`, each restating that code's own reasoning and pointing at the ad; derive the wording from `RULES[code].defAr` but do **not** echo `fired.reason` verbatim and do **not** print the code (C3.2, Constitution II)
 - [ ] T024 [US2] Implement C2.2 clause 2 in the `diagnose()` selector in `server/engine.ts`: `RULE_FAULT[fired.rule] === "ad-fault"` → `AD_IS_THE_PROBLEM`, drawing text from T023's map, no `ctaUrl`, replacing that branch of T017's bridge
 - [ ] T025 [US2] Implement C2.2 clause 3 in the `diagnose()` selector in `server/engine.ts`: `RULE_FAULT[fired.rule] === "neither"` → `NO_BLAME_ASSIGNABLE`, text stating which rungs were measured and healthy and stopping there, no `ctaUrl` (C3.3)
 - [ ] T026 [US2] Change the rung-5 wording selector in `server/engine.ts:~854` from `findings.length === 0` to C8.1's two conditions — fired rule is not ad-fault **and** rungs 1–4 are all `clean` in the `RungEvaluation` — leaving the finding's `ctaUrl` and its funnel-evidence standing untouched in both wordings (C8.3, FR-017a, FR-017b)
@@ -211,7 +211,7 @@ SC-003a regressions rather than manual checks, the invariance guarantees, and th
 - [ ] T050 Add required scenario 15 (the SC-002 / C9.4 fixture sweep) to `server/engine.diagnosis.test.ts`: run the full engine over `buildDemoSnapshot()` plus the hand-built low-volume fixtures, and assert that **no** row whose `RungEvaluation` has zero evaluable rungs carries any `BLAME_CLAIMS` string (C10.2) across every `finding.text_ar` on the row (SC-002, C9.4)
 - [ ] T051 Add required scenario 16 (the SC-003 / C9.5 fixture sweep) to `server/engine.diagnosis.test.ts`: run the full engine over the same fixture set and assert that **no** row whose `verdict === "kill"` and whose `RULE_FAULT[row.rule] === "ad-fault"` carries any `AD_HEALTH_CLAIMS` string (C10.1) on **any** line — terminal outcomes and rung-level copy alike (SC-003, C9.5). Note the set differs from T050's: this sweep uses `AD_HEALTH_CLAIMS`, not `BLAME_CLAIMS`, because an ad-fault row naming the offer is not a self-contradiction
 - [ ] T052 Add required scenario 17 to `server/engine.diagnosis.test.ts`: build an account whose only funnel evidence is a *neither*-class row (K6 or CB1) with a broken page-conversion rung → `summary.account_funnel_cta` renders, and its `reason_ar` contains none of the `AD_HEALTH_CLAIMS` strings from T002 — «مؤشرات إعلاناتك جيدة», «الإعلان بريء», «ليست بالإعلانات» (FR-011a, SC-003b, C6.4, C9.11, C10.3). Use `AD_HEALTH_CLAIMS` and **not** `BLAME_CLAIMS`: the card is required to state the measured leak, so it must stay free to name the offer or the funnel
-- [ ] T053 Add the selector-purity test to `server/engine.diagnosis.test.ts` (C1, FR-015, C2.5, Constitution I): for each of the four terminal outcomes, build the fixture that produces it, then re-run `diagnose()` with `fired.reason_ar` and `fired.action` replaced by arbitrary strings — empty, Latin text, and a string containing every `BLAME_CLAIMS` substring — and assert the returned `outcome` values and `ctaUrl` presence are identical across all runs. This proves selection is a pure function of `(RungEvaluation, RULE_FAULT[fired.rule])` plus the C4 W5 inputs and reads no Arabic copy. Also assert `fired` is not mutated (C9.1)
+- [ ] T053 Add the selector-purity test to `server/engine.diagnosis.test.ts` (C1, FR-015, C2.5, Constitution I): for each of the four terminal outcomes, build the fixture that produces it, then re-run `diagnose()` with `fired.reason` and `fired.action` replaced by arbitrary strings (the `Fired` fields are `reason` / `action`; `reason_ar` is the wire name on `EngineRow`, not an input to the selector) — empty, Latin text, and a string containing every `BLAME_CLAIMS` substring — and assert the returned `outcome` values and `ctaUrl` presence are identical across all runs. This proves selection is a pure function of `(RungEvaluation, RULE_FAULT[fired.rule])` plus the C4 W5 inputs and reads no Arabic copy. Also assert `fired` is not mutated (C9.1)
 
 ---
 
@@ -255,7 +255,7 @@ Honest inventory — this feature has little intra-phase parallelism:
 - **T049 ‖ T042–T048, T050–T052** (Polish): documentation vs code
 
 Everything else is serialized by file contention on `server/engine.ts` (the selector, the ladder, the
-W5 path and the summary predicate all live in it) or on `server/engine.diagnosis.test.ts` (all 13
+W5 path and the summary predicate all live in it) or on `server/engine.diagnosis.test.ts` (all 18
 required scenarios).
 
 ---

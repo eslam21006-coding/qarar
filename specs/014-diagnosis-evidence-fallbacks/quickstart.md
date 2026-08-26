@@ -112,7 +112,13 @@ as if it were the account's median.
 
 ### 2.5 The Q3 boundary — the case that changed
 
-**Input**: same funnel-fault rule, but `lpViews = 40` so rung 5 is unevaluable while rung 1 is clean.
+**Input**: same funnel-fault rule, but `lpViews = 0` against real link clicks (`linkClicks >= 50`),
+so rungs 4 **and** 5 are unevaluable while rungs 1–3 are clean.
+
+> Do **not** use a small non-zero `lpViews` here. `lpViews = 40` against 200 link clicks is 20%
+> arrival, which makes rung 4 **broken** — and a broken rung means C2.1 appends no terminal outcome
+> at all, so `INSUFFICIENT_DATA` can never be reached. `lpViews = 0` is research §R2.2's *untracked*
+> case, which is unevaluable (C1.5), and that is what makes clause 5 reachable.
 
 **Expect**: `INSUFFICIENT_DATA` (C2.2 clause 5), **not** `FUNNEL_CONFIRMED`. No `ctaUrl`, no
 innocence claim, and no contribution to the account card.
@@ -195,7 +201,7 @@ Open the dashboard and find «أين المشكلة تحديداً؟».
 | 2 | `npm run check` zero errors | SC-006 |
 | 3 | `server/__snapshots__/engine.test.ts.snap` unchanged | SC-005, research §R5 |
 | 4 | Verdict / rule / reason / action byte-identical over fixtures | SC-009, C9.1 |
-| 5 | All 17 required test scenarios present and green | spec *Required Test Scenarios* |
+| 5 | All 18 required test scenarios present and green | spec *Required Test Scenarios* |
 | 6 | Zero rows claim innocence with zero evaluated rungs | SC-002, C9.4 |
 | 7 | Zero rows show an ad-fault 🔴 next to "not the ads" — every line, rung copy included | SC-003, C9.5 |
 | 8 | Five differing rows produce five differing texts | SC-001, C9.6 |

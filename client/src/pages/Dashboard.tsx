@@ -602,7 +602,8 @@ function DiagnosisSection({
             <p className="text-sm font-bold leading-relaxed">
               {summary.account_funnel_cta.reason_ar}
             </p>
-            <Button asChild className="mt-3 font-bold">
+            {/* C7.1 / SC-007 — the one full-width booking button. */}
+            <Button asChild className="mt-3 w-full font-bold">
               <a
                 href={summary.account_funnel_cta.ctaUrl}
                 target="_blank"

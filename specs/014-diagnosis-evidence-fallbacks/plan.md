@@ -111,7 +111,7 @@ server/
                              #   buildSummary funnel-CTA predicate reads f.outcome;
                              #   campaign W5 block reconciled (FR-009a..c)
 ├── engine.test.ts           # existing — must stay green (verdict invariance)
-├── engine.diagnosis.test.ts # NEW — the 13 required test scenarios
+├── engine.diagnosis.test.ts # NEW — the 18 required test scenarios
 └── nonSalesContainment.test.ts  # existing — exempt hard-skip unchanged
 
 client/src/pages/

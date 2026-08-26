@@ -3,7 +3,17 @@
 **Reviewer**: Claude (self-review of commits `ce80a88`, `33a6b0f`)
 **Branch**: `014-diagnosis-evidence-fallbacks` · worktree `D:\Qarar-diagnosis-evidence`
 **Date**: 2026-08-26
-**Verdict**: **Ships, with four defects to fix first.** Items 1–8 below were each verified
+
+> ### ⚠️ Status: **PRE-REMEDIATION — archived**
+>
+> Every defect below (F1–F6) was **fixed** in the remediation pass of
+> 2026-08-26. See *Self-review remediation pass* in
+> [`docs/impl-log-014.md`](./impl-log-014.md) for what changed, the
+> mutation check proving each fix is covered, and the final verification
+> numbers. This document is kept as the record of what the audit found,
+> not as the current release status.
+
+**Verdict at the time of the audit**: **Ships, with four defects to fix first.** Items 1–8 below were each verified
 against live source and live test runs; every claim carries its evidence. Three real
 correctness defects and one vacuous test were found — none of them are caught by the
 suite as written.
@@ -32,7 +42,7 @@ comparison anywhere in `server/engine.ts`.
 
 Selector body (`server/engine.ts:1135-1341`), grepped for text reads:
 
-```
+```text
 $ sed -n '1135,1341p' server/engine.ts | grep -n 'text_ar|reason_ar|includes(|indexOf|=== "<arabic>"'
 21:      text_ar: `سعر الظهور مرتفع على هذا الإعلان تحديدًا (...)`,
 29:      text_ar: `ضغط الناس على الإعلان قليل (...)`,
@@ -50,14 +60,14 @@ $ sed -n '1135,1341p' server/engine.ts | grep -n 'text_ar|reason_ar|includes(|in
 All eleven are object-literal assignments. `buildSummary` (`:2063`-end) has exactly one hit,
 also a write:
 
-```
+```text
 $ sed -n '2063,2400p' server/engine.ts | grep -n 'text_ar|reason_ar|includes(|indexOf'
 156:        reason_ar:
 ```
 
 Repo-wide read-side sweep:
 
-```
+```text
 $ grep -n 'fired\.reason_ar|fired\.action|text_ar\s*===|text_ar\s*!==|text_ar\.includes|reason_ar\.includes|reason_ar\s*===|action\.includes' server/engine.ts
 946: * `fired.reason_ar` verbatim and without printing the code itself      # a comment
 1815:      action_ar: fired.action,                                          # a write
@@ -111,7 +121,7 @@ export const RULE_FAULT: Record<RuleCode, RuleFaultClass> = {
 
 Mechanical count of entries:
 
-```
+```text
 $ sed -n '/export const RULE_FAULT/,/^};/p' shared/qarar.ts | grep -cE '^\s+[A-Z]+[0-9]*: "'
 24
 ```
@@ -121,7 +131,7 @@ research §R3.3.
 
 No fallback anywhere:
 
-```
+```text
 $ grep -rn '\?\?\s*"neither"|\|\|\s*"neither"|RULE_FAULT\[[^]]*\]\s*\?\?' --include=*.ts --include=*.tsx .
 (no output — exit 1)
 
@@ -144,7 +154,7 @@ runtime-checked by `engine.diagnosis.test.ts:708-715`. All four consuming sites
 **PASS, and stronger than the test proves.** There are exactly three sites in `diagnose()`
 that put a `ctaUrl` on a `Finding`, and each is adjacent to its `outcome`:
 
-```
+```text
 $ grep -n -B6 'ctaUrl:' server/engine.ts | grep 'outcome:|ctaUrl:'
 1200-      outcome: "RUNG_CONVERSION",
 1205:      ctaUrl: DISCOVERY_CALL_URL,
@@ -185,7 +195,7 @@ but the test's name overstates what it checks.
 
 **PASS.** Raw output:
 
-```
+```text
 $ npx vitest run server/engine.diagnosis.test.ts -t "Scenario 18" --reporter=verbose
 
  RUN  v2.1.9 D:/Qarar-diagnosis-evidence
@@ -307,7 +317,7 @@ statement is `plan.md:23-24` and `:54-55`:
 
 I reviewed against that declared scope. Actual files:
 
-```
+```text
 $ git show --name-status ce80a88
 M	client/src/pages/Dashboard.tsx
 A	client/src/pages/DiagnosisSection.test.tsx
@@ -337,7 +347,7 @@ plan's `DiagnosisSection` "file" turned out to be a section of `Dashboard.tsx`.
 
 **The guarded files are provably untouched:**
 
-```
+```text
 $ git log --oneline ce80a88^..HEAD -- server/nonSalesContainment.test.ts \
     server/engine.test.ts server/__snapshots__/engine.test.ts.snap server/engine.bottleneck.test.ts
 (empty)
@@ -352,7 +362,7 @@ SC-005 (stored snapshot unchanged).
 
 ### `npm run check` — clean
 
-```
+```text
 > qarar@1.0.0 check
 > tsc --noEmit
 
@@ -363,7 +373,7 @@ SC-005 (stored snapshot unchanged).
 
 ### Snapshot diff — content-identical
 
-```
+```text
 $ git diff --numstat server/__snapshots__/engine.test.ts.snap
 warning: in the working copy of 'server/__snapshots__/engine.test.ts.snap', LF will be replaced by CRLF the next time Git touches it
 (no numstat rows)
@@ -379,7 +389,7 @@ committed version. **SC-005 satisfied.** No re-recording occurred.
 
 ### `npx vitest run` — 620 passed, 1 pre-existing environmental failure
 
-```
+```text
  ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
 
  FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
@@ -412,7 +422,7 @@ despite the failed suite, so CI keyed on the exit code would not catch this.
 
 The two 014 suites in isolation:
 
-```
+```text
 $ npx vitest run server/engine.diagnosis.test.ts client/src/pages/DiagnosisSection.test.tsx
 
  ✓ server/engine.diagnosis.test.ts (23 tests) 81ms
@@ -546,7 +556,7 @@ if (htoUnderperforming && conversions > 0 && campaignCpa !== null && campaignCpa
 
 But both halves of the C4 guard read the legacy field:
 
-```
+```text
 server/engine.ts:1222      const cpa = o.w3d.cpa;
 server/engine.ts:1869      c.w3d.cpa !== null
 ```
@@ -591,7 +601,7 @@ that C4.4 correctly and deliberately states the median step unavailable on the W
 
 Bytes `EF BF BD` (U+FFFD) sit where 🔴 was intended:
 
-```
+```text
 $ python -c "<read the file as utf-8, print lines matching 'Scenario 14 '>"
 538 '// Scenario 14 \ufffd Ad-fault row excluded from the account card'
 ```
@@ -601,7 +611,7 @@ Affects `server/engine.diagnosis.test.ts:538`, `:541`, `:588`, `:591`. Comments 
 
 ### F6 (LOW) — a mock pointing at a module that does not exist
 
-```
+```text
 client/src/pages/Dashboard.swr.test.tsx:109: vi.mock("@/components/DiagnosisSection", () => ({
 client/src/pages/Dashboard.swr.test.tsx:110:   DiagnosisSection: () => null,
 ```

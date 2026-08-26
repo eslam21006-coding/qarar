@@ -160,31 +160,21 @@ describe("Scenario 1 — Below every gate → INSUFFICIENT_DATA", () => {
 
 describe("Scenario 2 — Ad-fault rule, mostly unevaluable → AD_IS_THE_PROBLEM", () => {
   it("points at the ad, restates the rule's reasoning, no ctaUrl, no AD_HEALTH_CLAIMS", () => {
-    // Below every gate, but the fired rule is ad-fault — clause 2
-    // takes precedence over clause 1 ONLY when at least one rung is
-    // evaluable. So we set rung 1 evaluable+clean (impressions > 500,
-    // cpmAvg14 > 0, cpm low) — but the fired rule is the dead-hook
-    // K3 (ad-fault).
+    // Clause 2 (ad-fault) outranks clause 3 and 4, but clause 1
+    // (evaluable.size === 0) outranks it — so exactly one rung must be
+    // evaluable and clean, and none may break.
+    // Rung 1: 600 > 500 and cpmAvg14 = 18, cpm 5 < 1.3 * 18 → CLEAN.
+    // Rungs 2/3: 600 < 1000 → unevaluable. Rung 4: linkClicks 5 < 50
+    // and lpViews 0 → unevaluable. Rung 5: lpViews 0 < 100 →
+    // unevaluable.
     const o = makeObject({
       w3d: makeWindow({
-        impressions: 1500, // clears rung-1 gate
-        linkClicks: 12, // too low for rung 2 (1000) and below rung 4 gate
-        ctrLink: 0.4, // < median 1.5 → rung 2 broken, but we don't want that
-        cpm: 5, // well below 1.3×18 = 23.4 → rung 1 clean
+        impressions: 600,
+        linkClicks: 5,
+        ctrLink: 1.5,
+        cpm: 5,
+        lpViews: 0,
       }),
-    });
-    // Rung 1: gate met (1500 > 500), baseline present (18), cpm 5 < 23.4 → clean.
-    // Rung 2: impressions 1500 >= 1000, ctrLink 0.4 < 1.5 → broken. But we
-    // want AD_IS_THE_PROBLEM, so use W2-classed rules? Wait, the contract
-    // says: "AD_IS_THE_PROBLEM" requires at least one rung evaluable,
-    // none broke. So we need a different fixture.
-    // Reset to make only rung 1 evaluable+clean (no other rungs).
-    o.w3d = makeWindow({
-      impressions: 600, // > 500 → rung 1 gate met
-      linkClicks: 5,
-      ctrLink: 1.5,
-      cpm: 5, // < 23.4 → clean
-      lpViews: 0,
     });
     const fired = makeFired("K3"); // ad-fault
     const findings = diagnose(o, makeBaselines(), "paid_lto", fired);
@@ -209,15 +199,13 @@ describe("Scenario 3 — Confirmed page leak via runEngine", () => {
     // impression/hook/arrival metrics fires an ad-fault rule but
     // rungs 1–4 are clean and only rung 5 is broken — we want a
     // RUNG_CONVERSION finding (not a terminal outcome).
-    // The simplest production path: a 1.4% conversion rate with
-    // 4,200 impressions, link CTR above median, 85% arrival,
-    // 1.4% conversion → rung 5 breaks. We'll bypass runEngine
-    // and call diagnose directly.
+    // 4,200 impressions, link CTR above median, 85% arrival and a
+    // 1.4% conversion rate → rungs 1-4 clean, rung 5 broken.
     const o = makeObject({
       w3d: makeWindow({
         spend: 200,
         impressions: 4200,
-        linkClicks: 200, // 200*0.04 ≈ ctrLink 4%? Just use direct
+        linkClicks: 200,
         ctrAll: 5.0,
         ctrLink: 4.0, // > median 1.5 → rung 2 clean
         cpm: 5,
@@ -250,26 +238,18 @@ describe("Scenario 3 — Confirmed page leak via runEngine", () => {
 
 describe("Scenario 4 — Ad-fault rule fired, rungs 1–4 unevaluable, rung 5 broken → neutral wording, RUNG_CONVERSION", () => {
   it("renders the rung in its neutral wording (no innocence claim), still with ctaUrl", () => {
-    // rungs 1–4 unevaluable (low volume everywhere), rung 5 broken.
+    // Rungs 1–4 unevaluable, rung 5 evaluable and broken. lpViews is
+    // high enough to clear rung 5's gate while linkClicks stays under
+    // rung 4's, so rung 4 cannot speak for or against the ad.
     const o = makeObject({
       w3d: makeWindow({
-        impressions: 50, // < 500 → rung 1 unevaluable
-        linkClicks: 5, // < 50 → rung 4 unevaluable
+        impressions: 50, // < 500 → rung 1 unevaluable; < 1000 → rungs 2/3 too
+        linkClicks: 30, // < 50 → rung 4 unevaluable
         ctrLink: 0.1,
         cpm: 5,
-        lpViews: 0, // → rung 4 unevaluable (C1.5)
+        lpViews: 150, // >= 100 → rung 5 evaluable
+        conversions: 0, // 0/150 = 0% < the 2% floor → broken
       }),
-    });
-    // Need rung 5 to be evaluable+broken: lpViews >= 100. Bump
-    // lpViews while keeping linkClicks < 50 so rung 4 stays
-    // unevaluable.
-    o.w3d = makeWindow({
-      impressions: 50, // < 500 → rung 1 unevaluable
-      linkClicks: 30, // < 50 → rung 4 unevaluable
-      ctrLink: 0.1,
-      cpm: 5,
-      lpViews: 150, // >= 100 → rung 5 evaluable
-      conversions: 0, // 0/150 = 0 < 2 → broken
     });
     const fired = makeFired("K3"); // ad-fault
     const findings = diagnose(o, makeBaselines(), "paid_lto", fired);
@@ -325,29 +305,39 @@ describe("[synthetic selector] Scenario 5 — fully clean + funnel-fault → FUN
 // `diagnose()` takes `fired` as a parameter — see research §R3.3.
 // ============================================================
 
-describe("[synthetic selector] Scenario 6 — funnel-fault + unevaluable rung 5 → INSUFFICIENT_DATA", () => {
-  it("does NOT reach FUNNEL_CONFIRMED; no ctaUrl; no innocence claim; no card contribution", () => {
+describe("[synthetic selector] Scenario 6 — funnel-fault + unevaluable rungs 4/5 → INSUFFICIENT_DATA", () => {
+  it("falls through clause 4 to clause 5: INSUFFICIENT_DATA, no ctaUrl, no innocence claim", () => {
+    // `lpViews = 0` against real link clicks is research §R2.2's
+    // untracked case: rung 4 is UNEVALUABLE (not broken — C1.5) and
+    // rung 5 never clears its gate. That is what makes clause 5
+    // reachable. An earlier version of this fixture used lpViews = 40,
+    // which is 20% arrival and therefore breaks rung 4 — with a broken
+    // rung, C2.1 appends no terminal outcome at all, so the scenario
+    // could never reach the INSUFFICIENT_DATA its name promises.
     const o = makeObject({
       w3d: makeWindow({
-        impressions: 5000, // > 500 → rung 1 clean
-        linkClicks: 200, // >= 50 → rung 4 gate
-        ctrLink: 2.0, // > median → rung 2 clean
+        impressions: 5000, // > 500 and >= 1000 → rungs 1..3 evaluable
+        linkClicks: 200, // >= 50 → rung 4's click gate is met
+        ctrLink: 2.0, // > median 1.5 → rung 2 clean
         ctrAll: 2.0,
-        cpm: 5,
-        lpViews: 40, // < 100 → rung 5 unevaluable
+        cpm: 5, // < 1.3 * 18 → rung 1 clean
+        lpViews: 0, // → rung 4 unevaluable, rung 5 unevaluable
       }),
     });
-    // Rung 1: clean; Rung 2: clean; Rung 3: clean; Rung 4: 40/200 = 0.2 < 0.75 → broken.
-    // Note: with a broken rung, no terminal outcome is appended. The
-    // scenario asserts that no terminal `FUNNEL_CONFIRMED` is reached.
     const fired = makeFired("W3"); // funnel-fault
     const findings = diagnose(o, makeBaselines(), "paid_lto", fired);
-    // The row's findings are the broken rung(s); no terminal outcome.
-    const terminal = findings.find(f =>
-      f.outcome === "FUNNEL_CONFIRMED" || f.outcome === "INSUFFICIENT_DATA"
-    );
-    // Per C2.1 — broken rungs speak; no terminal appended.
-    expect(terminal).toBeUndefined();
+    // No rung broke, so exactly one terminal outcome is appended.
+    expect(findings).toHaveLength(1);
+    const f = findings[0];
+    // C2.2 clause 5 — funnel-fault with clause 4's rung precondition
+    // unmet. This is the behaviour clarification Q3 introduced: one
+    // clean rung no longer licenses the booking button.
+    expect(f.outcome).toBe("INSUFFICIENT_DATA");
+    expect(f.outcome).not.toBe("FUNNEL_CONFIRMED");
+    expect(f.ctaUrl).toBeUndefined();
+    for (const claim of BLAME_CLAIMS) {
+      expect(f.text_ar).not.toContain(claim);
+    }
   });
 });
 
@@ -458,8 +448,13 @@ describe("Scenario 7b — FUNNEL_CONFIRMED's conversion figure matches the rung-
     // The ladder must report 25.0% — the same 50/200 that rung 5 was
     // judged on — and must NOT report the 0.0% that `conversions`
     // would yield.
-    expect(f.text_ar).toContain("25.0% من زوار الصفحة اشتروا");
-    expect(f.text_ar).not.toContain("0.0% من زوار الصفحة اشتروا");
+    expect(f.text_ar).toContain("25.0%");
+    expect(f.text_ar).not.toContain("0.0%");
+    // C4.4a — and the NOUN must match the unit. On this archetype the
+    // counted event is a captured lead, so the sentence must not say
+    // the visitors bought anything.
+    expect(f.text_ar).toContain("25.0% من زوار الصفحة سجّلوا بياناتهم");
+    expect(f.text_ar).not.toContain("اشتروا");
   });
 
   it("paid_lto archetype is unchanged: step 4 still prints the purchase-based percentage", () => {
@@ -487,6 +482,28 @@ describe("Scenario 7b — FUNNEL_CONFIRMED's conversion figure matches the rung-
     );
     expect(findings[0].outcome).toBe("FUNNEL_CONFIRMED");
     expect(findings[0].text_ar).toContain("25.0% من زوار الصفحة اشتروا");
+    expect(findings[0].text_ar).not.toContain("سجّلوا بياناتهم");
+  });
+
+  it("rung-5 wording carries the same archetype-aware noun (C4.4a)", () => {
+    // Same principle one rung down: rung 5's broken copy counts
+    // `effectiveConversions` too, so it must not say "buy" either.
+    const o = makeObject({
+      w3d: makeWindow({
+        impressions: 50, // rungs 1-3 unevaluable
+        linkClicks: 30, // rung 4 unevaluable
+        ctrLink: 0.1,
+        cpm: 5,
+        lpViews: 150, // rung 5 evaluable
+        conversions: 0,
+        leadConversions: 0, // 0/150 → below the floor → broken
+      } as Partial<WindowMetrics>),
+    });
+    const findings = diagnose(o, makeBaselines(), "appointment", makeFired("K3"));
+    const rung5 = findings.find(f => f.outcome === "RUNG_CONVERSION");
+    expect(rung5, "rung 5 must be broken").toBeDefined();
+    expect(rung5!.text_ar).toContain("يسجّلون بياناتهم");
+    expect(rung5!.text_ar).not.toContain("يشترون");
   });
 });
 

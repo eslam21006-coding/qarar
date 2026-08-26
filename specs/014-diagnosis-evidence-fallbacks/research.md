@@ -288,8 +288,8 @@ Neither requires new data, and neither touches the engine.
 | R1 | Gates extracted verbatim into `DIAGNOSIS_GATES`; no value changes |
 | R2.1 | Null `cpmAvg14` makes rung 1 unevaluable, not clean; rung 2 keeps its `1.0` fallback and stays evaluable |
 | R2.2 | `lpViews === 0` with a cleared click gate is **unevaluable**, not broken — the snapshot cannot distinguish "nobody arrived" from "arrival untracked" |
-| R3 | 24-code total classification: 5 ad-fault, 4 funnel-fault, 15 neither; compile-enforced totality |
-| R3.3 | **K7 → funnel-fault**, adopted with recorded rationale and flagged for the author; safe under Q3's rung precondition |
+| R3 | 24-code total classification: 5 ad-fault, 3 funnel-fault, 16 neither; compile-enforced totality |
+| R3.3 | **K7 → neither**, resolved by the author 2026-08-26: a cost-ceiling comparison never measures a rung, so the row resolves to `NO_BLAME_ASSIGNABLE`. Consequence tracked in §R3.3 and contract C2.6 |
 | R4 | Duplicate row is two levels of one object; FR-012's level label is the fix; one verification task carried |
 | R5 | Stored snapshot verified free of finding text — SC-005 needs no edit |
 | R6 | FR-011 and FR-012 are two localised changes in `Dashboard.tsx` |

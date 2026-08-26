@@ -88,7 +88,7 @@ decoupled from the ladder, which would otherwise fall through the selector unhan
 5 and 6 pin their behaviour as synthetic selector unit tests — see research §R3.3.
 
 **C2.5** — Selection MUST be a pure function of `(RungEvaluation, RULE_FAULT[fired.rule])` plus the
-C4 W5 inputs. No other input, and specifically no inspection of `fired.reason_ar` or any Arabic
+C4 W5 inputs. No other input, and specifically no inspection of `fired.reason` / `fired.action` or any Arabic
 string, may influence it (Constitution I, FR-015).
 
 ---
@@ -112,7 +112,7 @@ them.
 
 - MUST restate the fired rule's reasoning and point the user at the ad.
 - MUST derive that restatement from the **rule code** via a code-keyed copy map — never by echoing
-  `fired.reason_ar` verbatim (which would couple the diagnosis to verdict copy) and never by printing
+  `fired.reason` verbatim (which would couple the diagnosis to verdict copy) and never by printing
   the code itself (Constitution II).
 - MUST NOT carry `ctaUrl`.
 - MUST NOT claim the ad is innocent in any wording — operationally, none of the `AD_HEALTH_CLAIMS`
