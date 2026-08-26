@@ -257,6 +257,16 @@ function killCpaGateMet(o: NormalizedObject, target: number): boolean {
  *                        coalesce to `0`. The caller MUST treat this as
  *                        "not yet measurable" and skip judgement.
  */
+function effectiveConversions(
+  o: NormalizedObject,
+  archetype: FunnelInputs["archetype"]
+): number | undefined {
+  if (archetype === "appointment" || archetype === "webinar") {
+    return o.w3d.leadConversions;
+  }
+  return o.w3d.conversions;
+}
+
 /**
  * Spec 014 / contract C4.4a — the NOUN that matches
  * `effectiveConversions`. For `appointment` / `webinar` the counted
@@ -271,16 +281,6 @@ function conversionVerb(
   const isLead = archetype === "appointment" || archetype === "webinar";
   if (isLead) return tense === "past" ? "سجّلوا بياناتهم" : "يسجّلون بياناتهم";
   return tense === "past" ? "اشتروا" : "يشترون";
-}
-
-function effectiveConversions(
-  o: NormalizedObject,
-  archetype: FunnelInputs["archetype"]
-): number | undefined {
-  if (archetype === "appointment" || archetype === "webinar") {
-    return o.w3d.leadConversions;
-  }
-  return o.w3d.conversions;
 }
 
 /**
