@@ -621,6 +621,9 @@ function DiagnosisSection({
           >
             <div className="mb-2 flex items-center gap-2">
               <VerdictBadge verdict={r.verdict} rule={r.rule} />
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+                {levelLabel(r.level)}
+              </span>
               <span className="truncate text-sm font-bold">{r.name}</span>
             </div>
             <div className="space-y-1.5">
@@ -647,19 +650,31 @@ function FindingRow({ finding }: { finding: Finding }) {
         {finding.text_ar}
       </p>
       {finding.ctaUrl && (
-        <Button asChild size="sm" className="mt-1.5 font-bold">
-          <a
-            href={finding.ctaUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            احجز مكالمة تشخيصية مجانية
-          </a>
-        </Button>
+        <a
+          href={finding.ctaUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-1 inline-block text-xs font-medium text-primary underline underline-offset-2"
+        >
+          احجز مكالمة تشخيصية مجانية
+        </a>
       )}
     </div>
   );
 }
+
+// Spec 014 / T041 — level label map (FR-012). `EngineRow.level`
+// already carries the data; this only maps it to the Arabic label.
+function levelLabel(level: "campaign" | "adset" | "ad"): string {
+  if (level === "campaign") return "حملة";
+  if (level === "adset") return "مجموعة";
+  return "إعلان";
+}
+
+// Spec 014 / T037 — named exports so the component test can render
+// them in isolation. The functions remain used internally; this
+// only re-exports them.
+export { DiagnosisSection, FindingRow, levelLabel };
 
 // ============================================================
 // US8 — dedicated promotion list for S1-eligible ads

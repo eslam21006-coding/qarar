@@ -421,8 +421,120 @@ export type JudgeableTargets = Omit<DerivedTargets, "unitTarget"> & {
 
 // ---------- Engine output ----------
 
+/**
+ * Spec 014 / data-model §1 — one step of the ladder.
+ * Rung 6 is the terminal position; it is never a `RungId`.
+ */
+export type RungId = 1 | 2 | 3 | 4 | 5;
+
+/**
+ * Spec 014 / data-model §2 — the three-way state of one rung.
+ * V2: `unevaluable` MUST NOT be counted as `clean` anywhere.
+ */
+export type RungState = "unevaluable" | "clean" | "broken";
+
+/**
+ * Spec 014 / data-model §3 — per-object rung evaluation.
+ * Internal to the engine; not on the wire.
+ */
+export type RungEvaluation = Record<RungId, RungState>;
+
+/**
+ * Spec 014 / data-model §5 — three-way fault classification.
+ * Total partition; no default bucket (FR-008a).
+ */
+export type RuleFaultClass = "ad-fault" | "funnel-fault" | "neither";
+
+/**
+ * Spec 014 / data-model §4 — terminal outcome identity for every finding.
+ * Four terminal members plus five rung members; the terminal members
+ * are mutually exclusive by construction (contract §C2.3).
+ */
+export type DiagnosisOutcome =
+  | "INSUFFICIENT_DATA"
+  | "AD_IS_THE_PROBLEM"
+  | "NO_BLAME_ASSIGNABLE"
+  | "FUNNEL_CONFIRMED"
+  | "RUNG_CPM"
+  | "RUNG_HOOK"
+  | "RUNG_MISMATCH"
+  | "RUNG_ARRIVAL"
+  | "RUNG_CONVERSION";
+
+/**
+ * Spec 014 / research §R3 — total `Record<RuleCode, RuleFaultClass>`
+ * mapping. 24 entries; no default bucket. Omitting a code is a
+ * compile error (FR-008a, C9.9).
+ */
+export const RULE_FAULT: Record<RuleCode, RuleFaultClass> = {
+  // ad-fault (5) — rulebook text names the creative / hook / ad unit.
+  K1: "ad-fault",
+  K3: "ad-fault",
+  K4: "ad-fault",
+  F1: "ad-fault",
+  F2: "ad-fault",
+  // funnel-fault (3) — rulebook text exonerates the ad and points
+  // at the page / offer / post-sale step. Reachable into
+  // `FUNNEL_CONFIRMED` through C2.2 clause 4 (synthetic) or the
+  // C4 W5 evidence path (production).
+  W3: "funnel-fault",
+  W4: "funnel-fault",
+  W5: "funnel-fault",
+  // neither (16) — research §R3.3 / §R3.4. K7 explicitly classified
+  // `neither` here (cost-ceiling comparison, not a funnel
+  // measurement). S1–S4 emit `continue` (A7); NS1/NS2 are the
+  // hard-skipped exempt branch (A4); GATE emits `too_early` (A7).
+  K2: "neither",
+  K5: "neither",
+  K6: "neither",
+  K7: "neither",
+  CB1: "neither",
+  CB2: "neither",
+  W1: "neither",
+  W2: "neither",
+  W6: "neither",
+  S1: "neither",
+  S2: "neither",
+  S3: "neither",
+  S4: "neither",
+  NS1: "neither",
+  NS2: "neither",
+  GATE: "neither",
+};
+
+/**
+ * Spec 014 / research §R1 — volume gates, extracted verbatim.
+ * Every value is the same as today's `server/engine.ts`. No tuning
+ * (FR-002, FR-014, SC-006). `as const` so consumers see the literal
+ * type and the gates stay compile-time constants.
+ */
+export const DIAGNOSIS_GATES = {
+  // rung 1 — CPM
+  CPM_MIN_IMPRESSIONS: 500,
+  CPM_RATIO: 1.3,
+  // rungs 2 & 3 — share one gate (data-model V5)
+  CTR_MIN_IMPRESSIONS: 1000,
+  CTR_FALLBACK_PCT: 1.0,
+  // rung 3 — mismatch shape
+  MISMATCH_CTR_ALL_MULTIPLE: 2,
+  MISMATCH_CTR_ALL_FLOOR: 1.5,
+  // rung 4 — landing-page arrival
+  LP_MIN_LINK_CLICKS: 50,
+  LP_ARRIVAL_FLOOR: 0.75,
+  // rung 5 — page conversion
+  CVR_MIN_LP_VIEWS: 100,
+  CVR_FLOOR_FREE_LEAD_PCT: 15,
+  CVR_FLOOR_DEFAULT_PCT: 2,
+} as const;
+
 export interface Finding {
   step: 1 | 2 | 3 | 4 | 5 | 6;
+  /**
+   * Spec 014 / data-model §6 — required machine-readable identity.
+   * Required (not optional) so `npm run check` names every
+   * unmigrated construction site.
+   */
+  outcome: DiagnosisOutcome;
   text_ar: string;
   primary: boolean;
   ctaUrl?: string;

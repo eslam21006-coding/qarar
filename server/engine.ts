@@ -21,6 +21,8 @@ import {
   AccountSnapshotPayload,
   AccountSummary,
   Baselines,
+  DIAGNOSIS_GATES,
+  DiagnosisOutcome,
   DerivedTargets,
   EngineResult,
   EngineRow,
@@ -28,7 +30,11 @@ import {
   FunnelInputs,
   JudgeableTargets,
   NormalizedObject,
+  RULE_FAULT,
   RuleCode,
+  RuleFaultClass,
+  RungId,
+  RungState,
   TopAction,
   Verdict,
   convertCurrency,
@@ -86,6 +92,145 @@ interface Fired {
   promotionEligible?: boolean;
   promotionNote?: string | null;
   ctaUrl?: string;
+}
+
+/**
+ * Spec 014 / data-model §3 — per-object evaluation of rungs 1–5.
+ * Internal to the engine; not on the wire (V6: `evaluable.size === 0`
+ * triggers `INSUFFICIENT_DATA`).
+ */
+type RungEvaluation = Record<RungId, RungState>;
+
+/**
+ * Spec 014 / data-model §3 — derived sets used by the contract.
+ */
+function evalSets(ev: RungEvaluation): {
+  evaluable: Set<RungId>;
+  clean: Set<RungId>;
+  broken: Set<RungId>;
+} {
+  const evaluable = new Set<RungId>();
+  const clean = new Set<RungId>();
+  const broken = new Set<RungId>();
+  for (const id of [1, 2, 3, 4, 5] as RungId[]) {
+    if (ev[id] === "clean") {
+      evaluable.add(id);
+      clean.add(id);
+    } else if (ev[id] === "broken") {
+      evaluable.add(id);
+      broken.add(id);
+    }
+  }
+  return { evaluable, clean, broken };
+}
+
+/**
+ * Spec 014 / contract §C1 — build the per-rung evaluation record.
+ * Reads every threshold from `DIAGNOSIS_GATES` (C1.3, FR-002, FR-014).
+ *
+ *   Rung 1: gate = `impressions > 500`; baseline required (C1.4).
+ *   Rung 2: gate = `impressions >= 1000`; baseline optional (1.0
+ *           fallback, §R2.1).
+ *   Rung 3: gate shared with rung 2 (V5); broken when rung-2 broke
+ *           AND the mismatch shape held.
+ *   Rung 4: gate = `linkClicks >= 50` AND `lpViews > 0` (C1.5).
+ *           Otherwise `unevaluable`.
+ *   Rung 5: gate = `lpViews >= 100`.
+ */
+function evaluateRungs(
+  o: NormalizedObject,
+  baselines: Baselines,
+  archetype: FunnelInputs["archetype"]
+): RungEvaluation {
+  const w = o.w3d;
+  const ev: RungEvaluation = {
+    1: "unevaluable",
+    2: "unevaluable",
+    3: "unevaluable",
+    4: "unevaluable",
+    5: "unevaluable",
+  };
+
+  // Rung 1 — CPM vs 14-day average. C1.4 / R2.1: gate met but
+  // baseline null ⇒ unevaluable (never clean).
+  if (
+    w.impressions > DIAGNOSIS_GATES.CPM_MIN_IMPRESSIONS &&
+    baselines.cpmAvg14 !== null &&
+    baselines.cpmAvg14 > 0
+  ) {
+    ev[1] = w.cpm > DIAGNOSIS_GATES.CPM_RATIO * baselines.cpmAvg14
+      ? "broken"
+      : "clean";
+  }
+
+  // Rung 2 — Link CTR vs the 90-day median (with the 1.0 fallback).
+  // R2.1: rung 2 has the literal fallback, so a null median does NOT
+  // make the rung unevaluable.
+  const ctrMedian = baselines.ctrLinkMedian90;
+  const ctrThreshold = ctrMedian !== null ? ctrMedian : DIAGNOSIS_GATES.CTR_FALLBACK_PCT;
+  if (w.impressions >= DIAGNOSIS_GATES.CTR_MIN_IMPRESSIONS) {
+    ev[2] = w.ctrLink < ctrThreshold ? "broken" : "clean";
+  }
+
+  // Rung 3 — message/CTA mismatch. Only broken when rung 2 is broken
+  // AND the ctrAll-vs-ctrLink shape is met. Otherwise: same state as
+  // rung 2 when gate is met; otherwise unevaluable (V5 — same gate).
+  if (w.impressions >= DIAGNOSIS_GATES.CTR_MIN_IMPRESSIONS) {
+    if (
+      ev[2] === "broken" &&
+      w.ctrAll >= DIAGNOSIS_GATES.MISMATCH_CTR_ALL_MULTIPLE * w.ctrLink &&
+      w.ctrAll > DIAGNOSIS_GATES.MISMATCH_CTR_ALL_FLOOR
+    ) {
+      ev[3] = "broken";
+    } else {
+      ev[3] = "clean";
+    }
+  }
+
+  // Rung 4 — landing-page arrival. C1.5 / R2.2: `lpViews === 0` is
+  // unevaluable, not clean (the snapshot cannot distinguish "no
+  // arrival" from "arrival untracked").
+  if (
+    w.linkClicks >= DIAGNOSIS_GATES.LP_MIN_LINK_CLICKS &&
+    w.lpViews > 0
+  ) {
+    ev[4] = w.lpViews / w.linkClicks < DIAGNOSIS_GATES.LP_ARRIVAL_FLOOR
+      ? "broken"
+      : "clean";
+  }
+
+  // Rung 5 — page conversion. Floor depends on archetype.
+  // `effectiveConversionsLocal` returns `undefined` only when the
+  // pre-separation snapshot lacks the lead/purchase split
+  // (appointment/webinar pre-feature snapshots) — that case keeps
+  // rung 5 unevaluable. A real captured zero (`conversions === 0`)
+  // is `0`, NOT `undefined`, and resolves to a `cvr` of 0 → broken.
+  if (w.lpViews >= DIAGNOSIS_GATES.CVR_MIN_LP_VIEWS) {
+    const floor =
+      archetype === "free_lead"
+        ? DIAGNOSIS_GATES.CVR_FLOOR_FREE_LEAD_PCT
+        : DIAGNOSIS_GATES.CVR_FLOOR_DEFAULT_PCT;
+    const conv = effectiveConversionsLocal(o, archetype);
+    if (conv === undefined) {
+      // Pre-separation snapshot — unit unknown. Spec A7 / FR-035.
+      ev[5] = "unevaluable";
+    } else {
+      const cvr = (conv / w.lpViews) * 100;
+      ev[5] = cvr < floor ? "broken" : "clean";
+    }
+  }
+
+  return ev;
+}
+
+function effectiveConversionsLocal(
+  o: NormalizedObject,
+  archetype: FunnelInputs["archetype"]
+): number | undefined {
+  if (archetype === "appointment" || archetype === "webinar") {
+    return o.w3d.leadConversions;
+  }
+  return o.w3d.conversions;
 }
 
 // ============================================================
@@ -795,91 +940,360 @@ function continueRules(
 // Diagnosis (الجزء الثامن) — collect ALL broken rungs per entity
 // ============================================================
 
+/**
+ * Spec 014 / contract §C3.2 — code-keyed Arabic copy for the five
+ * ad-fault rules. Restates each rule's own reasoning without echoing
+ * `fired.reason_ar` verbatim and without printing the code itself
+ * (Constitution II). Each entry derives from `RULES[code].defAr` in
+ * shared/qarar.ts:33-140.
+ */
+const AD_FAULT_COPY: Record<
+  "K1" | "K3" | "K4" | "F1" | "F2",
+  () => string
+> = {
+  K1: () =>
+    "هذا الإعلان لم يأتِ بأي نتيجة رغم المصروف الذي صرفه — المشكلة في الإعلان نفسه، لا في الصفحة أو العرض",
+  K3: () =>
+    "عدد كبير شاهد الإعلان وأقل من نصف في المئة ضغط عليه — بداية الإعلان لا توقف أحدًا، غيّر التصميم",
+  K4: () =>
+    "أول يوم كان ممتازًا ثم هبط الأداء للنصف أو أكثر — لا تطارد نجاح اليوم الأول، فقد انتهى",
+  F1: () =>
+    "ضغط الناس على الإعلان نزل ربع أو ثلث عمّا كان — الجمهور ملّ التصميم، جهّز تصميمًا جديدًا",
+  F2: () =>
+    "سعر ظهور هذا الإعلان يرتفع عن باقي حسابك — فيسبوك لم يعد يحب هذا التصميم",
+};
+
+/**
+ * Spec 014 / contract §C3.1 — `INSUFFICIENT_DATA` text. C3.1: state
+ * the observed counts, then name the single gate furthest from being
+ * met (spec A6). Every figure LTR per C5.2. No claim about where
+ * the problem is or is not — operationally, none of `BLAME_CLAIMS`.
+ */
+function insufficientDataText(o: NormalizedObject): string {
+  const w = o.w3d;
+  // Compute each gate's deficit (positive = still need N more).
+  // The single largest deficit is named (spec A6).
+  const cpmGate = DIAGNOSIS_GATES.CPM_MIN_IMPRESSIONS + 1; // strict > 500
+  const ctrGate = DIAGNOSIS_GATES.CTR_MIN_IMPRESSIONS;
+  const lpClickGate = DIAGNOSIS_GATES.LP_MIN_LINK_CLICKS;
+  const lpViewsGate = DIAGNOSIS_GATES.CVR_MIN_LP_VIEWS;
+  const deficits: Array<{ label: string; need: number; current: number }> = [
+    {
+      label: "مرات الظهور للحكم على السعر",
+      need: cpmGate,
+      current: Math.round(w.impressions),
+    },
+    {
+      label: "مرات الظهور للحكم على الهوك",
+      need: ctrGate,
+      current: Math.round(w.impressions),
+    },
+    {
+      label: "ضغطات للحكم على الوصول للصفحة",
+      need: lpClickGate,
+      current: Math.round(w.linkClicks),
+    },
+    {
+      label: "زيارات للصفحة للحكم على التحويل",
+      need: lpViewsGate,
+      current: Math.round(w.lpViews),
+    },
+  ];
+  let best = deficits[0];
+  for (const d of deficits) {
+    const dBest = (best.need - best.current) / best.need;
+    const dCur = (d.need - d.current) / d.need;
+    if (dCur > dBest) best = d;
+  }
+  const stillNeed = Math.max(0, Math.ceil(best.need - best.current));
+  return (
+    `شُوهد ${nf(w.impressions)} مرة، ضُغط ${nf(w.linkClicks)} مرة، ووصلت ${nf(w.lpViews)} زيارة للصفحة خلال آخر 3 أيام — ` +
+    `ما زالت البيانات غير كافية للحكم على هذا الإعلان. يلزم تقريبًا ${stillNeed} ${best.label} إضافية قبل أن نقدر نحكم بثقة.`
+  );
+}
+
+/**
+ * Spec 014 / contract §C3.3 — `NO_BLAME_ASSIGNABLE` text. State what
+ * was measured and came back healthy and stop there. No `ctaUrl`,
+ * no claim about where the problem is or is not.
+ */
+function noBlameAssignableText(
+  o: NormalizedObject,
+  ev: RungEvaluation,
+  baselines: Baselines
+): string {
+  const w = o.w3d;
+  const parts: string[] = [];
+  if (ev[1] === "clean" && baselines.cpmAvg14 !== null) {
+    parts.push(
+      `سعر الظهور طبيعي (${money(w.cpm)} مقابل متوسط ${money(baselines.cpmAvg14)})`
+    );
+  }
+  if (ev[2] === "clean") {
+    const median = baselines.ctrLinkMedian90;
+    parts.push(
+      median !== null
+        ? `نسبة الضغط أعلى من متوسط حسابك (${w.ctrLink.toFixed(2)}% مقابل ${median}%)`
+        : `نسبة الضغط أعلى من عتبة 1.0% (${w.ctrLink.toFixed(2)}%)`
+    );
+  }
+  if (ev[3] === "clean") {
+    parts.push("الرسالة ودعوة الشراء متسقتان");
+  }
+  if (ev[4] === "clean") {
+    const pct = Math.round((w.lpViews / w.linkClicks) * 100);
+    parts.push(`${pct}% ممن ضغطوا وصلوا للصفحة`);
+  }
+  if (parts.length === 0) {
+    return "ما تم قياسه من هذا الإعلان جاء ضمن الحدود الطبيعية، لكن الحكم على مكان المشكلة يحتاج بيانات إضافية.";
+  }
+  return "ما تم قياسه من هذا الإعلان جاء ضمن الحدود الطبيعية: " +
+    parts.join("، ") +
+    ". الحكم على مكان المشكلة يحتاج بيانات إضافية.";
+}
+
+/**
+ * Spec 014 / contract §C3.4 — `FUNNEL_CONFIRMED` ladder text. Ordered
+ * funnel from C3.4 step 1..5, conclusion last. At least three
+ * distinct figures from this object's own window (SC-004). Every
+ * figure LTR per C5.2; currency through `money()` per C5.3.
+ *
+ * `mode` selects the route:
+ *   - "clause4" — the rung-precondition route (C2.2 clause 4).
+ *   - "w5" — the campaign W5 evidence path (C4). The cost-per-customer
+ *     figure is required by C4.4 and printed at step 5.
+ *
+ * `isCampaign` indicates the W5 path — affects which steps use
+ * `baselines.ctrLinkMedian90` (which is undefined for campaigns per
+ * C4.4).
+ */
+function funnelConfirmedText(
+  o: NormalizedObject,
+  ev: RungEvaluation,
+  baselines: Baselines,
+  mode: "clause4" | "w5",
+  campaignCpa: number | null
+): string {
+  const w = o.w3d;
+  const lines: string[] = [];
+
+  // Step 1 — impressions.
+  lines.push(`شُوهد الإعلان ${nf(w.impressions)} مرة في آخر 3 أيام`);
+
+  // Step 2 — link clicks + account median comparison (C3.4a when null).
+  const ctrLine =
+    w.linkClicks > 0
+      ? `${nf(w.linkClicks)} شخص ضغط على الإعلان (نسبة الضغط ${w.ctrLink.toFixed(2)}%)`
+      : `${w.ctrLink.toFixed(2)}% من المشاهدين ضغطوا`;
+  if (mode === "w5") {
+    // C4.4: the median step is stated unavailable for a campaign
+    // because `ctrLinkMedian90` is fetched at ad level and is not a
+    // like-for-like comparison for a campaign aggregate.
+    lines.push(`${ctrLine} — متوسط حسابك للمقارنة غير متاح على مستوى الحملة`);
+  } else if (baselines.ctrLinkMedian90 === null) {
+    lines.push(`${ctrLine} — متوسط حسابك للمقارنة غير متاح`);
+  } else {
+    lines.push(
+      `${ctrLine} — متوسط حسابك ${baselines.ctrLinkMedian90.toFixed(2)}%`
+    );
+  }
+
+  // Step 3 — landing-page views as a share of link clicks. Print
+  // when available; state unavailable when not (FR-007a).
+  if (w.linkClicks > 0 && w.lpViews > 0) {
+    const arrival = Math.round((w.lpViews / w.linkClicks) * 100);
+    lines.push(`${arrival}% ممن ضغطوا وصلوا لصفحتك`);
+  } else {
+    lines.push(`نسبة الوصول للصفحة غير متاحة (لم تُسجَّل زيارات)`);
+  }
+
+  // Step 4 — conversions as a share of landing-page views.
+  if (w.lpViews > 0) {
+    const conv = effectiveConversionsLocal(o, "paid_lto") ?? 0;
+    const cvr = (conv / w.lpViews) * 100;
+    lines.push(`${cvr.toFixed(1)}% من زوار الصفحة اشتروا`);
+  } else {
+    lines.push(`نسبة التحويل على الصفحة غير متاحة (لم تُسجَّل زيارات)`);
+  }
+
+  // Step 5 — conclusion. For W5: print the measured campaign CPA
+  // (C4.4). For clause-4: print the leak conclusion without a CPA.
+  if (mode === "w5") {
+    const cpaText = campaignCpa !== null ? money(campaignCpa) : "—";
+    lines.push(
+      `الإعلان يجلب عملاء بسعر جيد (${cpaText} للعميل)، لكن التحويل بعد البيع ضعيف — راجع المتابعة والرسائل بعد البيع`
+    );
+  } else {
+    lines.push(
+      "الإعلان يؤدي وظيفته، لكن التحويل ضعيف — المشكلة في العرض أو مسار الفانل"
+    );
+  }
+
+  return lines.join(" — ");
+}
+
 export function diagnose(
   o: NormalizedObject,
   baselines: Baselines,
-  archetype: FunnelInputs["archetype"]
+  archetype: FunnelInputs["archetype"],
+  fired: Fired
 ): Finding[] {
   const w = o.w3d;
-  const ctrMedian = baselines.ctrLinkMedian90;
   const findings: Finding[] = [];
 
-  // 1. Per-ad CPM (account-wide CPM removed — handled at summary level)
-  if (baselines.cpmAvg14 && w.cpm > 1.3 * baselines.cpmAvg14 && w.impressions > 500) {
+  // Step 1 — build the per-rung evaluation record (contract §C1).
+  const ev = evaluateRungs(o, baselines, archetype);
+  const { clean, broken } = evalSets(ev);
+
+  // Push broken rungs in ascending order (C1.6). Each carries its
+  // own `RUNG_*` outcome; no terminal outcome is appended when at
+  // least one rung broke (C2.1, V7).
+  if (ev[1] === "broken") {
     findings.push({
       step: 1,
-      text_ar: `سعر الظهور مرتفع على هذا الإعلان تحديدًا (${money(w.cpm)} مقابل متوسط ${money(baselines.cpmAvg14)}) — فيسبوك يرفع سعر التصميم الذي لا يعجب الناس`, // step 1
+      outcome: "RUNG_CPM",
+      text_ar: `سعر الظهور مرتفع على هذا الإعلان تحديدًا (${money(w.cpm)} مقابل متوسط ${money(baselines.cpmAvg14 ?? 0)}) — فيسبوك يرفع سعر التصميم الذي لا يعجب الناس`,
       primary: false,
     });
   }
-
-  // 2. Link CTR (hook) + 3. CTR All vs Link CTR mismatch
-  const ctrLow = ctrMedian !== null ? w.ctrLink < ctrMedian : w.ctrLink < 1.0;
-  if (ctrLow && w.impressions >= 1000) {
-    // 3. CTR All vs Link CTR mismatch
-    if (w.ctrAll >= 2 * w.ctrLink && w.ctrAll > 1.5) {
-      findings.push({
-        step: 3,
-        text_ar: `الناس تتفاعل مع الإعلان (${w.ctrAll.toFixed(2)}%) لكنها لا تضغط للشراء (${w.ctrLink.toFixed(2)}%) — بداية الإعلان جيدة لكن الرسالة أو دعوة الشراء ضعيفة`, // step 3
-        primary: false,
-      });
-    } else {
-      findings.push({
-        step: 2,
-        text_ar: `ضغط الناس على الإعلان قليل (${w.ctrLink.toFixed(2)}%) رغم أن سعر الظهور طبيعي — المشكلة في التصميم نفسه، جدّده`, // step 2
-        primary: false,
-      });
-    }
+  if (ev[2] === "broken") {
+    findings.push({
+      step: 2,
+      outcome: "RUNG_HOOK",
+      text_ar: `ضغط الناس على الإعلان قليل (${w.ctrLink.toFixed(2)}%) رغم أن سعر الظهور طبيعي — المشكلة في التصميم نفسه، جدّده`,
+      primary: false,
+    });
   }
-
-  // 4. LP view rate
-  if (w.linkClicks >= 50 && w.lpViews > 0 && w.lpViews / w.linkClicks < 0.75) {
+  if (ev[3] === "broken") {
+    findings.push({
+      step: 3,
+      outcome: "RUNG_MISMATCH",
+      text_ar: `الناس تتفاعل مع الإعلان (${w.ctrAll.toFixed(2)}%) لكنها لا تضغط للشراء (${w.ctrLink.toFixed(2)}%) — بداية الإعلان جيدة لكن الرسالة أو دعوة الشراء ضعيفة`,
+      primary: false,
+    });
+  }
+  if (ev[4] === "broken") {
     findings.push({
       step: 4,
-      text_ar: `${((w.lpViews / w.linkClicks) * 100).toFixed(0)}% فقط ممن ضغطوا وصلوا لصفحتك (المفترض 75%+) — افحص سرعة التحميل أولًا، ثم تأكد أن الصفحة تطابق وعد الإعلان`, // step 4
+      outcome: "RUNG_ARRIVAL",
+      text_ar: `${Math.round((w.lpViews / w.linkClicks) * 100)}% فقط ممن ضغطوا وصلوا لصفحتك (المفترض 75%+) — افحص سرعة التحميل أولًا، ثم تأكد أن الصفحة تطابق وعد الإعلان`,
       primary: false,
     });
   }
-
-  // 5. page CVR — "ad innocent"
-  if (w.lpViews >= 100) {
-    // T025 / FR-031 — cvr denominator is the archetype-aware count.
-    // FR-026a — 15% lead-generation floor is Phase 7 (T064); Phase 2 keeps
-    // the legacy 2% product-purchase floor for every non-`free_lead`
-    // archetype so the Phase 2/3 checkpoint does not silently widen it.
-    const conversionsForCvr = effectiveConversions(o, archetype) ?? 0;
-    const cvr = (conversionsForCvr / w.lpViews) * 100;
-    const weakPage = archetype === "free_lead" ? cvr < 15 : cvr < 2;
-    if (weakPage) {
-      // Only absolve the ad ("الإعلان بريء") when no earlier rung (1–4) fired.
-      // If the ad/landing flow is already flagged above, step 5 must not
-      // contradict it by declaring the ad innocent.
-      const adClean = findings.length === 0;
-      findings.push({
-        step: 5,
-        text_ar: adClean
-          ? `الناس تصل لصفحتك لكن ${cvr.toFixed(1)}% فقط يشترون — المشكلة في الصفحة أو العرض أو السعر — ⚠️ الإعلان بريء، لا تعدّله` // step 5
-          : `قلة ممن يصلون لصفحتك يشترون (${cvr.toFixed(1)}%) — راجع الصفحة أو العرض أو السعر أيضًا`, // step 5
-        primary: false,
-        ctaUrl: DISCOVERY_CALL_URL,
-      });
-    }
-  }
-
-  // 6. post-conversion (fallback — ad and page look fine). Hotfix T8: now
-  // carries the discovery-call CTA so a clean ad + bad funnel still points
-  // the user to the right next step (matching the step-5 "page is broken"
-  // booking CTA logic, but for the "everything looks clean" case).
-  if (findings.length === 0) {
+  if (ev[5] === "broken") {
+    // Rung 5 wording selector — FR-017, FR-017a. The neutral wording
+    // reports the weak conversion without absolving the ad. The
+    // innocence wording is selected only when the fired rule is NOT
+    // ad-fault AND rungs 1–4 are ALL `clean`. C8.3 / FR-017b: the
+    // outcome identity stays `RUNG_CONVERSION` in both wordings and
+    // the finding keeps its `ctaUrl` in both.
+    const conv = effectiveConversionsLocal(o, archetype);
+    const cvr = conv !== undefined && w.lpViews > 0 ? (conv / w.lpViews) * 100 : 0;
+    const adClean =
+      RULE_FAULT[fired.rule] !== "ad-fault" &&
+      ev[1] === "clean" &&
+      ev[2] === "clean" &&
+      ev[3] === "clean" &&
+      ev[4] === "clean";
     findings.push({
-      step: 6,
-      text_ar: "المشكلة ليست بالإعلانات حالياً. المشكلة في العرض أو المسار التسويقي — احجز مكالمة تشخيصية مجانية.", // step 6
+      step: 5,
+      outcome: "RUNG_CONVERSION",
+      text_ar: adClean
+        ? `الناس تصل لصفحتك لكن ${cvr.toFixed(1)}% فقط يشترون — المشكلة في الصفحة أو العرض أو السعر — ⚠️ الإعلان بريء، لا تعدّله`
+        : `قلة ممن يصلون لصفحتك يشترون (${cvr.toFixed(1)}%) — راجع الصفحة أو العرض أو السعر أيضًا`,
       primary: false,
       ctaUrl: DISCOVERY_CALL_URL,
     });
   }
 
-  // Mark the first finding as primary
+  // Terminal outcome — only when no rung broke (C2.1).
+  if (broken.size === 0) {
+    const { evaluable } = evalSets(ev);
+    const faultClass: RuleFaultClass = RULE_FAULT[fired.rule];
+
+    let terminal: Finding | null = null;
+
+    // C4 — W5 evidence path. Opens FUNNEL_CONFIRMED without C2.2
+    // clause 4's rung precondition when (a) the explicit funnel
+    // flag is set, AND (b) a measured campaign CPA exists.
+    const isW5Campaign =
+      fired.rule === "W5" && o.level === "campaign";
+    if (isW5Campaign) {
+      const cpa = o.w3d.cpa;
+      // The campaign-level funnel flag is read from
+      // `funnel.htoUnderperforming` at the call site; the engine
+      // sees it through `fired.ctaUrl` being set (today's W5 path
+      // attaches the CTA there). We re-derive from the W5 Fired
+      // contract: W5 sets `fired.ctaUrl` and the guard opens only
+      // when the call site passed `true` (see runEngine).
+      if (fired.ctaUrl && cpa !== null) {
+        terminal = {
+          step: 6,
+          outcome: "FUNNEL_CONFIRMED",
+          text_ar: funnelConfirmedText(o, ev, baselines, "w5", cpa),
+          primary: false,
+          ctaUrl: DISCOVERY_CALL_URL,
+        };
+      }
+    }
+
+    if (!terminal) {
+      // C2.2 precedence — clauses 1..5.
+      if (evaluable.size === 0) {
+        // Clause 1.
+        terminal = {
+          step: 6,
+          outcome: "INSUFFICIENT_DATA",
+          text_ar: insufficientDataText(o),
+          primary: false,
+        };
+      } else if (faultClass === "ad-fault") {
+        // Clause 2.
+        const code = fired.rule as "K1" | "K3" | "K4" | "F1" | "F2";
+        terminal = {
+          step: 6,
+          outcome: "AD_IS_THE_PROBLEM",
+          text_ar: AD_FAULT_COPY[code](),
+          primary: false,
+        };
+      } else if (faultClass === "neither") {
+        // Clause 3.
+        terminal = {
+          step: 6,
+          outcome: "NO_BLAME_ASSIGNABLE",
+          text_ar: noBlameAssignableText(o, ev, baselines),
+          primary: false,
+        };
+      } else if (
+        faultClass === "funnel-fault" &&
+        ev[4] === "clean" &&
+        ev[5] === "clean"
+      ) {
+        // Clause 4 — rung-precondition route. Synthesizable; not
+        // reachable through `runEngine` per C2.6 / research §R3.3.
+        terminal = {
+          step: 6,
+          outcome: "FUNNEL_CONFIRMED",
+          text_ar: funnelConfirmedText(o, ev, baselines, "clause4", null),
+          primary: false,
+          ctaUrl: DISCOVERY_CALL_URL,
+        };
+      } else if (faultClass === "funnel-fault") {
+        // Clause 5 — fall-through when clause 4's rung precondition
+        // is unmet.
+        terminal = {
+          step: 6,
+          outcome: "INSUFFICIENT_DATA",
+          text_ar: insufficientDataText(o),
+          primary: false,
+        };
+      }
+    }
+
+    if (terminal) findings.push(terminal);
+  }
+
+  // Mark the first finding as primary (V14).
   if (findings.length > 0) {
     findings[0].primary = true;
   }
@@ -1426,7 +1840,7 @@ export function runEngine(
     const exempt = isNonSalesExempt(ad.objective ?? null);
     const findings =
       !exempt && (fired.verdict === "kill" || fired.verdict === "watch")
-        ? diagnose(ad, baselines, funnel.archetype)
+        ? diagnose(ad, baselines, funnel.archetype, fired)
         : [];
     rows.push(toRow(ad, fired, findings));
   }
@@ -1436,35 +1850,31 @@ export function runEngine(
     const exempt = isNonSalesExempt(s.objective ?? null);
     const findings =
       !exempt && (fired.verdict === "kill" || fired.verdict === "watch")
-        ? diagnose(s, baselines, funnel.archetype)
+        ? diagnose(s, baselines, funnel.archetype, fired)
         : [];
     rows.push(toRow(s, fired, findings));
   }
 
   for (const c of campaigns) {
     const childRows = rows.filter(r => r.campaignId === c.id && r.level === "adset");
-    const fired = evaluateCampaign(c, judgeable, childRows, !!funnel.htoUnderperforming, funnel.archetype, nsThreshold);
+    // Spec 014 / T034 — for a W5 campaign with the funnel flag and a
+    // measured CPA, hand-build a Fired carrying the discovery CTA so
+    // diagnose() can open its own evidence path. Otherwise diagnose()
+    // sees the literal W5 Fired the rule produced.
+    const rawFired = evaluateCampaign(c, judgeable, childRows, !!funnel.htoUnderperforming, funnel.archetype, nsThreshold);
+    const fired: Fired =
+      rawFired.rule === "W5" &&
+      !!funnel.htoUnderperforming &&
+      c.w3d.cpa !== null
+        ? { ...rawFired, ctaUrl: DISCOVERY_CALL_URL }
+        : rawFired;
     let findings: Finding[] = [];
     const exempt = isNonSalesExempt(c.objective ?? null);
     if (!exempt && (fired.verdict === "kill" || fired.verdict === "watch")) {
-      findings = diagnose(c, baselines, funnel.archetype);
-      // W5 campaign: ensure the discovery-call ctaUrl is present. If diagnose()
-      // already produced a step-6 fallback, attach the CTA to it instead of
-      // appending a second step-6 (which would render a duplicate post-sale
-      // message in the diagnosis list).
-      if (fired.ctaUrl && !findings.some(f => f.ctaUrl === fired.ctaUrl)) {
-        const existingStep6 = findings.find(f => f.step === 6);
-        if (existingStep6) {
-          existingStep6.ctaUrl = fired.ctaUrl;
-        } else {
-          findings.push({
-            step: 6,
-            text_ar: "المشكلة في العرض أو مسار الفانل — الإعلانات تجلب عملاء بسعر جيد لكن التحويل بعد البيع يحتاج إصلاح",
-            primary: false,
-            ctaUrl: fired.ctaUrl,
-          });
-        }
-      }
+      // Spec 014 / T035 / C4.5 — diagnose() now produces the single
+      // correct FUNNEL_CONFIRMED line for a guarded W5. The old
+      // post-hoc step-6 patch/append block is removed.
+      findings = diagnose(c, baselines, funnel.archetype, fired);
     }
     rows.push(toRow(c, fired, findings));
   }
@@ -1781,24 +2191,35 @@ function buildSummary(
   }
   const top3 = actions.slice(0, 3).map((a, i) => ({ ...a, rank: i + 1 }));
 
-  // Account-level funnel CTA: only count a step-5 finding as funnel evidence
-  // when the row has NO earlier 1–4 finding (otherwise the "ads are good"
-  // headline contradicts the per-row verdict). Campaign W5 still counts.
-  const hasFunnelFinding = rows.some(r => {
-    const step5 = r.findings.find(f => f.step === 5);
-    if (!step5) return false;
-    const hasEarlierIssue = r.findings.some(f => f.step >= 1 && f.step <= 4);
-    return !hasEarlierIssue;
-  });
-  const hasW5 = rows.some(r => r.rule === "W5");
-  const account_funnel_cta =
-    hasFunnelFinding || hasW5
-      ? {
-          reason_ar:
-            "مؤشرات إعلاناتك جيدة لكن مشكلتك الأساسية في التحويل بسبب العرض أو مسار الفانل — احجز مكالمة تشخيصية مجانية مع الفريق",
-          ctaUrl: DISCOVERY_CALL_URL,
-        }
-      : null;
+  // Spec 014 / contract §C6.1, §C6.1a — account-level funnel card.
+  // Set when any row carries a `RUNG_CONVERSION` or `FUNNEL_CONFIRMED`
+  // finding AND is not excluded by the ad-blame predicate (the row's
+  // fired rule is ad-fault, or any of its rung-1..4 findings is an
+  // ad-side finding).
+  const qualifyingOutcome = (outcome: DiagnosisOutcome): boolean =>
+    outcome === "RUNG_CONVERSION" || outcome === "FUNNEL_CONFIRMED";
+  const adBlameExcluded = (row: EngineRow): boolean => {
+    if (RULE_FAULT[row.rule] === "ad-fault") return true;
+    return row.findings.some(f =>
+      f.outcome === "RUNG_CPM" ||
+      f.outcome === "RUNG_HOOK" ||
+      f.outcome === "RUNG_MISMATCH" ||
+      f.outcome === "RUNG_ARRIVAL"
+    );
+  };
+  const accountRowQualifies = rows.some(
+    r => !adBlameExcluded(r) && r.findings.some(f => qualifyingOutcome(f.outcome))
+  );
+  const account_funnel_cta = accountRowQualifies
+    ? {
+        // Spec 014 / C6.4 — card copy carries no ad-health claim
+        // (operationally, none of `AD_HEALTH_CLAIMS`). States the
+        // measured funnel leak and routes to the call.
+        reason_ar:
+          "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+        ctaUrl: DISCOVERY_CALL_URL,
+      }
+    : null;
 
   return {
     total_spend_3d,
