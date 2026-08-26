@@ -49,6 +49,17 @@ Constitution I/VI concern in the negative sense: the verdict pipeline must not m
 
 ---
 
+## Clarifications
+
+### Session 2026-08-26
+
+- Q: Does the ad-fault classification stay binary, or gain a third "neither" bucket? → A: Three-way — ad-fault / funnel-fault / neither; a "neither" rule with no broken rung declines to place blame.
+- Q: Is the page-conversion rung's own «الإعلان بريء» wording in scope for suppression? → A: In scope and strengthened — suppressed when the fired rule is ad-fault, and it additionally requires rungs 1–4 to be evaluated and clean, not merely non-firing.
+- Q: Which rungs must be evaluable and clean before FUNNEL_CONFIRMED may fire? → A: Both the landing-page arrival and the page-conversion rungs; anything less resolves to INSUFFICIENT_DATA.
+- Q: How does campaign-level W5 reconcile with FR-006b's rung precondition? → A: W5 is its own evidence path into FUNNEL_CONFIRMED, but only when the explicit funnel-underperforming flag is set AND a measured campaign cost-per-customer exists — both required; absent either, the campaign resolves to INSUFFICIENT_DATA like any other row.
+
+---
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — A small-budget advertiser is told the truth, not a guess (Priority: P1)
@@ -83,8 +94,9 @@ and contains no innocence claim in any wording.
    contributes nothing toward the account-level "your funnel is the problem" card.
 3. **Given** an object whose only evaluable rung is the cost-per-view rung,
    **When** that rung comes back healthy, **Then** the outcome is not treated the same
-   as an object where every rung was evaluated and clean
-   [NEEDS CLARIFICATION: see Q3 — does a single evaluable rung license the innocence claim, or must the conversion-relevant rungs be evaluable too?].
+   as an object where every rung was evaluated and clean: because the landing-page arrival
+   and page-conversion rungs were not evaluable, the innocence claim is withheld and the
+   row resolves to INSUFFICIENT_DATA (FR-006b), with no discovery-call link.
 
 ---
 
@@ -113,10 +125,14 @@ echoes the verdict's reasoning, and carries no booking link.
    unevaluable, **When** the diagnosis renders, **Then** it does not absolve the ad in any
    wording and carries no discovery-call link.
 2. **Given** any row in any fixture, **When** its verdict is 🔴 and the rule that produced it
-   belongs to the ad-fault set, **Then** no line on that row claims the problem is not the ads.
-3. **Given** a row whose verdict came from a rule that does **not** blame the ad, and whose
-   rungs were all evaluated and clean, **When** the diagnosis renders, **Then** the innocence
-   claim and the discovery-call link are permitted.
+   is classified ad-fault by FR-008, **Then** no line on that row claims the problem is not the ads.
+3. **Given** a row whose verdict came from a rule classified **funnel-fault** (not merely
+   "not ad-fault"), and whose landing-page arrival and page-conversion rungs were both evaluated and
+   clean, **When** the diagnosis renders, **Then** the innocence claim and the discovery-call link are
+   permitted.
+4. **Given** a row whose verdict came from a rule classified **neither** — a cost-driven or
+   circuit-breaker code — and whose rungs were evaluated and clean, **When** the diagnosis renders,
+   **Then** the innocence claim and the discovery-call link are withheld (NO_BLAME_ASSIGNABLE).
 
 ---
 
@@ -192,13 +208,22 @@ to its name.
 - **Some rungs evaluable, at least one broken.** No terminal outcome is appended at all; the
   broken rungs speak for themselves. Existing behaviour, preserved.
 - **A rung broke *and* the fired rule is ad-fault.** The page-conversion rung's own
-  "⚠️ الإعلان بريء" wording is an innocence claim that can coexist with an ad-fault verdict
-  [NEEDS CLARIFICATION: see Q2 — must that wording be suppressed when the fired rule is ad-fault?].
+  "⚠️ الإعلان بريء" wording is an innocence claim that would otherwise coexist with an ad-fault
+  verdict. Per FR-017 it is suppressed in favour of the rung's neutral wording, so SC-003 holds
+  across rung-level copy as well as terminal outcomes.
+- **The page-conversion rung breaks while rungs 1–4 were never evaluated.** Today the rung absolves
+  the ad because no earlier rung *fired*, which is defect D1 one rung lower. Per FR-017a the
+  innocence wording now requires rungs 1–4 to have been evaluated and clean; otherwise the rung
+  renders its neutral wording.
 - **Non-sales exempt object (NS1 / NS2).** Hard-skipped before the ladder runs; still receives
   an empty findings list, exactly as Spec 013 defined. This feature must not change it.
 - **Campaign-level W5.** The campaign path appends its own post-sale funnel line carrying the
-  booking link. That line is a funnel claim with no numbers on it and must be reconciled with
-  the new outcome model rather than left as an unclassified fourth fallback.
+  booking link. Per FR-009a it is expressed as FUNNEL_CONFIRMED via W5's own evidence path, and per
+  FR-009c that line now carries the measured cost-per-customer figure instead of being a bare claim.
+- **W5 fired but its evidence is incomplete.** The funnel-underperforming flag is set yet no measured
+  campaign cost per customer exists (or the reverse). Per FR-009b the evidence path does not open:
+  the campaign resolves to INSUFFICIENT_DATA, carries no discovery-call link, and contributes nothing
+  to the account funnel card.
 - **A rung whose gate is met but whose comparison baseline is absent** (for example, the account
   cost-per-view average is null). The rung is unevaluable, not clean.
 - **Landing-page views recorded as zero while link clicks clear their gate.** The arrival rung
@@ -206,6 +231,9 @@ to its name.
   as a healthy rung.
 - **An object with enough volume on every gate but zero conversions.** The conversion rung is
   evaluable and broken, not unevaluable.
+- **A funnel-fault rule fired, no rung broke, but the arrival or conversion rung was unevaluable.**
+  The row resolves to INSUFFICIENT_DATA per FR-006b — not FUNNEL_CONFIRMED — so it carries no
+  innocence claim, no discovery-call link, and contributes nothing to the account funnel card.
 
 ---
 
@@ -224,39 +252,83 @@ to its name.
 - **FR-003a**: A rung whose volume gate is met but whose required comparison baseline is missing
   MUST be recorded as unevaluable, not clean.
 
-### Three honest terminal outcomes
+### Four honest terminal outcomes
 
-The single fallback is replaced by exactly three mutually exclusive terminal outcomes,
-resolved in this order. A terminal outcome is appended only when no rung broke.
+The single fallback is replaced by exactly four mutually exclusive terminal outcomes. A terminal
+outcome is appended only when no rung broke. They are resolved in this precedence:
 
-- **FR-004 — INSUFFICIENT_DATA**: Fires when zero rungs were evaluable. Its text MUST state the
-  counts actually observed and the volume still needed before a diagnosis is possible. It MUST
-  carry no discovery-call link, and MUST NOT contain any claim about where the problem is or is
-  not — in any wording.
+1. **INSUFFICIENT_DATA** — zero rungs evaluable (FR-004).
+2. **AD_IS_THE_PROBLEM** — fired rule is ad-fault (FR-005).
+3. **NO_BLAME_ASSIGNABLE** — fired rule is *neither* (FR-006a).
+4. **FUNNEL_CONFIRMED** — fired rule is funnel-fault **and** the conversion-relevant rungs are
+   evaluable and clean (FR-006).
+5. Otherwise — fired rule is funnel-fault but the FR-006 rung precondition is unmet →
+   **INSUFFICIENT_DATA** (FR-006b).
+
+- **FR-004 — INSUFFICIENT_DATA**: Fires when zero rungs were evaluable, and as the fall-through of
+  FR-006b. Its text MUST state the counts actually observed and the volume still needed before a
+  diagnosis is possible. It MUST carry no discovery-call link, and MUST NOT contain any claim about
+  where the problem is or is not — in any wording.
 - **FR-005 — AD_IS_THE_PROBLEM**: Fires when at least one rung was evaluable, none broke, and the
-  object's fired rule belongs to the ad-fault set. Its text MUST restate the fired rule's reasoning
-  and point the user at the ad. It MUST carry no discovery-call link, and MUST NOT claim the ad is
+  object's fired rule is classified **ad-fault** by FR-008. Its text MUST restate the fired rule's
+  reasoning and point the user at the ad. It MUST carry no discovery-call link, and MUST NOT claim the ad is
   innocent in any wording.
-- **FR-006 — FUNNEL_CONFIRMED**: Fires only when at least one rung was evaluable, none broke, and
-  the fired rule is not in the ad-fault set. This is the **only** terminal outcome that may claim
-  the ad is innocent, and the only one that carries the discovery-call link.
+- **FR-006 — FUNNEL_CONFIRMED**: Fires only when no rung broke, the fired rule is classified
+  **funnel-fault** by FR-008, **and** both the landing-page arrival rung and the page-conversion rung
+  were evaluable and came back clean. This is the **only** terminal outcome that may claim the ad is
+  innocent, and the only one that carries the discovery-call link. A rule classified *neither* never
+  reaches this outcome, and neither does an object whose conversion-relevant rungs could not be judged.
+- **FR-006a — NO_BLAME_ASSIGNABLE**: Fires when at least one rung was evaluable, none broke, and the
+  fired rule is classified **neither** by FR-008 — a rule that condemns on cost or on a spend/result
+  circuit break without implicating the creative or the offer. Its text MUST state what was measured
+  and came back healthy, and MUST stop there. It MUST carry no discovery-call link, and MUST NOT claim
+  the ad is innocent nor that the problem lies in the offer or funnel — in any wording.
+- **FR-006b**: Where the fired rule is funnel-fault and no rung broke but the FR-006 rung precondition
+  is unmet — either the landing-page arrival rung or the page-conversion rung was unevaluable — the
+  outcome resolves to INSUFFICIENT_DATA, not to FUNNEL_CONFIRMED. The innocence claim and the
+  discovery-call link are withheld.
 - **FR-007**: The FUNNEL_CONFIRMED text MUST be built from the object's own numbers as an ordered
   funnel ladder — impressions → link clicks (with the account median shown for comparison) →
   landing-page views as a percentage of link clicks → conversions as a percentage of landing-page
   views — followed by the conclusion. The reader MUST be able to see which step leaked before they
   read the word «العرض». Numeric values render left-to-right inside the right-to-left layout per
   Constitution III.
-- **FR-007a**: Where a figure in the FR-007 ladder is unavailable because its rung was unevaluable,
-  the ladder MUST say so for that step rather than printing a zero or omitting the step silently.
+- **FR-007a**: Where a ladder step's figure is present in the object's own window, the step MUST print
+  it; a step MUST be stated unavailable only when its own inputs are genuinely absent. On the FR-006
+  route, the rung precondition guarantees the landing-page and conversion steps are always available, and
+  the one figure that may still be missing is the account median link click-through rate used for
+  comparison. On the FR-009c W5 route, other steps may also be unavailable — see FR-009c. In every case,
+  a missing figure MUST be stated as unavailable rather than printed as a zero or omitted silently.
+
+### Rung-level innocence wording
+
+- **FR-017**: The page-conversion rung's innocence wording ("⚠️ الإعلان بريء، لا تعدّله") MUST be
+  suppressed — falling back to the rung's neutral wording, which reports the weak page conversion
+  without absolving the ad — whenever the object's fired rule is classified **ad-fault** by FR-008.
+  SC-003 is therefore scoped to every line on the row, not only to terminal outcomes.
+- **FR-017a**: The same innocence wording MUST additionally require that rungs 1–4 were **evaluated
+  and clean**, not merely that they did not fire. Where any of rungs 1–4 was unevaluable, the rung
+  renders its neutral wording. This applies defect D1's correction at the rung level.
+- **FR-017b**: The rung's neutral wording still counts as a broken page-conversion rung and still
+  carries the discovery-call link per FR-011, because the conversion figure that produced it is
+  measured. Suppressing the innocence *claim* does not suppress the *finding*. Its contribution to the
+  account-level card remains subject to FR-010b: where the neutral wording was selected because the
+  fired rule is ad-fault, that row is excluded from the account card even though its finding stands on
+  the row.
 
 ### The ad-fault rule set
 
 - **FR-008**: A single exported classification MUST exist that assigns every rule code in the
-  rulebook to ad-fault or not-ad-fault, derived from the rulebook's own definition of each code.
-  The classification MUST be listed in `research.md` with a one-line justification per code. It is
-  the single source of truth for FR-005. Codes whose classification is genuinely ambiguous MUST be
-  resolved through `/speckit-clarify`, not guessed
-  [NEEDS CLARIFICATION: see Q1 — is a two-way split sufficient, or is a third "neither" bucket required?].
+  rulebook to exactly one of three buckets — **ad-fault** (the code's own definition **names** the
+  creative, the hook, or the ad unit itself), **funnel-fault** (the code affirmatively exonerates the ad
+  and points at the page, the offer or the post-sale step), or **neither** (the code condemns on cost or
+  on a spend/result circuit break and implicates nothing) — derived from the rulebook's own definition of
+  each code. A code qualifies as ad-fault only where it names the ad; it does **not** qualify merely
+  because an ad-side failure such as poor targeting is one possible upstream cause of the quantity it
+  measures. Cost-driven codes therefore fall in *neither* unless their own text names the ad.
+  There is no default bucket: every code is assigned explicitly. The classification MUST be listed in
+  `research.md` with a one-line justification per code. It is the single source of truth for FR-005,
+  FR-006 and FR-006a.
 - **FR-008a**: Rule codes that can never reach the diagnosis (the scale codes, the exempt codes, and
   the gate code) MUST still be classified, so the classification is total over the rule vocabulary
   and cannot silently default.
@@ -264,19 +336,51 @@ resolved in this order. A terminal outcome is appended only when no rung broke.
   campaign — is updated accordingly. The non-sales exemption hard-skip (Spec 013 / FR-010a) stays
   exactly as it is: exempt objects still receive an empty findings list.
 - **FR-009a**: The campaign-level W5 path MUST be reconciled with the outcome model: its post-sale
-  funnel line MUST be expressed as one of the three outcomes rather than as an unclassified fourth
-  fallback, and it MUST NOT produce a second funnel line on a row that already carries one.
+  funnel line MUST be expressed as one of the four outcomes rather than as an unclassified extra
+  fallback, and it MUST NOT produce a second funnel line on a row that already carries one. W5 is
+  classified **funnel-fault** and reaches FUNNEL_CONFIRMED through its **own evidence path** — the
+  measured campaign cost per customer together with the account's explicit funnel-underperforming
+  declaration — rather than through FR-006's rung precondition, which the rung ladder was never
+  designed to satisfy at campaign level.
+- **FR-009b**: That exemption is conditional and MUST be enforced as a hard guard. The W5 evidence
+  path opens FUNNEL_CONFIRMED **only** when **both** hold: the explicit funnel-underperforming flag
+  is set for the account, **and** a measured campaign cost per customer exists (non-null, derived
+  from real conversions in the window). Where either is absent, the campaign resolves to
+  INSUFFICIENT_DATA exactly as any other row would, and carries no discovery-call link. The
+  exemption MUST NEVER open on the mere absence of an ad-fault rule — that would reintroduce at
+  campaign level the binary-default problem rejected in Q1.
+- **FR-009c**: The FUNNEL_CONFIRMED line produced by the W5 evidence path MUST carry the measured
+  cost-per-customer figure, so the claim is provable from the campaign's own numbers per FR-007's
+  intent. A campaign's window carries the same metrics an ad's does, so most ladder steps **are**
+  measurable at campaign level and MUST be printed per FR-007a; the exception is the account median
+  link click-through rate, which is derived at ad level and is not a like-for-like comparison for a
+  campaign aggregate. Steps whose own inputs are genuinely absent are stated as unavailable per FR-007a,
+  never printed as zeros. The full enumeration is in `contracts/diagnosis-outcomes.md` §C4.4.
 
 ### Account-level CTA
 
 - **FR-010**: The account-level funnel card MUST be set only when at least one row produced a
   *confirmed* funnel signal: a broken page-conversion rung, a FUNNEL_CONFIRMED outcome, or the
-  campaign-level W5. An INSUFFICIENT_DATA row MUST NOT contribute to it.
+  campaign-level W5 that cleared the FR-009b guard — and in every case subject to the FR-010b
+  exclusion. An INSUFFICIENT_DATA row and a NO_BLAME_ASSIGNABLE row MUST NOT contribute to it, and
+  neither MUST a W5 campaign that failed the FR-009b guard.
 - **FR-010a**: The account-level card MUST NOT be set when no row carries confirmed funnel
   evidence, even if flagged rows exist.
+- **FR-010b**: A row contributes confirmed funnel evidence only when nothing on that row blames the
+  ad. A row is excluded when **either** it carries a finding from rungs 1–4 (an ad or landing-flow
+  issue was measured and is failing), **or** its fired rule is classified **ad-fault** by FR-008.
+  This holds even when that row's page-conversion rung broke and is therefore genuine funnel evidence
+  in isolation: an account-level card reading «مؤشرات إعلاناتك جيدة» MUST NEVER render on the strength of
+  a row the engine has just condemned by name. The exclusion is per-row — an account MAY still show
+  the card from a *different* row that carries no ad-blame signal.
 - **FR-011**: The account-level card is the only place the «احجز مكالمة تشخيصية مجانية» **button**
   renders. A row-level finding carrying the discovery-call link renders at most one subtle inline
   text link per row — never a repeated full-width button.
+- **FR-011a**: The account-level card's text MUST be provable from the rows that funded it, and it
+  MUST NOT assert that the ads are healthy. FR-010b keeps ad-fault rows from funding the card, but a
+  *neither*-class row with a measured page-conversion break still qualifies while its rungs 1–4 were
+  never evaluable — so the card's qualifying conditions establish that **a funnel step is leaking**,
+  never that the ads are fine. The copy states the measured leak and routes to the discovery call.
 
 ### Row presentation
 
@@ -314,14 +418,22 @@ resolved in this order. A terminal outcome is appended only when no rung broke.
   baseline missing), *clean* (judged, healthy), or *broken* (judged, failing). Exactly one state per
   rung per object.
 - **Diagnosis outcome**: The terminal classification appended when no rung broke —
-  INSUFFICIENT_DATA, AD_IS_THE_PROBLEM, or FUNNEL_CONFIRMED. Mutually exclusive; resolved in that
-  order. Absent when at least one rung broke.
-- **Ad-fault rule classification**: A total mapping from every rule code in the rulebook to whether
-  that code blames the ad itself. The single source of truth for the AD_IS_THE_PROBLEM branch.
+  INSUFFICIENT_DATA, AD_IS_THE_PROBLEM, NO_BLAME_ASSIGNABLE, or FUNNEL_CONFIRMED. Mutually exclusive;
+  resolved in the precedence listed under *Four honest terminal outcomes*, with INSUFFICIENT_DATA also
+  serving as the fall-through when FUNNEL_CONFIRMED's rung precondition is unmet. Absent when at least
+  one rung broke.
+- **Rule fault classification**: A total mapping from every rule code in the rulebook to exactly one
+  of three buckets — ad-fault, funnel-fault, or neither. No default bucket. The single source of
+  truth for the AD_IS_THE_PROBLEM, FUNNEL_CONFIRMED and NO_BLAME_ASSIGNABLE branches.
 - **Finding**: One line of diagnosis on a row — its rung or outcome identity, its Arabic text, whether
   it is the primary (first) issue, and an optional discovery-call link.
 - **Account funnel signal**: The account-level card asserting that the offer or funnel is the
-  bottleneck, and the only place the booking button renders. Set only from confirmed funnel evidence.
+  bottleneck, and the only place the booking button renders. Set only from confirmed funnel evidence —
+  a broken page-conversion rung, a FUNNEL_CONFIRMED outcome, or a W5 campaign that cleared the FR-009b
+  evidence guard.
+- **W5 evidence path**: The campaign-level route into FUNNEL_CONFIRMED that bypasses the rung
+  precondition. Gated on two conditions that MUST both hold — the explicit funnel-underperforming
+  declaration, and a measured campaign cost per customer.
 
 ---
 
@@ -332,18 +444,33 @@ resolved in this order. A terminal outcome is appended only when no rung broke.
 - **SC-001**: Given a snapshot of five flagged rows with materially different metrics, no two rows
   produce identical diagnosis text.
 - **SC-002**: Zero rows in any fixture display an innocence claim while having zero evaluated rungs.
+  "Innocence claim" is defined operationally by the `BLAME_CLAIMS` substring set of
+  `contracts/diagnosis-outcomes.md` §C10.2 — §C10.3 maps every criterion to its set.
 - **SC-003**: Zero rows display both a 🔴 kill verdict produced by an ad-fault rule and a claim that
-  the problem is not the ads.
+  the problem is not the ads — counting every line on the row, terminal outcomes and rung-level copy
+  alike (FR-017). Operationally the `AD_HEALTH_CLAIMS` set of §C10.1, not `BLAME_CLAIMS`: an ad-fault
+  row naming the offer is not a self-contradiction.
+- **SC-003a**: No row carrying a 🔴 kill produced by an ad-fault rule contributes to the account-level
+  funnel card, in any fixture.
+- **SC-003b**: The account-level card's text contains no ad-health claim in any fixture, in any
+  wording — operationally, none of the `AD_HEALTH_CLAIMS` strings of `contracts/diagnosis-outcomes.md`
+  §C10.1. It is deliberately **not** held to the wider `BLAME_CLAIMS` set: the card is required to state
+  the measured leak, so it must stay free to name the offer or the funnel.
 - **SC-004**: Every FUNNEL_CONFIRMED output contains at least three distinct numeric values drawn from
   that row's own window.
+- **SC-004a**: No FUNNEL_CONFIRMED output renders as unknown a step it **could have measured**. Where the
+  underlying figure is present in the object's own window, the step prints it; a step is stated unavailable
+  only when its own inputs are genuinely absent. This is the form that holds on both routes into the
+  outcome — FR-006's rung precondition (which guarantees the arrival and conversion figures) and FR-009c's
+  W5 evidence path (which does not).
 - **SC-005**: The existing engine test suite and stored snapshot pass unchanged, except for entries
   that specifically encoded the old fallback string — those are updated deliberately and called out in
   the pull request.
 - **SC-006**: `npm run check` reports zero TypeScript errors.
 - **SC-007**: Exactly one full-width discovery-call button renders per page, regardless of how many
   rows carry funnel evidence.
-- **SC-008**: An account whose flagged rows are all INSUFFICIENT_DATA produces no account-level funnel
-  card.
+- **SC-008**: An account whose flagged rows are all INSUFFICIENT_DATA or NO_BLAME_ASSIGNABLE produces no
+  account-level funnel card.
 - **SC-009**: For every object in every fixture, verdict, rule code, reason and action are byte-identical
   to the pre-change output.
 
@@ -361,16 +488,64 @@ These land as failing tests **before** implementation.
 3. **Confirmed page leak.** Ad with 4,200 impressions, link click-through above the account median, 85%
    landing-page arrival rate, 1.4% conversion rate → broken page-conversion finding carrying the
    discovery-call link, text contains the conversion figure.
-4. **Fully clean, non-ad-fault rule.** Ad with every rung evaluable and clean and a fired rule outside
-   the ad-fault set → FUNNEL_CONFIRMED with the full ladder and the discovery-call link.
-5. **Non-sales exemption.** Exempt object on the NS1 / NS2 path → empty findings list, unchanged from
+4. **Broken page rung under an ad-fault rule.** Ad firing an ad-fault rule with rungs 1–4 unevaluable and
+   the page-conversion rung broken → the page-conversion finding renders its neutral wording, contains no
+   innocence claim, and still carries the discovery-call link. Its **contribution** to the account funnel
+   card is governed by FR-010b and asserted by scenario 14, not here — the finding stands on the row while
+   the row is excluded from the card.
+5. **Fully clean, funnel-fault rule — *synthetic selector unit test*.** Ad with every rung evaluable and
+   clean — including the landing-page arrival and page-conversion rungs — and a fired rule classified
+   funnel-fault → FUNNEL_CONFIRMED with the full ladder and the discovery-call link.
+   **This pairing is not producible by `runEngine`**: every funnel-fault code is coupled to a rung (W3
+   fires on exactly the condition that breaks the page-conversion rung, W4 on the condition that breaks
+   the arrival rung), so a real row firing one of them always has that rung broken and never reaches a
+   terminal outcome. The fixture is constructable only because `diagnose()` receives `fired` as a
+   parameter rather than re-deriving it. It exercises the **selector and the ladder builder**, not a
+   reachable production state. The production route into FUNNEL_CONFIRMED is scenario 7's W5 path.
+   See research §R3.3.
+6. **Funnel-fault rule, conversion rungs unevaluable — *synthetic selector unit test*.** Ad firing a
+   funnel-fault rule with no broken rung but an unevaluable landing-page arrival rung →
+   INSUFFICIENT_DATA shape (FR-006b), no discovery-call link, no innocence claim, no contribution to the
+   account funnel card. **Synthetic for the same reason as scenario 5** — it pins the Q3 boundary in the
+   selector so that a future funnel-fault code decoupled from the rung ladder inherits the correct
+   behaviour, rather than asserting a state today's rule set can reach.
+7. **W5 with complete evidence — the production FUNNEL_CONFIRMED path.** Campaign firing W5 with the
+   funnel-underperforming flag set and a measured cost per customer → FUNNEL_CONFIRMED, exactly one funnel
+   line, the cost-per-customer figure present in its text, one discovery-call link, and a contribution to
+   the account funnel card. **This scenario carries SC-004 and SC-004a**, because it is the only route a
+   real row can take into the outcome: assert at least three distinct numeric values drawn from the
+   campaign's own window (SC-004), and assert that every ladder step whose figure is present in that
+   window is printed rather than stated unknown (SC-004a), with only the genuinely absent steps of
+   FR-009c stated unavailable.
+8. **W5 with incomplete evidence.** Campaign firing W5 with the flag set but no measured cost per
+   customer → INSUFFICIENT_DATA (FR-009b), no discovery-call link, no account funnel card contribution.
+9. **Cost-driven rule, clean rungs.** Ad firing a cost-only rule (classified *neither*) with at least one
+   rung evaluable and none broken → NO_BLAME_ASSIGNABLE shape, no discovery-call link, text contains
+   neither an innocence claim nor an offer/funnel claim.
+10. **Non-sales exemption.** Exempt object on the NS1 / NS2 path → empty findings list, unchanged from
    Spec 013.
-6. **Distinctness.** Mixed snapshot of five flagged rows → assert pairwise distinctness of the diagnosis
+11. **Distinctness.** Mixed snapshot of five flagged rows → assert pairwise distinctness of the diagnosis
    text (SC-001).
-7. **Account CTA suppression.** Summary built from rows that are all INSUFFICIENT_DATA → no account-level
+12. **Account CTA suppression.** Summary built from rows that are all INSUFFICIENT_DATA → no account-level
    funnel card.
-8. **Verdict invariance.** Full-engine run over the existing fixtures → verdict, rule, reason and action
+13. **Verdict invariance.** Full-engine run over the existing fixtures → verdict, rule, reason and action
    identical to the pre-change baseline (SC-009).
+14. **Ad-fault row excluded from the account card.** Row with an ad-fault rule fired, rungs 1–4 unevaluable
+   and the page-conversion rung broken → the row's page-conversion finding stands with its discovery-call
+   link, but that row contributes nothing to the account-level card; adding a second row carrying a clean
+   funnel signal brings the card back (FR-010b, SC-003a).
+15. **No innocence without evaluation, swept.** Full-engine run over every fixture → no row with zero
+   evaluable rungs carries an innocence claim on any line (SC-002).
+16. **No self-contradiction, swept.** Full-engine run over every fixture → no row with a 🔴 kill from an
+   ad-fault rule carries a not-the-ads claim on any line, terminal outcomes and rung copy alike (SC-003).
+17. **Account card claims no ad health.** Account whose only funnel evidence is a *neither*-class row with a
+   broken page-conversion rung → the card renders, and its text contains none of the `AD_HEALTH_CLAIMS`
+   strings (FR-011a, SC-003b, contract C10.1).
+18. **Selector purity.** For each of the four terminal outcomes, re-run the diagnosis with the fired rule's
+   Arabic reason and action replaced by arbitrary strings — including one containing every banned
+   substring → the selected outcome and the presence of the discovery-call link are identical across every
+   run, and the fired result is not mutated. Proves the selection reads no Arabic copy (FR-015,
+   Constitution I).
 
 ---
 
@@ -384,7 +559,7 @@ These land as failing tests **before** implementation.
 
 ## Assumptions
 
-- **A1** — The three outcomes are appended only when **no** rung broke. When at least one rung broke, the
+- **A1** — The four outcomes are appended only when **no** rung broke. When at least one rung broke, the
   broken rungs are the diagnosis and no terminal outcome is added; this preserves today's behaviour for
   that case.
 - **A2** — "Zero rungs evaluable" counts rungs 1 through 5. Rung 6 is the terminal position itself and is
@@ -393,7 +568,7 @@ These land as failing tests **before** implementation.
   locks target derivation, not findings), so SC-005 is expected to hold with no snapshot edit. If any
   entry does change, it is called out in the pull request rather than silently re-recorded.
 - **A4** — The non-sales exemption hard-skip is evaluated at the call site, before the ladder runs, and
-  stays there. Exempt objects never reach any of the three outcomes.
+  stays there. Exempt objects never reach any of the four outcomes.
 - **A5** — The discovery-call destination is unchanged: <https://eslamsalah.com/team-discovery-call>.
 - **A6** — INSUFFICIENT_DATA text states the gate that is furthest from being met, not all five gates, so
   the advertiser reads one actionable number rather than a table.
@@ -427,7 +602,8 @@ with its own honest outcome?
 | C | Binary, defaulting to ad-fault. Only rules that explicitly exonerate the ad (the page/funnel/post-sale codes) permit FUNNEL_CONFIRMED. | Never over-claims innocence, and the booking button becomes rare. Risks under-serving Constitution VII by suppressing a genuine funnel outcome. |
 | Custom | Provide your own answer | Name the exact bucket per code, or name the default. |
 
-**Your choice**: _[to be resolved in `/speckit-clarify`]_
+**Your choice**: **A — Three-way: ad-fault / funnel-fault / neither.** Resolved 2026-08-26. Encoded in
+FR-006, FR-006a and FR-008; the *neither* bucket resolves to the NO_BLAME_ASSIGNABLE outcome.
 
 ---
 
@@ -449,7 +625,8 @@ terminal outcomes?
 | C | In scope, and strengthened: the rung's innocence wording additionally requires that the earlier rungs were *evaluated and clean*, not merely "did not fire". | Fixes both the ad-fault contradiction and the same absence-of-evidence bug one rung lower. Largest change to existing rung behaviour. |
 | Custom | Provide your own answer | |
 
-**Your choice**: _[to be resolved in `/speckit-clarify`]_
+**Your choice**: **C — In scope, and strengthened.** Resolved 2026-08-26. Encoded in FR-017, FR-017a
+and FR-017b; SC-003 is scoped to every line on the row.
 
 ---
 
@@ -469,7 +646,33 @@ rung is the cost-per-view rung satisfies FR-006 while being unable to satisfy FR
 | C | Require the page-conversion rung only (the rung that actually measures the funnel), with the arrival step rendered as unknown when unevaluable. | Middle ground: the conclusion is always backed by a real conversion figure; the ladder may be partially unknown above it. |
 | Custom | Provide your own answer | |
 
-**Your choice**: _[to be resolved in `/speckit-clarify`]_
+**Your choice**: **A — Require the landing-page arrival and page-conversion rungs to be evaluable and
+clean.** Resolved 2026-08-26. Encoded in FR-006, FR-006b, FR-007a and SC-004a.
+
+---
+
+### Q4 — Does campaign-level W5 satisfy FUNNEL_CONFIRMED on its own evidence?
+
+**Context**: Raised during `/speckit-clarify` after Q3 was answered. W5 fires from a measured campaign
+cost per customer plus the account's explicit funnel-underperforming declaration — evidence that does
+not come from the rung ladder at all. FR-006b now sends a funnel-fault rule with unevaluable
+arrival/conversion rungs to INSUFFICIENT_DATA, which would strip the CTA from exactly the campaigns
+W5 exists to catch, while FR-010 still names W5 as confirmed funnel evidence.
+
+**What we need to know**: Is W5 exempt from FR-006's rung precondition, and if so, on what terms?
+
+| Option | Answer | Implications |
+|--------|--------|--------------|
+| A | W5 is its own evidence path into FUNNEL_CONFIRMED, satisfied by the measured CPA plus the explicit funnel flag rather than the rung precondition. | Keeps FR-010's W5 clause and Constitution VII intact. Requires the line to carry the CPA figure so it is not a bare claim. |
+| B | No exemption — W5 obeys FR-006b like any funnel-fault rule. | Maximum consistency; in low-volume accounts it removes the W5 CTA almost everywhere and requires striking W5 from FR-010. |
+| C | W5 keeps a distinct fifth outcome. | Reintroduces the unclassified extra fallback FR-009a exists to eliminate. |
+
+**Your choice**: **A, with a conditional guard.** Resolved 2026-08-26. The W5 evidence path opens
+FUNNEL_CONFIRMED only when **both** the explicit funnel-underperforming flag is set **and** a measured
+campaign cost per customer exists. Absent either, the campaign resolves to INSUFFICIENT_DATA like any
+other row. The exemption must never open on the mere absence of an ad-fault rule — that would
+reintroduce, one level up at the campaign, the binary-default problem rejected in Q1. Encoded in
+FR-009a, FR-009b, FR-009c and FR-010.
 
 ---
 
