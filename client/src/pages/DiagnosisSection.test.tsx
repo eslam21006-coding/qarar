@@ -20,6 +20,12 @@ import type { EngineRow, Finding, Verdict, RuleCode, ObjectLevel } from "@shared
 // Builders
 // ============================================================
 
+/**
+ * A `Finding` defaulting to a non-primary `RUNG_CONVERSION` with no
+ * `ctaUrl`. Pass `ctaUrl` to exercise C7.2 (row-level CTAs render as
+ * inline links, never as buttons) and `text_ar` for the C5.2 numeral
+ * tests.
+ */
 function makeFinding(overrides: Partial<Finding> = {}): Finding {
   return {
     step: 5,
@@ -30,6 +36,11 @@ function makeFinding(overrides: Partial<Finding> = {}): Finding {
   };
 }
 
+/**
+ * An `EngineRow` carrying a kill verdict and one finding, so
+ * `DiagnosisSection` renders it. Override `level` and `name` for the
+ * FR-012 duplicate-row label test.
+ */
 function makeRow(overrides: Partial<EngineRow> = {}): EngineRow {
   return {
     id: "row-1",
@@ -223,7 +234,12 @@ describe("FindingRow — isolated", () => {
 // ============================================================
 
 describe("C5.2 — every figure in a finding is isolated LTR", () => {
-  /** The `.num` utility is what makes a run LTR — see client/src/index.css. */
+  /**
+   * Every `.num`-wrapped run in render order. `.num` is what makes a run
+   * LTR (`direction: ltr; unicode-bidi: isolate`, client/src/index.css),
+   * so asserting on this list asserts exactly which substrings were
+   * isolated — and, by its absence, which were left as sentence text.
+   */
   const nums = (c: Element) =>
     Array.from(c.querySelectorAll("span.num")).map(n => n.textContent);
 

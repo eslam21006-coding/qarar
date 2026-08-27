@@ -664,22 +664,35 @@ function FindingRow({ finding }: { finding: Finding }) {
   );
 }
 
-// Constitution III / contract C5.2 — every numeric value renders
-// left-to-right inside the RTL line, via the `.num` utility
-// (`direction: ltr; unicode-bidi: isolate` — client/src/index.css).
-//
-// Finding text arrives from the engine as ONE Arabic sentence with its
-// figures embedded, so unlike the table cells (which hold a bare
-// number) it cannot simply carry `className="num"`. It is split here
-// and each numeric run is isolated individually.
-//
-// A run is: an optional ASCII currency symbol, digits with thousands
-// separators and an optional decimal part, and an optional trailing
-// `%` / `+`. Arabic currency symbols (د.إ, ر.س, …) are deliberately
-// left outside the isolate — they are strong-RTL text and belong to
-// the sentence, not to the number.
+/**
+ * Matches one numeric run: an optional ASCII currency symbol, digits
+ * with thousands separators and an optional decimal part, and an
+ * optional trailing `%` or `+`.
+ *
+ * Arabic currency symbols (د.إ, ر.س, …) are deliberately NOT part of
+ * this pattern — they are strong-RTL text belonging to the sentence,
+ * not to the number, and pulling them inside the isolate would reorder
+ * them against the surrounding line.
+ */
 const FIGURE_RE = /[$£€]?\d[\d,]*(?:\.\d+)?%?\+?/g;
 
+/**
+ * Splits a diagnosis sentence so every figure in it renders
+ * left-to-right inside the RTL layout (Constitution III, contract C5.2).
+ *
+ * Each numeric run is wrapped in `.num`
+ * (`direction: ltr; unicode-bidi: isolate` — `client/src/index.css`);
+ * the Arabic between runs is returned untouched, so the sentence
+ * survives the split intact.
+ *
+ * A table cell holding a bare number can simply carry
+ * `className="num"`. Finding text cannot: it arrives from the engine as
+ * ONE Arabic sentence with its figures embedded, which is why it has to
+ * be split here rather than wrapped at the call site.
+ *
+ * @param text the finding's `text_ar`, or the account card's `reason_ar`
+ * @returns alternating plain-text and `.num`-wrapped nodes, in order
+ */
 function withLtrNumerals(text: string): ReactNode[] {
   const out: ReactNode[] = [];
   let last = 0;
@@ -697,8 +710,16 @@ function withLtrNumerals(text: string): ReactNode[] {
   return out;
 }
 
-// Spec 014 / T041 — level label map (FR-012). `EngineRow.level`
-// already carries the data; this only maps it to the Arabic label.
+/**
+ * Maps an object level to its Arabic label (spec 014 / T041, FR-012).
+ *
+ * `EngineRow.level` already carries the data — this exists only so two
+ * rows sharing a name are visually distinguishable by level, which is
+ * the duplicate-row confusion FR-012 addresses.
+ *
+ * @param level the row's object level
+ * @returns حملة / مجموعة / إعلان
+ */
 function levelLabel(level: "campaign" | "adset" | "ad"): string {
   if (level === "campaign") return "حملة";
   if (level === "adset") return "مجموعة";

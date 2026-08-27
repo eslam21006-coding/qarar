@@ -2084,6 +2084,26 @@ function round2(n: number): number {
 // Account summary + top-3 actions
 // ============================================================
 
+/**
+ * Builds the account-level summary from already-judged rows.
+ *
+ * Everything here is a fold over `rows` plus fields already present on
+ * the cached snapshot — no per-object judgement happens at this layer,
+ * and no Meta call is made (Constitution V).
+ *
+ * Spec 014 changed exactly one thing in here: the funnel-CTA predicate.
+ * `account_funnel_cta` is now selected from `Finding.outcome` and
+ * `RULE_FAULT[row.rule]` (contract C6.1 / C6.1a) instead of from the
+ * old `rule === "W5"` scan and Arabic-text matching, so the card can no
+ * longer be funded by a row whose fired rule blames the ad or whose
+ * ad-side rungs broke.
+ *
+ * @param rows     every judged object, already carrying its findings
+ * @param snapshot the cached account snapshot (baselines, currency, ...)
+ * @param targets  derived unit targets, used for the bleed figure
+ * @returns the account summary, including `account_funnel_cta` which is
+ *          `null` whenever no unexcluded row carries funnel evidence
+ */
 function buildSummary(
   rows: EngineRow[],
   snapshot: AccountSnapshotPayload,
@@ -2216,12 +2236,25 @@ function buildSummary(
   const top3 = actions.slice(0, 3).map((a, i) => ({ ...a, rank: i + 1 }));
 
   // Spec 014 / contract §C6.1, §C6.1a — account-level funnel card.
-  // Set when any row carries a `RUNG_CONVERSION` or `FUNNEL_CONFIRMED`
-  // finding AND is not excluded by the ad-blame predicate (the row's
-  // fired rule is ad-fault, or any of its rung-1..4 findings is an
-  // ad-side finding).
+
+  /**
+   * C6.1 condition A — the two outcomes that constitute *measured*
+   * funnel evidence. Selection is on `Finding.outcome`, never on
+   * Arabic copy (FR-015).
+   */
   const qualifyingOutcome = (outcome: DiagnosisOutcome): boolean =>
     outcome === "RUNG_CONVERSION" || outcome === "FUNNEL_CONFIRMED";
+  /**
+   * C6.1a — a row that cannot fund the card, on either of two grounds:
+   *
+   *   1. one of its rung-1..4 findings is an ad-side break, or
+   *   2. its fired rule is classified `ad-fault`.
+   *
+   * Condition 2 is not redundant. When rungs 1-4 were all unevaluable
+   * they produced no findings, so condition 1 has nothing to test
+   * against — and the card would otherwise claim the funnel is at fault
+   * on the strength of a row where the engine is naming the ad.
+   */
   const adBlameExcluded = (row: EngineRow): boolean => {
     if (RULE_FAULT[row.rule] === "ad-fault") return true;
     return row.findings.some(f =>

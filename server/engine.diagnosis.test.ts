@@ -52,6 +52,12 @@ export const BLAME_CLAIMS = [
 // that matter for each one.
 // ============================================================
 
+/**
+ * A `WindowMetrics` with every field at zero, so a scenario states only
+ * the metrics that steer the rung it is exercising. `cpa` defaults to
+ * `null` rather than `0`: null means "not measurable", which is what
+ * the C4 guard tests against.
+ */
 function makeWindow(p: Partial<WindowMetrics> = {}): WindowMetrics {
   return {
     spend: 0,
@@ -72,6 +78,10 @@ function makeWindow(p: Partial<WindowMetrics> = {}): WindowMetrics {
   };
 }
 
+/**
+ * A `NormalizedObject` at ad level with an empty 3-day window. Pass
+ * `level: "campaign"` for the C4 W5 path, which is campaign-scoped.
+ */
 function makeObject(overrides: Partial<NormalizedObject> = {}): NormalizedObject {
   return {
     id: "obj_1",
@@ -90,6 +100,12 @@ function makeObject(overrides: Partial<NormalizedObject> = {}): NormalizedObject
   } as NormalizedObject;
 }
 
+/**
+ * Account baselines with values chosen so the rung gates are easy to
+ * reason about: `ctrLinkMedian90 = 1.5` (rung 2's threshold) and
+ * `cpmAvg14 = 18` (so rung 1 breaks above 1.3 x 18 = 23.4). Override
+ * `cpmAvg14: null` to make rung 1 unevaluable per C1.4.
+ */
 function makeBaselines(overrides: Partial<Baselines> = {}): Baselines {
   return {
     ctrLinkMedian90: 1.5,
@@ -101,6 +117,16 @@ function makeBaselines(overrides: Partial<Baselines> = {}): Baselines {
   };
 }
 
+/**
+ * A fired `RuleResult` for `rule`. `reason` and `action` default to the
+ * rulebook definition, but nothing in `diagnose()` may read them —
+ * scenario 18 proves that by replacing both with arbitrary text.
+ *
+ * `extras.ctaUrl` exists to prove a NEGATIVE: `evaluateCampaign`
+ * attaches the discovery CTA to every W5 `Fired`, so a `Fired` carrying
+ * `ctaUrl` must not by itself open the C4 evidence path (contract
+ * C4.2a).
+ */
 function makeFired(
   rule: RuleCode,
   verdict: Verdict = "kill",
@@ -526,6 +552,16 @@ describe("Scenario 7b — FUNNEL_CONFIRMED's conversion figure matches the rung-
 // therefore attributable to the guard itself.
 // ============================================================
 
+/**
+ * The shared fixture for scenario 8. Rungs 1-3 are clean and rungs 4
+ * and 5 are UNEVALUABLE (`lpViews = 0`) — which is the point: with
+ * those two unevaluable, C2.2 clause 4 cannot match, so
+ * `FUNNEL_CONFIRMED` is reachable ONLY through the C4 guard and every
+ * difference between the cases is attributable to the guard itself.
+ *
+ * @param conversions 0 makes `effectiveCpa` null (guard condition 2
+ *                    unmet); any positive value makes it measurable
+ */
 function makeW5Campaign(conversions: number): NormalizedObject {
   return makeObject({
     level: "campaign",
@@ -1030,6 +1066,17 @@ describe("C3.4a — null median step says the account median is unavailable", ()
 // Helpers — build synthetic snapshots for scenarios 7, 8, 12, 14, 17
 // ============================================================
 
+/**
+ * A snapshot whose campaign is the only object that can fund the
+ * account card: every child ad-set and ad is pushed below every gate so
+ * it produces `INSUFFICIENT_DATA` and nothing else.
+ *
+ * @param htoUnderperforming mirrors the funnel flag the caller will pass
+ *                           to `runEngine`; kept as a parameter so the
+ *                           fixture reads the same way as the scenario
+ * @param campaignCpa        `null` zeroes the campaign's conversions, so
+ *                           no CPA is measurable and W5 cannot fire
+ */
 function buildW5Snapshot(htoUnderperforming: boolean, campaignCpa: number | null): import("../shared/qarar").AccountSnapshotPayload {
   const snap = buildDemoSnapshot();
   // Replace EVERY object — campaign, adset, ad — so the only
@@ -1087,9 +1134,13 @@ function buildW5Snapshot(htoUnderperforming: boolean, campaignCpa: number | null
   return snap;
 }
 
+/**
+ * A snapshot in which every object is below every gate, so the engine
+ * can only produce `INSUFFICIENT_DATA`. Used by scenario 12 to assert
+ * the account card is absent when no row carries evidence (FR-010a,
+ * SC-008).
+ */
 function buildLowVolumeSnapshot(): import("../shared/qarar").AccountSnapshotPayload {
-  // All ads are below every gate; the engine should produce
-  // INSUFFICIENT_DATA findings only and the summary card should be null.
   const snap = buildDemoSnapshot();
   snap.objects = snap.objects.map(o => ({
     ...o,
@@ -1107,15 +1158,21 @@ function buildLowVolumeSnapshot(): import("../shared/qarar").AccountSnapshotPayl
   return snap;
 }
 
+/**
+ * A snapshot with exactly one ad-set firing K3 (ad-fault), rungs 1-4
+ * unevaluable and rung 5 broken — the shape C6.1a condition 2 exists
+ * for. Condition 1 alone cannot catch it: rungs 1-4 produced no
+ * findings, so there is no ad-side finding to test against.
+ *
+ * Every other object is below every gate, so the ad-fault row is the
+ * only candidate to fund the account card.
+ *
+ * @param secondQualifyingRow adds a second, *neither*-class ad-set that
+ *        also carries a broken page-conversion rung. The card must then
+ *        return — proving the exclusion is per-row, not per-account,
+ *        which is the distinction FR-010b turns on
+ */
 function buildAdFaultRowWithRung5(secondQualifyingRow = false): import("../shared/qarar").AccountSnapshotPayload {
-  // A snapshot where exactly one ad-set has K3 (ad-fault) firing,
-  // rungs 1–4 unevaluable, rung 5 broken.
-  // We construct a single ad-set with low impressions but high
-  // lpViews; the rule that fires is ad-fault (K3).
-  // The other objects are below every gate so they don't generate
-  // qualifying findings.
-  // When `secondQualifyingRow` is true, add a second ad-set that
-  // carries a RUNG_CONVERSION (K2 = neither-class + broken page-conversion).
   const snap = buildDemoSnapshot();
   snap.objects = snap.objects.map(o => {
     if (o.level === "adset" && o.id === "as_k1") {
@@ -1192,9 +1249,14 @@ function buildAdFaultRowWithRung5(secondQualifyingRow = false): import("../share
   return snap;
 }
 
+/**
+ * A snapshot whose only funnel evidence is a *neither*-class row with a
+ * broken page-conversion rung and no broken ad-side rung. The card MUST
+ * render for it — and its copy must still carry no ad-health claim,
+ * because rungs 1-4 were never evaluable and so nothing was measured
+ * about the ads (contract C6.4, SC-003b).
+ */
 function buildNeitherRowFundsCard(): import("../shared/qarar").AccountSnapshotPayload {
-  // A snapshot whose only funnel evidence is a neither-class row
-  // with a broken page-conversion rung (no ad-side rungs broke).
   const snap = buildDemoSnapshot();
   snap.objects = snap.objects.map(o => {
     if (o.level === "adset" && o.id === "as_k1") {
