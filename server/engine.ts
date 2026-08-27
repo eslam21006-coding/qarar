@@ -990,7 +990,7 @@ function insufficientDataText(o: NormalizedObject): string {
       current: Math.round(w.impressions),
     },
     {
-      label: "مرات الظهور للحكم على الهوك",
+      label: "مرات الظهور للحكم على بداية الإعلان",
       need: ctrGate,
       current: Math.round(w.impressions),
     },

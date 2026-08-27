@@ -19,7 +19,7 @@ import {
   Settings as SettingsIcon,
   Stethoscope,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useParams } from "wouter";
 
@@ -600,7 +600,7 @@ function DiagnosisSection({
         {summary.account_funnel_cta && (
           <div className="rounded-lg border-2 border-primary/40 bg-primary/5 p-4">
             <p className="text-sm font-bold leading-relaxed">
-              {summary.account_funnel_cta.reason_ar}
+              {withLtrNumerals(summary.account_funnel_cta.reason_ar)}
             </p>
             {/* C7.1 / SC-007 — the one full-width booking button. */}
             <Button asChild className="mt-3 w-full font-bold">
@@ -648,7 +648,7 @@ function FindingRow({ finding }: { finding: Finding }) {
         }`}
       >
         {finding.primary && <span className="ml-1 text-primary">★</span>}
-        {finding.text_ar}
+        {withLtrNumerals(finding.text_ar)}
       </p>
       {finding.ctaUrl && (
         <a
@@ -664,6 +664,39 @@ function FindingRow({ finding }: { finding: Finding }) {
   );
 }
 
+// Constitution III / contract C5.2 — every numeric value renders
+// left-to-right inside the RTL line, via the `.num` utility
+// (`direction: ltr; unicode-bidi: isolate` — client/src/index.css).
+//
+// Finding text arrives from the engine as ONE Arabic sentence with its
+// figures embedded, so unlike the table cells (which hold a bare
+// number) it cannot simply carry `className="num"`. It is split here
+// and each numeric run is isolated individually.
+//
+// A run is: an optional ASCII currency symbol, digits with thousands
+// separators and an optional decimal part, and an optional trailing
+// `%` / `+`. Arabic currency symbols (د.إ, ر.س, …) are deliberately
+// left outside the isolate — they are strong-RTL text and belong to
+// the sentence, not to the number.
+const FIGURE_RE = /[$£€]?\d[\d,]*(?:\.\d+)?%?\+?/g;
+
+function withLtrNumerals(text: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  for (const m of Array.from(text.matchAll(FIGURE_RE))) {
+    const i = m.index ?? 0;
+    if (i > last) out.push(text.slice(last, i));
+    out.push(
+      <span className="num" key={`${i}-${m[0]}`}>
+        {m[0]}
+      </span>
+    );
+    last = i + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
 // Spec 014 / T041 — level label map (FR-012). `EngineRow.level`
 // already carries the data; this only maps it to the Arabic label.
 function levelLabel(level: "campaign" | "adset" | "ad"): string {
@@ -675,7 +708,7 @@ function levelLabel(level: "campaign" | "adset" | "ad"): string {
 // Spec 014 / T037 — named exports so the component test can render
 // them in isolation. The functions remain used internally; this
 // only re-exports them.
-export { DiagnosisSection, FindingRow, levelLabel };
+export { DiagnosisSection, FindingRow, levelLabel, withLtrNumerals };
 
 // ============================================================
 // US8 — dedicated promotion list for S1-eligible ads

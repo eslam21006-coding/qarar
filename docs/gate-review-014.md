@@ -11,9 +11,9 @@
 > would have reported the step-4 verb defect as live when it is fixed. This review audits
 > `35e21b9`.
 
-**Final verdict: MERGE** — with two non-blocking CONCERNs recorded below (G1, G2). No principle
-fails. Every hard invariant holds against live source and live runs, verified independently of
-the impl-log's claims.
+**Final verdict: MERGE.** No principle fails. Every hard invariant holds against live source and
+live runs, verified independently of the impl-log's claims. Two copy-layer CONCERNs (G1, G2) were
+found and, rather than deferred, **fixed and mutation-verified in this pass** — see *Resolution*.
 
 ---
 
@@ -23,7 +23,7 @@ the impl-log's claims.
 |---|-----------|---------|----------|
 | I | Deterministic engine, fixed order | **PASS** | All 11 pipeline functions byte-identical to `main` (hash-compared); selector branches are table lookups and threshold comparisons only; scenario 18 + BREAK 5 pass |
 | II | Rule codes verbatim, faded/tooltip only | **PASS** | `RULE_FAULT` never crosses to the client (grep, zero hits in `client/src`); `AD_FAULT_COPY` (`server/engine.ts:956-971`) restates reasoning, prints no code |
-| III | Simple Arabic, LTR numerals | **CONCERN** | Copy is clean 6th-grade MSA with one exception (**G1**, `server/engine.ts:993`); the `.num` LTR mechanism is not applied to finding text (**G2**, `Dashboard.tsx:659-668`) |
+| III | Simple Arabic, LTR numerals | **PASS** (was CONCERN) | Copy is clean 6th-grade MSA. Two gaps found — **G1** jargon at `server/engine.ts:993`, **G2** missing `.num` wrapping — **both fixed in this pass**; see *Resolution* |
 | IV | Hard data isolation | **PASS** | Zero added lines touch `db.`, drizzle, `getDb`, or `userId` across the whole diff |
 | V | Read-only by default | **PASS** | `server/meta.ts`, `server/db.ts`, `drizzle/` untouched; no added `fetch`/Graph field/write path |
 | VI | Fixed verdict vocabulary | **PASS** | `Verdict` union byte-identical to `main`; `DiagnosisOutcome` appears only at `shared/qarar.ts:537` on `Finding`; `EngineRow.verdict` unchanged; no badge renders it |
@@ -97,7 +97,7 @@ e.g. `K3 → "عدد كبير شاهد الإعلان وأقل من نصف في 
 must classify to stay total. That gap predates this feature (NS rules arrived with spec 013);
 this PR does not widen it. Worth a constitution amendment separately.
 
-### III — Simple Arabic, LTR numerals — **CONCERN** (G1, G2)
+### III — Simple Arabic, LTR numerals — **PASS** (G1 and G2 found here, both fixed)
 
 I read all **45** new Arabic strings this feature adds. The register is genuinely 6th-grade MSA,
 and notably avoids the metric names: «سعر الظهور» for CPM, «نسبة الضغط» for CTR,
@@ -373,12 +373,29 @@ the guard is campaign-scoped as C4 requires.
 
 | ID | Severity | File:line | Defect |
 |----|----------|-----------|--------|
-| **G1** | CONCERN | `server/engine.ts:993` | «الهوك» — transliterated marketing jargon in new user-visible copy, against Principle III. Newly introduced (main: 1 occurrence, all in FR-013-protected verdict copy; HEAD: 2). Suggested: «مرات الظهور للحكم على بداية الإعلان» |
-| **G2** | CONCERN | `client/src/pages/Dashboard.tsx:659-668` | Finding text is rendered without the `.num` LTR mechanism, so C5.2 / T018 / T033 are recorded as satisfied when the code does not do it. Not a regression (main is identical), but this feature makes that line the densest numeric string the product prints |
+| **G1** | ~~CONCERN~~ **FIXED** in `4c3372e`+ | `server/engine.ts:993` | «الهوك» — transliterated marketing jargon in new user-visible copy, against Principle III. Newly introduced (main: 1 occurrence, all in FR-013-protected verdict copy; HEAD: 2). Suggested: «مرات الظهور للحكم على بداية الإعلان» |
+| **G2** | ~~CONCERN~~ **FIXED** in `4c3372e`+ | `client/src/pages/Dashboard.tsx` | Finding text is rendered without the `.num` LTR mechanism, so C5.2 / T018 / T033 are recorded as satisfied when the code does not do it. Not a regression (main is identical), but this feature makes that line the densest numeric string the product prints |
 | **G3** | fixed in this pass | `contracts/diagnosis-outcomes.md` C4.4a | The contract still declared the step-4 noun an open follow-on after `d0a9a77` fixed it — a normative document asserting a defect the code no longer has. Corrected |
 
-Neither G1 nor G2 touches a verdict, leaks data, or produces a dishonest claim. Both are copy-layer
-issues that can ship and be fixed in a follow-up; neither is grounds to hold the merge.
+Neither G1 nor G2 touched a verdict, leaked data, or produced a dishonest claim, so neither was
+grounds to hold the merge. **Both were nevertheless fixed rather than deferred** — see the
+*Resolution* section below.
+
+## Resolution — G1 and G2 fixed
+
+**G1.** `server/engine.ts:993` now reads «مرات الظهور للحكم على بداية الإعلان». «الهوك» survives at
+`:499` only, inside K3's verdict `reason`, which FR-013 freezes byte-identical. A sweep over 24
+codes x 4 archetypes x 8 metric shapes asserts no *finding* carries a transliterated term, and its
+fixture list includes the shape that actually selects the rung-2 gate label — without that shape the
+sweep passed with «الهوك» restored, which is to say it proved nothing.
+
+**G2.** `withLtrNumerals()` (`client/src/pages/Dashboard.tsx`) splits finding text on numeric runs
+and wraps each in `.num`, applied to `FindingRow` and to the account card. C5.2 is now true of the
+code rather than only of the contract. Five tests cover it, including the full `FUNNEL_CONFIRMED`
+ladder (asserting the exact seven figures isolated, and that the sentence survives the split intact)
+and an Arabic-currency case confirming `د.إ` stays outside the isolate as strong-RTL sentence text.
+
+Both fixes are mutation-verified: reverting G1 fails 2 tests, reverting G2 fails 3.
 
 ---
 
@@ -414,5 +431,5 @@ suite, so CI keyed on the exit code will not catch either failure.
 Nothing here blocks. The verdict pipeline is provably untouched — verified by running both engines
 side by side, not by trusting a self-generated baseline. The four self-review fixes are
 mutation-verified, not merely green. All four break attempts held, including a 12,672-finding sweep
-of CTA discipline that produced every one of the nine outcomes. G1 and G2 are copy-layer concerns
-worth a follow-up ticket, not a hold.
+of CTA discipline that produced every one of the nine outcomes. G1 and G2 were copy-layer concerns; both are
+now fixed and covered by tests that fail without the fix.

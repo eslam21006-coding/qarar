@@ -256,7 +256,17 @@ nothing, and a hand-built one is indistinguishable from the rule's own output.
 no marketing-speak.
 
 **C5.2** — Every numeric value in every outcome renders left-to-right inside the RTL layout, via the
-existing `.num` mechanism used by the current rung copy. This is load-bearing for `FUNNEL_CONFIRMED`,
+`.num` utility (`direction: ltr; unicode-bidi: isolate`, `client/src/index.css`).
+
+*Correction (gate review G2):* an earlier draft of this clause said "via the existing `.num`
+mechanism **used by the current rung copy**". That premise was false — finding text was rendered as
+a bare string, with no `.num`, both before and after this feature, so the clause described an
+intention rather than the code. Finding text is one Arabic sentence with figures embedded, so it
+cannot simply carry `className="num"` the way a table cell holding a bare number can: it MUST be
+split and each numeric run isolated individually. `withLtrNumerals()` in
+`client/src/pages/Dashboard.tsx` is that split, and it is applied to both `FindingRow` and the
+account-level card. Arabic currency symbols stay OUTSIDE the isolate — they are strong-RTL text
+belonging to the sentence, not to the number. This is load-bearing for `FUNNEL_CONFIRMED`,
 which is the densest numeric string the product prints.
 
 **C5.3** — Currency figures go through the engine's existing `money()` helper bound to the account

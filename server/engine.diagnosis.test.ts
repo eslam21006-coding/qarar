@@ -1229,3 +1229,69 @@ function buildNeitherRowFundsCard(): import("../shared/qarar").AccountSnapshotPa
   });
   return snap;
 }
+
+// ============================================================
+// Constitution III — no transliterated marketing jargon in
+// diagnosis copy (gate review G1)
+// ============================================================
+
+describe("Constitution III — diagnosis copy carries no transliterated jargon", () => {
+  /**
+   * Terms the rulebook uses internally that a 6th-grade reader will not
+   * know. The verdict pipeline still contains «الهوك» in K3's `reason`
+   * (server/engine.ts:~499) and is frozen byte-identical by FR-013 —
+   * this sweep therefore covers FINDINGS only, which is what spec 014
+   * authors.
+   */
+  const JARGON = ["الهوك", "الكرييتف", "الاوديانس", "الأوديانس", "الكونفيرجن", "الليد", "الإنجيچمنت"];
+
+  it("no finding, on any rule or archetype, contains a transliterated term", () => {
+    const GRID: Partial<WindowMetrics>[] = [
+      {},
+      { impressions: 800, linkClicks: 12 },
+      { impressions: 600, linkClicks: 5, ctrLink: 1.5, cpm: 5 },
+      { impressions: 5000, linkClicks: 200, ctrLink: 2.0, ctrAll: 2.0, cpm: 5, lpViews: 180, conversions: 5 },
+      { impressions: 5000, linkClicks: 200, ctrLink: 2.0, ctrAll: 2.0, cpm: 5, lpViews: 0, conversions: 50, spend: 1000, cpa: 20 },
+      { impressions: 5000, linkClicks: 200, ctrLink: 0.2, ctrAll: 3.0, cpm: 90, lpViews: 40 },
+      { impressions: 50, linkClicks: 30, ctrLink: 0.1, cpm: 5, lpViews: 150, conversions: 0 },
+      // selects the rung-2 gate label in `insufficientDataText`
+      { impressions: 100, linkClicks: 45, lpViews: 95, cpm: 5 },
+    ];
+    let seen = 0;
+    for (const code of Object.keys(RULES) as RuleCode[]) {
+      for (const archetype of ["paid_lto", "free_lead", "appointment", "webinar"] as const) {
+        for (const g of GRID) {
+          const findings = diagnose(
+            makeObject({ level: "campaign", w3d: makeWindow({ ...g, leadConversions: g.conversions } as any) }),
+            makeBaselines(), archetype, makeFired(code, "watch"), true);
+          for (const f of findings) {
+            seen++;
+            for (const j of JARGON) {
+              expect(f.text_ar, `${code}/${archetype} finding leaked "${j}"`).not.toContain(j);
+            }
+          }
+        }
+      }
+    }
+    expect(seen).toBeGreaterThan(500);
+  });
+
+  it("the INSUFFICIENT_DATA gate label names the ad's opening in plain Arabic", () => {
+    // `insufficientDataText` names only the gate FURTHEST from being met,
+    // as a fraction of that gate. To select the rung-2 gate — the one
+    // that used to be labelled «الهوك» — the other three must be nearly
+    // met: impressions 100/1000 = 0.90 short, vs link clicks 45/50 =
+    // 0.10 short and landing-page views 95/100 = 0.05 short. (The rung-1
+    // gate is 501, so it is only 0.80 short and does not win either.)
+    const o = makeObject({
+      w3d: makeWindow({ impressions: 100, linkClicks: 45, lpViews: 95, cpm: 5 }),
+    });
+    const f = diagnose(o, makeBaselines(), "paid_lto", makeFired("K3"));
+    expect(f).toHaveLength(1);
+    expect(f[0].outcome).toBe("INSUFFICIENT_DATA");
+    // This assertion is only meaningful because the rung-2 gate is the
+    // one selected — assert that first, or the test proves nothing.
+    expect(f[0].text_ar).toContain("بداية الإعلان");
+    expect(f[0].text_ar).not.toContain("الهوك");
+  });
+});
