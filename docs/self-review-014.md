@@ -4,7 +4,7 @@
 **Branch**: `014-diagnosis-evidence-fallbacks` · worktree `D:\Qarar-diagnosis-evidence`
 **Date**: 2026-08-26
 
-> ### ⚠️ Status: **PRE-REMEDIATION — archived**
+> ## ⚠️ Status: **PRE-REMEDIATION — archived**
 >
 > Every defect below (F1–F6) was **fixed** in the remediation pass of
 > 2026-08-26. See *Self-review remediation pass* in

@@ -225,11 +225,16 @@ claim — the precise dishonesty this feature exists to remove, relocated into t
 archetype is therefore a **required** argument to the ladder builder, never defaulted and never
 assumed to be `paid_lto`.
 
-*Known follow-on, out of scope here:* step 4's verb is «اشتروا» ("bought") on every archetype, and
-rung 5's own broken-wording at `server/engine.ts:~1200` says «يشترون» likewise. For an
-appointment/webinar account the counted unit is a booked lead, not a purchase. The **figure** is now
-correct on every archetype; the **noun** is not. Changing it alters existing rung-5 finding copy and
-belongs in its own change.
+**The NOUN is bound by this clause too, not only the figure.** Copy that says «اشتروا» ("bought")
+over a `leadConversions` numerator mislabels the very figure the ladder just computed, which is the
+same contradiction one level down. `conversionVerb(archetype, tense)` (`server/engine.ts:~267`) is
+the single source for that noun, and both the ladder's step 4 and **both** rung-5 wordings read it.
+Perfect form for the ladder, imperfect for rung 5. Asserted by required scenario 7b and by the gate
+review's BREAK 1 sweep over all four archetypes.
+
+*(This paragraph previously recorded the noun as a deferred follow-on. It was fixed in `d0a9a77`
+after CodeRabbit raised it on PR #30; the text is updated so the contract does not assert a defect
+the code no longer has.)*
 
 **C4.5** — Exactly one funnel line per row. The original campaign block
 (`server/engine.ts:~1451-1466`) appended a second step-6 finding when `diagnose()` did not already
