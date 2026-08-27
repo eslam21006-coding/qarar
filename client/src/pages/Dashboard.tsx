@@ -19,7 +19,7 @@ import {
   Settings as SettingsIcon,
   Stethoscope,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Link, useLocation, useParams } from "wouter";
 
@@ -600,9 +600,10 @@ function DiagnosisSection({
         {summary.account_funnel_cta && (
           <div className="rounded-lg border-2 border-primary/40 bg-primary/5 p-4">
             <p className="text-sm font-bold leading-relaxed">
-              {summary.account_funnel_cta.reason_ar}
+              {withLtrNumerals(summary.account_funnel_cta.reason_ar)}
             </p>
-            <Button asChild className="mt-3 font-bold">
+            {/* C7.1 / SC-007 — the one full-width booking button. */}
+            <Button asChild className="mt-3 w-full font-bold">
               <a
                 href={summary.account_funnel_cta.ctaUrl}
                 target="_blank"
@@ -621,6 +622,9 @@ function DiagnosisSection({
           >
             <div className="mb-2 flex items-center gap-2">
               <VerdictBadge verdict={r.verdict} rule={r.rule} />
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
+                {levelLabel(r.level)}
+              </span>
               <span className="truncate text-sm font-bold">{r.name}</span>
             </div>
             <div className="space-y-1.5">
@@ -644,22 +648,88 @@ function FindingRow({ finding }: { finding: Finding }) {
         }`}
       >
         {finding.primary && <span className="ml-1 text-primary">★</span>}
-        {finding.text_ar}
+        {withLtrNumerals(finding.text_ar)}
       </p>
       {finding.ctaUrl && (
-        <Button asChild size="sm" className="mt-1.5 font-bold">
-          <a
-            href={finding.ctaUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            احجز مكالمة تشخيصية مجانية
-          </a>
-        </Button>
+        <a
+          href={finding.ctaUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-1 inline-block text-xs font-medium text-primary underline underline-offset-2"
+        >
+          احجز مكالمة تشخيصية مجانية
+        </a>
       )}
     </div>
   );
 }
+
+/**
+ * Matches one numeric run: an optional ASCII currency symbol, digits
+ * with thousands separators and an optional decimal part, and an
+ * optional trailing `%` or `+`.
+ *
+ * Arabic currency symbols (د.إ, ر.س, …) are deliberately NOT part of
+ * this pattern — they are strong-RTL text belonging to the sentence,
+ * not to the number, and pulling them inside the isolate would reorder
+ * them against the surrounding line.
+ */
+const FIGURE_RE = /[$£€]?\d[\d,]*(?:\.\d+)?%?\+?/g;
+
+/**
+ * Splits a diagnosis sentence so every figure in it renders
+ * left-to-right inside the RTL layout (Constitution III, contract C5.2).
+ *
+ * Each numeric run is wrapped in `.num`
+ * (`direction: ltr; unicode-bidi: isolate` — `client/src/index.css`);
+ * the Arabic between runs is returned untouched, so the sentence
+ * survives the split intact.
+ *
+ * A table cell holding a bare number can simply carry
+ * `className="num"`. Finding text cannot: it arrives from the engine as
+ * ONE Arabic sentence with its figures embedded, which is why it has to
+ * be split here rather than wrapped at the call site.
+ *
+ * @param text the finding's `text_ar`, or the account card's `reason_ar`
+ * @returns alternating plain-text and `.num`-wrapped nodes, in order
+ */
+function withLtrNumerals(text: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  for (const m of Array.from(text.matchAll(FIGURE_RE))) {
+    const i = m.index ?? 0;
+    if (i > last) out.push(text.slice(last, i));
+    out.push(
+      <span className="num" key={`${i}-${m[0]}`}>
+        {m[0]}
+      </span>
+    );
+    last = i + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+/**
+ * Maps an object level to its Arabic label (spec 014 / T041, FR-012).
+ *
+ * `EngineRow.level` already carries the data — this exists only so two
+ * rows sharing a name are visually distinguishable by level, which is
+ * the duplicate-row confusion FR-012 addresses.
+ *
+ * @param level the row's object level
+ * @returns حملة / مجموعة / إعلان
+ */
+function levelLabel(level: "campaign" | "adset" | "ad"): string {
+  if (level === "campaign") return "حملة";
+  if (level === "adset") return "مجموعة";
+  return "إعلان";
+}
+
+// Spec 014 / T037 — named exports so the component test can render
+// them in isolation. The functions remain used internally; this
+// only re-exports them.
+export { DiagnosisSection, FindingRow, levelLabel, withLtrNumerals };
 
 // ============================================================
 // US8 — dedicated promotion list for S1-eligible ads
