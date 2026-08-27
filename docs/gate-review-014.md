@@ -84,9 +84,23 @@ Outcomes and `ctaUrl` presence identical across every permutation.
 The new classification is server-internal and never rendered:
 
 ```text
-$ grep -rn 'RULE_FAULT|ad-fault|funnel-fault' client/src/
-  RULE_FAULT never reaches the client
+# positive control first — the pattern must be capable of matching
+$ grep -rEn 'RULE_FAULT|ad-fault|funnel-fault' server/engine.ts | head -3
+33:  RULE_FAULT,
+951: * ad-fault rules. Restates each rule's own reasoning without echoing
+1215:    // ad-fault AND rungs 1-4 are ALL `clean`. C8.3 / FR-017b: the
+
+# now the real scan
+$ grep -rEn 'RULE_FAULT|ad-fault|funnel-fault' client/src/
+exit=1                                    # genuinely no hits
 ```
+
+> **Correction (CodeRabbit, PR #30).** An earlier draft of this block pasted the pattern
+> unescaped under default `grep`, where BRE treats `|` as a literal — so the documented command
+> searched for one literal string and would have printed nothing *whether or not* `RULE_FAULT`
+> reached the client. The conclusion was right (the command I actually ran used `\|`), but the
+> pasted evidence proved nothing. Re-run above with `-E` and a **positive control**, so a reader
+> can see the pattern matches where the token exists before trusting the empty result.
 
 `AD_IS_THE_PROBLEM` restates reasoning through a code-keyed map without printing the code —
 e.g. `K3 → "عدد كبير شاهد الإعلان وأقل من نصف في المئة ضغط عليه — بداية الإعلان لا توقف أحدًا، غيّر التصميم"`
@@ -299,9 +313,20 @@ BREAK5: {"ad-fault":["K1","K3","K4","F1","F2"],
 omitted. `K7` is `neither`. No `??`/`||` fallback anywhere:
 
 ```text
-$ grep -rn '\?\?\s*"neither"|\|\|\s*"neither"' --include=*.ts --include=*.tsx .
-(no output — exit 1)
+# positive control — a fixture holding the two shapes we forbid, plus two near-misses
+$ printf '%s
+' 'x ?? "neither"' '|| "neither"' '?? "other"' 'xx "neither"' > ctl.txt
+$ grep -En '(\?\?|\|\|)[[:space:]]*"neither"' ctl.txt
+1:x ?? "neither"
+2:|| "neither"                            # matches exactly the two it should, not the near-misses
+
+# now the real scan
+$ grep -rEn '(\?\?|\|\|)[[:space:]]*"neither"' --include=*.ts --include=*.tsx .
+exit=1                                    # no fallback anywhere
 ```
+
+Same correction as above: the earlier draft's BRE pattern could not express the alternation, and
+`\s` plus an unescaped `|` would also have matched unrelated text had anything been there to match.
 
 Totality is compiler-enforced by `Record<RuleCode, RuleFaultClass>` and runtime-checked.
 
@@ -358,10 +383,23 @@ I tried to break four things. All four held.
 
 | Attempt | Method | Result |
 |---------|--------|--------|
-| **FUNNEL_CONFIRMED printing a figure that contradicts its evidence (F1 class)** | For each archetype, built a fixture where purchases (2.0%) and leads (25.0%) **disagree**, then asserted the printed % equals the rung-5 numerator and the other value never appears | **HELD** on `appointment`, `webinar`, `paid_lto`. `free_lead`'s 15% floor broke rung 5 on that grid, so I added BREAK 1b with a fixture clearing it — `free_lead` correctly prints `25.0%` from `conversions`, not `2.0%` from `leadConversions`. **All four archetypes confirmed closed**, figure *and* noun |
+| **FUNNEL_CONFIRMED printing a figure that contradicts its evidence (F1 class)** | Built fixtures where the two source fields **disagree**, then asserted the printed % equals the one `effectiveConversions()` selects for that archetype and the other value never appears. `effectiveConversions()` reads `leadConversions` for **`appointment` / `webinar` only**; `paid_lto` and `free_lead` read `conversions`. The two fixtures therefore assign the values in opposite order — see the note below the table | **HELD** on `appointment`, `webinar`, `paid_lto`. `free_lead`'s 15% rung-5 floor broke the rung on BREAK 1's grid, so BREAK 1b uses a fixture that clears it. **All four archetypes confirmed closed**, figure *and* noun |
 | **Ad-fault row funding the account card (C6.1a cond. 2)** | All 5 ad-fault codes × 4 archetypes with a broken rung 5; plus a `runEngine` sweep asserting that whenever the card is set, some non-excluded row funds it | **HELD.** The row keeps its `RUNG_CONVERSION` finding and its CTA (C8.3) but never carries an ad-health claim, and never funds the card alone |
 | **Funnel flag still inferable (F2 class)** | Passed a W5 `Fired` **carrying `ctaUrl`** with the flag `false`; omitted the parameter entirely; tried W3/W4 with the flag set; tried ad- and adset-level W5 | **HELD.** All close to `INSUFFICIENT_DATA`. The default is `false`, so it fails closed. The path requires `fired.rule === "W5" && o.level === "campaign"` **and** the explicit flag **and** a non-null `effectiveCpa` |
 | **INSUFFICIENT_DATA / NO_BLAME_ASSIGNABLE carrying a ctaUrl** | The 12,672-finding sweep above, including `fired.ctaUrl` pre-set to the discovery URL to try to leak it through | **HELD.** Zero occurrences across 4,456 such findings |
+
+**The two BREAK 1 fixtures, field by field** (CodeRabbit flagged the original wording as
+ambiguous — it called 2.0% "purchases" and 25.0% "leads" as though that held for every archetype,
+which inverts the `free_lead` case):
+
+| Fixture | `conversions` | `leadConversions` | `effectiveConversions()` selects | Ladder must print | and must not print |
+|---------|---------------|-------------------|----------------------------------|-------------------|--------------------|
+| BREAK 1 — `appointment`, `webinar` | 4 → 2.0% | 50 → 25.0% | `leadConversions` | `25.0%` | `2.0%` |
+| BREAK 1 — `paid_lto` | 4 → 2.0% | 50 → 25.0% | `conversions` | `2.0%` | `25.0%` |
+| BREAK 1b — `free_lead` | 50 → 25.0% | 4 → 2.0% | `conversions` | `25.0%` | `2.0%` |
+
+The `free_lead` row is inverted deliberately: its rung-5 floor is 15%, so the value the selector
+reads has to clear it for the ladder to be reached at all.
 
 Two further attempts, not requested but worth recording: a non-W5 funnel-fault code (`W3`/`W4`)
 cannot reach the C4 path even with the flag set, and an **ad- or adset-level** W5 cannot either —
