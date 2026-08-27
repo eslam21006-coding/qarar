@@ -246,3 +246,95 @@ untouched by this feature: it throws `Database connection failed` in
 `beforeAll` because no database is reachable here. It failed identically
 before this pass. Note vitest still exits `0` with a failed suite, so CI
 keyed on the exit code would not catch it — worth a separate look.
+
+
+---
+
+# Codex review threads on PR #30 (2026-08-27)
+
+Three threads from `chatgpt-codex-connector` were still `isResolved: false`
+on `server/engine.ts`. They are a separate reviewer from CodeRabbit, which
+is why CodeRabbit's summary read clean while these stayed open. Two were
+real logic defects; the third was already closed by earlier work.
+
+| Point | file:line | Verdict | Evidence | Thread resolved? |
+|-------|-----------|---------|----------|------------------|
+| Codex-1 (P1) hook/mismatch not mutually exclusive | `server/engine.ts:172` | **FIXED** | `Codex-1 — RUNG_HOOK and RUNG_MISMATCH never appear together` (4 tests) · revert → **3 fail** | yes |
+| Codex-2 (P2) LTR isolation on finding text | `server/engine.ts:1093` | **ALREADY-FIXED** | `client/src/pages/Dashboard.tsx:651` routes `finding.text_ar` through `withLtrNumerals()`; `:603` does the same for the account card. Covered by `C5.2 — every figure in a finding is isolated LTR` (5 tests) · revert → **3 fail** | yes |
+| Codex-3 (P2) W5 ladder omits a zero link-click count | `server/engine.ts:1099` | **FIXED** | `Codex-3 — the link-click step prints zero rather than dropping it` (2 tests) · revert → **1 fail** | yes |
+
+## Codex-1 — the implementation contradicted its own research table
+
+`evaluateRungs` assigned rung 2 from the link CTR alone, then let the
+next block break rung 3 as well. A row matching both shapes therefore
+carried `RUNG_HOOK` ("the design itself is bad") **and** `RUNG_MISMATCH`
+("the opening is fine, the message or CTA is bad") at once — two
+diagnoses that contradict each other, on the same row, about the same
+creative.
+
+Research §R2's rung table is unambiguous and the code did not implement
+it:
+
+> | 2 | ... | **broken when** gate met, `ctrLink < threshold` **and the
+> rung-3 mismatch shape does *not* hold** |
+
+The mismatch shape is now computed first and rung 2 defers to it:
+
+```ts
+const ctrBelow = w.ctrLink < ctrThreshold;
+const mismatchShape =
+  ctrBelow &&
+  w.ctrAll >= DIAGNOSIS_GATES.MISMATCH_CTR_ALL_MULTIPLE * w.ctrLink &&
+  w.ctrAll > DIAGNOSIS_GATES.MISMATCH_CTR_ALL_FLOOR;
+ev[2] = ctrBelow && !mismatchShape ? "broken" : "clean";
+ev[3] = mismatchShape ? "broken" : "clean";
+```
+
+Rungs 2 and 3 share one gate (V5) so they are decided in one block, which
+also makes the exclusivity structural rather than incidental.
+
+## Codex-2 — verified against current code, not assumed
+
+Codex raised this against `e316b71`, before `029d5a6` added
+`withLtrNumerals()` for gate-review G2. Checked rather than assumed:
+
+```
+$ grep -n 'withLtrNumerals' client/src/pages/Dashboard.tsx
+603:              {withLtrNumerals(summary.account_funnel_cta.reason_ar)}
+651:        {withLtrNumerals(finding.text_ar)}
+696:function withLtrNumerals(text: string): ReactNode[] {
+732:export { DiagnosisSection, FindingRow, levelLabel, withLtrNumerals };
+```
+
+Line 651 is inside `FindingRow` — the exact site Codex named. Each numeric
+run is wrapped in `.num` (`direction: ltr; unicode-bidi: isolate`), which
+is the "bidi-isolated span" the comment asked for, and the dense
+`FUNNEL_CONFIRMED` ladder it called out is asserted figure-by-figure.
+No further change needed.
+
+## Codex-3 — zero is a measured count
+
+A campaign can open the C4 evidence path on a CPA derived from
+view-through conversions while recording **no** link clicks. The ladder
+substituted the CTR percentage and dropped the count, so the line did not
+disclose that the claimed customers arrived with zero recorded clicks.
+The count is now always printed:
+
+```ts
+const ctrLine =
+  w.linkClicks > 0
+    ? `${nf(w.linkClicks)} شخص ضغط على الإعلان (نسبة الضغط ${w.ctrLink.toFixed(2)}%)`
+    : `${nf(w.linkClicks)} ضغطة مسجَّلة على الإعلان (نسبة الضغط ${w.ctrLink.toFixed(2)}%)`;
+```
+
+Zero takes a different noun («ضغطة مسجَّلة» — recorded clicks) because
+«0 شخص ضغط» is not grammatical Arabic; the percentage is kept alongside.
+
+*A correction on my own first attempt:* the zero-click fixture initially
+used 5,000 impressions, which put it over the rung-2 gate — with zero
+clicks the link CTR is zero, so rung 2 broke, and a broken rung means
+C2.1 appends no terminal outcome at all. The test failed asserting
+`FUNNEL_CONFIRMED` and got `RUNG_HOOK`. The fixture now uses 900
+impressions so rungs 2 and 3 are unevaluable and the ladder is actually
+reached. Worth recording because the failure was the engine being right
+and the fixture being wrong.

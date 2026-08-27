@@ -168,23 +168,29 @@ function evaluateRungs(
   // make the rung unevaluable.
   const ctrMedian = baselines.ctrLinkMedian90;
   const ctrThreshold = ctrMedian !== null ? ctrMedian : DIAGNOSIS_GATES.CTR_FALLBACK_PCT;
-  if (w.impressions >= DIAGNOSIS_GATES.CTR_MIN_IMPRESSIONS) {
-    ev[2] = w.ctrLink < ctrThreshold ? "broken" : "clean";
-  }
 
-  // Rung 3 — message/CTA mismatch. Only broken when rung 2 is broken
-  // AND the ctrAll-vs-ctrLink shape is met. Otherwise: same state as
-  // rung 2 when gate is met; otherwise unevaluable (V5 — same gate).
+  // Rungs 2 and 3 share one gate (V5) and are decided together, because
+  // they are MUTUALLY EXCLUSIVE. A low link CTR has two possible
+  // readings and they contradict each other:
+  //
+  //   - rung 2 broken  — nobody engaged at all; the design is the problem
+  //   - rung 3 broken  — people DID engage (high ctrAll) but did not
+  //                      click through; the opening works and the
+  //                      message or CTA is the problem
+  //
+  // Emitting both would tell the user the creative is dead and that the
+  // creative is fine, on the same row. Research §R2's rung table is
+  // explicit: rung 2 is broken only when link CTR is below threshold
+  // **and the rung-3 mismatch shape does not hold**. So the shape is
+  // computed FIRST and rung 2 defers to it.
   if (w.impressions >= DIAGNOSIS_GATES.CTR_MIN_IMPRESSIONS) {
-    if (
-      ev[2] === "broken" &&
+    const ctrBelow = w.ctrLink < ctrThreshold;
+    const mismatchShape =
+      ctrBelow &&
       w.ctrAll >= DIAGNOSIS_GATES.MISMATCH_CTR_ALL_MULTIPLE * w.ctrLink &&
-      w.ctrAll > DIAGNOSIS_GATES.MISMATCH_CTR_ALL_FLOOR
-    ) {
-      ev[3] = "broken";
-    } else {
-      ev[3] = "clean";
-    }
+      w.ctrAll > DIAGNOSIS_GATES.MISMATCH_CTR_ALL_FLOOR;
+    ev[2] = ctrBelow && !mismatchShape ? "broken" : "clean";
+    ev[3] = mismatchShape ? "broken" : "clean";
   }
 
   // Rung 4 — landing-page arrival. C1.5 / R2.2: `lpViews === 0` is
@@ -1093,10 +1099,16 @@ function funnelConfirmedText(
   lines.push(`شُوهد الإعلان ${nf(w.impressions)} مرة في آخر 3 أيام`);
 
   // Step 2 — link clicks + account median comparison (C3.4a when null).
+  // The link-click COUNT is always printed, zero included. Zero is a
+  // measured value, not a missing one — and on the W5 evidence path it
+  // is the one the reader most needs: a campaign can open that path on
+  // a measured CPA from view-through conversions while recording no
+  // link clicks at all, and a line that showed only the percentage
+  // would not disclose that. (Codex-3 on PR #30.)
   const ctrLine =
     w.linkClicks > 0
       ? `${nf(w.linkClicks)} شخص ضغط على الإعلان (نسبة الضغط ${w.ctrLink.toFixed(2)}%)`
-      : `${w.ctrLink.toFixed(2)}% من المشاهدين ضغطوا`;
+      : `${nf(w.linkClicks)} ضغطة مسجَّلة على الإعلان (نسبة الضغط ${w.ctrLink.toFixed(2)}%)`;
   if (mode === "w5") {
     // C4.4: the median step is stated unavailable for a campaign
     // because `ctrLinkMedian90` is fetched at ad level and is not a

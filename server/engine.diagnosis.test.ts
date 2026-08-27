@@ -1357,3 +1357,141 @@ describe("Constitution III — diagnosis copy carries no transliterated jargon",
     expect(f[0].text_ar).not.toContain("الهوك");
   });
 });
+
+// ============================================================
+// Codex-1 (PR #30) — rungs 2 and 3 are mutually exclusive
+// ============================================================
+
+describe("Codex-1 — RUNG_HOOK and RUNG_MISMATCH never appear together", () => {
+  /**
+   * The fixture triggers BOTH shapes at once: link CTR is below the
+   * median (rung 2's break condition) AND the engagement-without-clicks
+   * shape holds (rung 3's). Before the fix, `evaluateRungs` assigned
+   * rung 2 from the CTR alone and then let rung 3 break as well, so one
+   * row carried two contradictory diagnoses — "the design is dead" and
+   * "the design works, the message is wrong".
+   */
+  const bothShapes = () =>
+    makeObject({
+      w3d: makeWindow({
+        impressions: 5000, // >= 1000 → rungs 2/3 evaluable (V5)
+        linkClicks: 10,
+        ctrLink: 0.2, // < median 1.5 → rung 2's break condition holds
+        ctrAll: 3.0, // >= 2 * 0.2 AND > 1.5 → the mismatch shape holds
+        cpm: 5, // < 1.3 * 18 → rung 1 clean
+      }),
+    });
+
+  it("emits exactly one of the two, never both", () => {
+    const findings = diagnose(bothShapes(), makeBaselines(), "paid_lto", makeFired("K3"));
+    const outcomes = findings.map(f => f.outcome);
+    const hook = outcomes.filter(o => o === "RUNG_HOOK").length;
+    const mismatch = outcomes.filter(o => o === "RUNG_MISMATCH").length;
+    expect(hook + mismatch, `got ${JSON.stringify(outcomes)}`).toBe(1);
+  });
+
+  it("the survivor is RUNG_MISMATCH — research §R2's rung table", () => {
+    // Rung 2 is broken only when the CTR is low AND the mismatch shape
+    // does NOT hold. Here it does, so rung 3 is the one that speaks.
+    const findings = diagnose(bothShapes(), makeBaselines(), "paid_lto", makeFired("K3"));
+    expect(findings.map(f => f.outcome)).toContain("RUNG_MISMATCH");
+    expect(findings.map(f => f.outcome)).not.toContain("RUNG_HOOK");
+  });
+
+  it("a low CTR WITHOUT the mismatch shape still breaks rung 2 only", () => {
+    // ctrAll barely above ctrLink → the shape does not hold, so the
+    // reading is "nobody engaged", which is rung 2's.
+    const o = makeObject({
+      w3d: makeWindow({
+        impressions: 5000,
+        linkClicks: 10,
+        ctrLink: 0.2,
+        ctrAll: 0.3, // < 2 * 0.2 is false, but 0.3 <= 1.5 floor → no shape
+        cpm: 5,
+      }),
+    });
+    const outcomes = diagnose(o, makeBaselines(), "paid_lto", makeFired("K3")).map(f => f.outcome);
+    expect(outcomes).toContain("RUNG_HOOK");
+    expect(outcomes).not.toContain("RUNG_MISMATCH");
+  });
+
+  it("swept: no fixture in the grid ever produces both", () => {
+    const GRID: Partial<WindowMetrics>[] = [
+      { impressions: 5000, linkClicks: 10, ctrLink: 0.2, ctrAll: 3.0, cpm: 5 },
+      { impressions: 5000, linkClicks: 10, ctrLink: 0.2, ctrAll: 0.3, cpm: 5 },
+      { impressions: 5000, linkClicks: 200, ctrLink: 2.0, ctrAll: 2.0, cpm: 5, lpViews: 180, conversions: 5 },
+      { impressions: 1200, linkClicks: 60, ctrLink: 1.0, ctrAll: 9.0, cpm: 5, lpViews: 55 },
+      { impressions: 1000, linkClicks: 0, ctrLink: 0.0, ctrAll: 4.0, cpm: 5 },
+    ];
+    for (const code of Object.keys(RULES) as RuleCode[]) {
+      for (const archetype of ["paid_lto", "free_lead", "appointment", "webinar"] as const) {
+        for (const g of GRID) {
+          const outcomes = diagnose(
+            makeObject({ w3d: makeWindow(g) }), makeBaselines(), archetype, makeFired(code)
+          ).map(f => f.outcome);
+          const both =
+            outcomes.includes("RUNG_HOOK") && outcomes.includes("RUNG_MISMATCH");
+          expect(both, `${code}/${archetype} produced both: ${JSON.stringify(outcomes)}`).toBe(false);
+        }
+      }
+    }
+  });
+});
+
+// ============================================================
+// Codex-3 (PR #30) — the W5 ladder prints a zero link-click count
+// ============================================================
+
+describe("Codex-3 — the link-click step prints zero rather than dropping it", () => {
+  /**
+   * A campaign can open the C4 evidence path on a measured CPA derived
+   * from view-through conversions while recording NO link clicks. The
+   * ladder previously substituted the CTR percentage and omitted the
+   * count, so the line did not disclose that the claimed customers
+   * arrived with zero recorded clicks.
+   */
+  const zeroClickCampaign = () =>
+    makeObject({
+      level: "campaign",
+      w3d: makeWindow({
+        spend: 1000,
+        // Below the rung-2/3 gate (1000) on purpose. With zero link
+        // clicks the link CTR is also zero, which WOULD break rung 2 as
+        // "nobody engaged" — and a broken rung means C2.1 appends no
+        // terminal outcome at all, so the ladder would never be
+        // reached and this test could not observe the zero-click line.
+        impressions: 900,
+        linkClicks: 0, // the whole point
+        ctrLink: 0,
+        ctrAll: 0,
+        cpm: 5, // < 1.3 * 18 → rung 1 clean, so `evaluable` is non-empty
+        lpViews: 0, // rungs 4 and 5 unevaluable
+        conversions: 50, // view-through → effectiveCpa = 20, guard opens
+        cpa: 20,
+      }),
+    });
+
+  it("FUNNEL_CONFIRMED via W5 prints the 0 count", () => {
+    const findings = diagnose(
+      zeroClickCampaign(), makeBaselines(), "paid_lto", makeFired("W5", "watch"), true
+    );
+    expect(findings).toHaveLength(1);
+    const f = findings[0];
+    expect(f.outcome).toBe("FUNNEL_CONFIRMED");
+    // The count is present, as a count — not merely a 0.00% rate.
+    expect(f.text_ar).toContain("0 ضغطة مسجَّلة على الإعلان");
+    // And the impression count is still there, so the reader can see
+    // that 900 views produced 0 clicks.
+    expect(f.text_ar).toContain("900");
+    // The percentage alone would NOT have disclosed the zero count —
+    // that is the defect Codex-3 named.
+    expect(f.text_ar).toContain("نسبة الضغط 0.00%");
+  });
+
+  it("a non-zero campaign still reads as a person count", () => {
+    const o = zeroClickCampaign();
+    o.w3d = makeWindow({ ...o.w3d, impressions: 80000, linkClicks: 2000, ctrLink: 2.5 });
+    const f = diagnose(o, makeBaselines(), "paid_lto", makeFired("W5", "watch"), true);
+    expect(f[0].text_ar).toContain("2,000 شخص ضغط على الإعلان");
+  });
+});
