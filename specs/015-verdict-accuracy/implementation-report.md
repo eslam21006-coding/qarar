@@ -1856,6 +1856,22 @@ exit 0.
 |---|---|---|---|---|---|
 | — | — | — | — | — | **No snapshot entry changed in pass 1 or pass 2.** `engine.test.ts.snap` hash `c8f22dd3…` from T011 to T085; `vitest -u` never run. The one transient diff (T070, `cmp_test` S2 → W1) was fixed in code to match the contract's "+20%"-only scope. |
 
+**Self-review M1 (2026-10-19, owner-approved snapshot update).** Status-gate copy now names the
+row's level. Every T008 snapshot entry was checked by hand against the new copy:
+
+| Object id | Old reason / action | New reason / action | Justification |
+|---|---|---|---|
+| — (none) | — | — | M1. **No snapshot entry changed, so no update was needed.** The T008 fixture (`buildDemoSnapshot`, both funnels) has no non-delivering object. Its four `GATE` entries (`ad_gate`, `as_gate` × 2 funnels) are the min-age gate ("عمره يوم واحد — بياناته لم تكتمل بعد"), not the status gate, and keep their text. `git diff main -- server/__snapshots__/engine.test.ts.snap` = 0 lines. The hash is still `c8f22dd32e67ffbeabe9303366607a1688387115`, and `vitest -u` was not run. No verdict or rule changed anywhere. |
+
+The copy change itself, locked by 12 new exact-text tests in `server/engine.test.ts` ("M1 — …"),
+not by the snapshot:
+
+| Level | Paused (reason / action) | Under review | Rejected | Issue |
+|---|---|---|---|---|
+| ad (unchanged) | هذا الإعلان موقوف الآن — لا يصرف ولا يجمع بيانات / شغّله إن أردت تقييمه، أو احذفه إن لم تعد تحتاجه | ميتا تراجع هذا الإعلان الآن — لم يبدأ الظهور بعد / …ثم نحكم عليه | رفضت ميتا هذا الإعلان — لا يظهر ولا يصرف / …ثم عدّله أو احذفه | هذا الإعلان لا يظهر الآن بسبب مشكلة عند ميتا — لا يصرف ولا يجمع بيانات / …ثم نحكم عليه |
+| ad set | هذه المجموعة موقوفة الآن — لا تصرف ولا تجمع بيانات / شغّلها إن أردت تقييمها، أو احذفها إن لم تعد تحتاجها | ميتا تراجع هذه المجموعة الآن — لم تبدأ الظهور بعد / …ثم نحكم عليها | رفضت ميتا هذه المجموعة — لا تظهر ولا تصرف / …ثم عدّلها أو احذفها | هذه المجموعة لا تظهر الآن بسبب مشكلة عند ميتا — لا تصرف ولا تجمع بيانات / …ثم نحكم عليها |
+| campaign | هذه الحملة موقوفة الآن — لا تصرف ولا تجمع بيانات / شغّلها إن أردت تقييمها، أو احذفها إن لم تعد تحتاجها | ميتا تراجع هذه الحملة الآن — لم تبدأ الظهور بعد / …ثم نحكم عليها | رفضت ميتا هذه الحملة — لا تظهر ولا تصرف / …ثم عدّلها أو احذفها | هذه الحملة لا تظهر الآن بسبب مشكلة عند ميتا — لا تصرف ولا تجمع بيانات / …ثم نحكم عليها |
+
 ## Decisions and interpretations the owner should review
 
 1. **T066 (FR-026/FR-028, sales value).** No rule reads Meta's `conversionValue`. S2/W6 "return" is

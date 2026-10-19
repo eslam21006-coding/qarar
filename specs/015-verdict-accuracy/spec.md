@@ -602,11 +602,20 @@ the rest stay out.
 
 - **T6** — the ad set becomes the judgment unit and the campaign verdict is derived from its
   child ad sets; ±20% controls move to the right level by budget type.
+  - Deferred from feature 015's self-review (finding M3, owner decision 2026-10-19):
+    `evaluateCampaign` still runs its own inline rules (spend gate, W5, the T070 W1/W6 guard,
+    S2, W6, K1) instead of deriving the campaign verdict from its ad sets as constitution
+    Principle I requires. 015 only placed its new gates (status, event-match, unknown counts)
+    ahead of them.
 - **T7** — a single source for the results and cost columns, counted with the same selector as
   the verdict, with the cost shown whenever results are greater than zero.
   - Recorded deviation from feature 015 (T007, accepted by the owner 2026-10-19): the
     DecisionTable footer aggregation coalesces `conversionValue ?? 0`. The footer must treat an
     unknown `conversionValue` as unknown, not 0.
+  - Deferred from feature 015's self-review (finding L4, owner decision 2026-10-19): on an
+    unknown-count window (`resultsUnknown`) the table's results cell still shows `0`
+    (`conversions_3d: rowConv ?? 0`). The verdict is already ⏳ naming the missing data; the cell
+    must show the count as unknown, not 0.
 - **T8** — verdict/diagnosis consistency post-check: a row diagnosed "insufficient data" cannot
   hold 🔴 unless the rule was designed to work without a full sample.
 

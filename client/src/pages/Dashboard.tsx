@@ -7,6 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { VerdictBadge } from "@/components/Verdict";
 import { RULES, targetSourceLabel } from "@shared/qarar";
 import { money, pct, timeAgoAr } from "@/lib/format";
+import { killCountPart, type KillCountPart } from "@/lib/killCountLabel";
 import { trpc } from "@/lib/trpc";
 import type { EngineRow, Finding, TopAction } from "@shared/qarar";
 import {
@@ -259,7 +260,7 @@ export default function Dashboard() {
             value={money(summary.bleed_daily, currencySymbol)}
             cls={summary.bleed_daily > 0 ? "text-v-kill" : "text-v-continue"}
           />
-          <KillCounter adsets={summary.kill_adsets ?? 0} ads={summary.kill_ads ?? 0} />
+          <KillCounter adsets={summary.kill_adsets} ads={summary.kill_ads} />
           <Stat label="للمراقبة 🟡" value={String(summary.counts.watch)} cls="text-v-watch" />
           <Stat label="سليمة 🟢" value={String(summary.counts.continue)} cls="text-v-continue" />
           <Stat label="للإنقاذ 🛟" value={String(summary.counts.rescue)} cls="text-v-rescue" />
@@ -426,23 +427,29 @@ function Shell({
  * zero reads "0", as the all-clear counter always has. Numerals sit in
  * `.num` so they render left-to-right inside the RTL strip.
  *
- * Number–noun agreement ("2 مجموعة" should be "مجموعتان") is deliberately not
- * handled here: the shared helper is feature 018's T14 (spec Assumptions).
+ * Number–noun agreement (self-review M2): `killCountPart` gives "مجموعتان",
+ * "3 مجموعات", "11 إعلانًا" and so on.
  */
 function KillCounter({ adsets, ads }: { adsets: number; ads: number }) {
-  const parts: Array<[number, string]> = [];
-  if (adsets > 0) parts.push([adsets, "مجموعة"]);
-  if (ads > 0) parts.push([ads, "إعلان"]);
+  const parts = [
+    { key: "adset", part: killCountPart(adsets, "adset") },
+    { key: "ad", part: killCountPart(ads, "ad") },
+  ].filter((p): p is { key: string; part: KillCountPart } => p.part !== null);
   return (
     <div data-testid="kill-counter" className="min-w-[84px] shrink-0">
       <div className="text-base font-extrabold text-v-kill">
         {parts.length === 0 ? (
           <span className="num">0</span>
         ) : (
-          parts.map(([n, noun], i) => (
-            <span key={noun}>
+          parts.map(({ key, part }, i) => (
+            <span key={key}>
               {i > 0 && " · "}
-              <span className="num">{n}</span> {noun}
+              {part.num !== null && (
+                <>
+                  <span className="num">{part.num}</span>{" "}
+                </>
+              )}
+              {part.words}
             </span>
           ))
         )}

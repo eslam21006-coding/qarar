@@ -1563,7 +1563,7 @@ describe("T012-T016 — event-match gate (spec 015 / US1)", () => {
 
 // ===========================================================================
 // Spec 015 / US2 — nothing that is switched off gets judged (FR-006–FR-010).
-// The status gate is step 1 of constitution v1.1.1 Principle I. Each gated
+// The status gate is step 1 of constitution v1.1.2 Principle I. Each gated
 // state carries a display badge naming its real state; the verdict stays
 // ⏳ GATE in every case (the badge is never a sixth verdict).
 // ===========================================================================
@@ -1657,6 +1657,35 @@ describe("T022-T025 — status gate badges and coverage (spec 015 / US2)", () =>
     expect(row.rule).toBe("GATE");
     expect(row.statusBadge).toBe("موقوف");
   });
+
+  // Self-review M1 — the status-gate copy names the row's own level, with
+  // gender agreement: الإعلان (masc.), المجموعة / الحملة (fem.). The ad copy
+  // is the pre-015 text, unchanged.
+  const LEVEL_COPY: Array<[string, string, string, string]> = [
+    // [id, status, reason, action]
+    ["ad_k3", "PAUSED", "هذا الإعلان موقوف الآن — لا يصرف ولا يجمع بيانات", "شغّله إن أردت تقييمه، أو احذفه إن لم تعد تحتاجه"],
+    ["as_k1", "PAUSED", "هذه المجموعة موقوفة الآن — لا تصرف ولا تجمع بيانات", "شغّلها إن أردت تقييمها، أو احذفها إن لم تعد تحتاجها"],
+    ["cmp_scale", "PAUSED", "هذه الحملة موقوفة الآن — لا تصرف ولا تجمع بيانات", "شغّلها إن أردت تقييمها، أو احذفها إن لم تعد تحتاجها"],
+    ["ad_k3", "PENDING_REVIEW", "ميتا تراجع هذا الإعلان الآن — لم يبدأ الظهور بعد", "انتظر حتى تنتهي المراجعة، ثم نحكم عليه"],
+    ["as_k1", "PENDING_REVIEW", "ميتا تراجع هذه المجموعة الآن — لم تبدأ الظهور بعد", "انتظر حتى تنتهي المراجعة، ثم نحكم عليها"],
+    ["cmp_scale", "PENDING_REVIEW", "ميتا تراجع هذه الحملة الآن — لم تبدأ الظهور بعد", "انتظر حتى تنتهي المراجعة، ثم نحكم عليها"],
+    ["ad_k3", "DISAPPROVED", "رفضت ميتا هذا الإعلان — لا يظهر ولا يصرف", "افتح مدير الإعلانات واقرأ سبب الرفض، ثم عدّله أو احذفه"],
+    ["as_k1", "DISAPPROVED", "رفضت ميتا هذه المجموعة — لا تظهر ولا تصرف", "افتح مدير الإعلانات واقرأ سبب الرفض، ثم عدّلها أو احذفها"],
+    ["cmp_scale", "DISAPPROVED", "رفضت ميتا هذه الحملة — لا تظهر ولا تصرف", "افتح مدير الإعلانات واقرأ سبب الرفض، ثم عدّلها أو احذفها"],
+    ["ad_k3", "WITH_ISSUES", "هذا الإعلان لا يظهر الآن بسبب مشكلة عند ميتا — لا يصرف ولا يجمع بيانات", "افتح مدير الإعلانات وأصلح المشكلة، ثم نحكم عليه"],
+    ["as_k1", "WITH_ISSUES", "هذه المجموعة لا تظهر الآن بسبب مشكلة عند ميتا — لا تصرف ولا تجمع بيانات", "افتح مدير الإعلانات وأصلح المشكلة، ثم نحكم عليها"],
+    ["cmp_scale", "WITH_ISSUES", "هذه الحملة لا تظهر الآن بسبب مشكلة عند ميتا — لا تصرف ولا تجمع بيانات", "افتح مدير الإعلانات وأصلح المشكلة، ثم نحكم عليها"],
+  ];
+
+  for (const [id, status, reason, action] of LEVEL_COPY) {
+    it(`M1 — ${id} ${status} ⇒ copy names its own level`, () => {
+      const row = runWithStatus(id, status);
+      expect(row.verdict).toBe("too_early");
+      expect(row.rule).toBe("GATE");
+      expect(row.reason_ar).toBe(reason);
+      expect(row.action_ar).toBe(action);
+    });
+  }
 });
 
 describe("T032 — no gated row tells the user to stop it (spec 015 / FR-010)", () => {

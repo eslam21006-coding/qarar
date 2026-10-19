@@ -131,7 +131,7 @@ describe("buildSummary — active-only counters (US1 / T004)", () => {
     // The prior spec's FR-005a asserted the opposite: that CB2 fired
     // BEFORE the paused check at ad-set level, so the row kept "kill CB2".
     // Spec 015 / FR-006 reverses that premise — rulebook v2.2 §4.2 and
-    // constitution v1.1.1 Principle I step 1 place the status gate ahead
+    // constitution v1.1.2 Principle I step 1 place the status gate ahead
     // of every rule, the circuit breaker included. A paused ad set reports
     // that it is paused; it is not killed on today's frozen data.
     expect(afterRow.verdict).toBe("too_early");
@@ -255,7 +255,7 @@ describe("buildSummary — settings_mismatch flag (spec 015 / US1 / T017)", () =
   it("non-sales exempt objects never trip the flag — they exit at step 2, before the event-match gate", () => {
     const snap = buildDemoSnapshot();
     // Every object mismatched on paper, but every object is an awareness
-    // objective. Constitution v1.1.1 Principle I step 2 sends these to the
+    // objective. Constitution v1.1.2 Principle I step 2 sends these to the
     // NS ladder; the event-match gate (step 4) is never reached, so no row
     // is gated and the account-level card must not appear either.
     for (const o of snap.objects) {

@@ -285,7 +285,7 @@ it("a paused ad no longer carries a kill verdict — the status gate now precede
     // `gateVerdict`, which was where the status check lived.
     //
     // Spec 015 / FR-006 deliberately reverses that premise. Rulebook v2.2
-    // §4.2 and constitution v1.1.1 Principle I step 1 put the status gate
+    // §4.2 and constitution v1.1.2 Principle I step 1 put the status gate
     // ahead of every rule, "بما فيها K3 ومصفوفة المحروم" — a paused object
     // is reported as paused, not killed on frozen data. "لا يُقال أوقِف
     // لشيء موقوف."

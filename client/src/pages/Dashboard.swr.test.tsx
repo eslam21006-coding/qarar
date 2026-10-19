@@ -359,16 +359,25 @@ describe("Dashboard — split kill counter (spec 015 / US8)", () => {
     withCounts(2, 3);
     render(<Dashboard />);
     const counter = screen.getByTestId("kill-counter");
-    expect(counter.textContent).toContain("2 مجموعة · 3 إعلان");
+    // Self-review M2 — number–noun agreement: 2 → dual, 3–10 → plural.
+    expect(counter.textContent).toContain("مجموعتان · 3 إعلانات");
     expect(counter.textContent).toContain("للإيقاف");
     expect(counter.textContent).not.toContain("6");
+    // The numeral renders LTR in `.num`.
+    expect(counter.querySelector(".num")?.textContent).toBe("3");
+  });
+
+  it("M2 — 11+ takes the singular tamyiz: 11 مجموعة · 25 إعلانًا", () => {
+    withCounts(11, 25);
+    render(<Dashboard />);
+    expect(screen.getByTestId("kill-counter").textContent).toContain("11 مجموعة · 25 إعلانًا");
   });
 
   it("hides a zero part", () => {
     withCounts(0, 3);
     render(<Dashboard />);
     const text = screen.getByTestId("kill-counter").textContent ?? "";
-    expect(text).toContain("3 إعلان");
+    expect(text).toContain("3 إعلانات");
     expect(text).not.toContain("مجموعة");
   });
 

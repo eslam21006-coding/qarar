@@ -364,18 +364,13 @@ function explicitCtrKillAllowed(o: NormalizedObject): boolean {
 /**
  * Spec 015 / FR-006, FR-007 — STEP 1 of the evaluation order.
  *
- * Constitution v1.1.1 Principle I and rulebook v2.2 §4.2/§5.5 (row 0): an
+ * Constitution v1.1.2 Principle I and rulebook v2.2 §4.2/§5.5 (row 0): an
  * object whose status in Meta is not active passes through NO rule at all,
  * "بما فيها K3 ومصفوفة المحروم". It was previously the first branch inside
  * `gateVerdict`, which runs AFTER `killK3` and `starvedAdMatrix` in
  * `evaluateAd` and AFTER `circuitBreaker` in `evaluateAdset` — so a paused
  * object could still be killed by one of those three rules. That is the
  * defect this move fixes.
- *
- * The verdict, rule, reason and action are carried over byte-identically
- * from the old branch. Per-state badges (FR-008) and treating
- * IN_PROCESS / PREAPPROVED as active (FR-007a) are US2 work, deliberately
- * NOT done here.
  *
  * `effectiveStatus ?? status` is the whole chain on a `NormalizedObject`;
  * the three-step form in `buildSummary` adds the engine row's own status,
@@ -386,37 +381,63 @@ function statusGate(o: NormalizedObject): Fired | null {
   // FR-007a — IN_PROCESS / PREAPPROVED are delivering; one shared
   // definition (`isDeliveringStatus`) so the summary and the table agree.
   if (isDeliveringStatus(effectiveDelivered)) return null;
-  return statusGateFired(effectiveDelivered);
+  return statusGateFired(effectiveDelivered, o.level);
 }
 
 /**
- * Spec 015 / FR-008, FR-010 — the gated verdict for one non-active state.
- * The copy names the real state (matching `statusBadgeFor`), and none of
- * it tells the user to pause what is not running. The paused-family copy
- * is the pre-015 text, carried over byte-identically.
+ * Self-review M1 — the words the status-gate copy needs for each level.
+ * "الإعلان" is masculine; "المجموعة" and "الحملة" are feminine, so the
+ * adjective, the verbs and the object pronoun agree with the noun.
  */
-function statusGateFired(status: string | null | undefined): Fired {
+const STATUS_GATE_WORDS: Record<
+  NormalizedObject["level"],
+  {
+    noun: string; // هذا الإعلان / هذه المجموعة / هذه الحملة
+    paused: string; // موقوف / موقوفة
+    spend: string; // يصرف / تصرف
+    gather: string; // يجمع / تجمع
+    show: string; // يظهر / تظهر
+    start: string; // يبدأ / تبدأ
+    it: string; // ـه / ـها (object pronoun suffix)
+  }
+> = {
+  ad: { noun: "هذا الإعلان", paused: "موقوف", spend: "يصرف", gather: "يجمع", show: "يظهر", start: "يبدأ", it: "ه" },
+  adset: { noun: "هذه المجموعة", paused: "موقوفة", spend: "تصرف", gather: "تجمع", show: "تظهر", start: "تبدأ", it: "ها" },
+  campaign: { noun: "هذه الحملة", paused: "موقوفة", spend: "تصرف", gather: "تجمع", show: "تظهر", start: "تبدأ", it: "ها" },
+};
+
+/**
+ * Spec 015 / FR-008, FR-010 — the gated verdict for one non-active state.
+ * The copy names the real state (matching `statusBadgeFor`) and the real
+ * level (self-review M1), and none of it tells the user to pause what is
+ * not running. The ad-level paused copy is the pre-015 text, unchanged.
+ */
+function statusGateFired(
+  status: string | null | undefined,
+  level: NormalizedObject["level"]
+): Fired {
+  const w = STATUS_GATE_WORDS[level];
   switch (statusBadgeFor(status)) {
     case "موقوف":
       return {
         verdict: "too_early",
         rule: "GATE",
-        reason: "هذا الإعلان موقوف الآن — لا يصرف ولا يجمع بيانات",
-        action: "شغّله إن أردت تقييمه، أو احذفه إن لم تعد تحتاجه",
+        reason: `${w.noun} ${w.paused} الآن — لا ${w.spend} ولا ${w.gather} بيانات`,
+        action: `شغّل${w.it} إن أردت تقييم${w.it}، أو احذف${w.it} إن لم تعد تحتاج${w.it}`,
       };
     case "قيد المراجعة":
       return {
         verdict: "too_early",
         rule: "GATE",
-        reason: "ميتا تراجع هذا الإعلان الآن — لم يبدأ الظهور بعد",
-        action: "انتظر حتى تنتهي المراجعة، ثم نحكم عليه",
+        reason: `ميتا تراجع ${w.noun} الآن — لم ${w.start} الظهور بعد`,
+        action: `انتظر حتى تنتهي المراجعة، ثم نحكم علي${w.it}`,
       };
     case "مرفوض":
       return {
         verdict: "too_early",
         rule: "GATE",
-        reason: "رفضت ميتا هذا الإعلان — لا يظهر ولا يصرف",
-        action: "افتح مدير الإعلانات واقرأ سبب الرفض، ثم عدّله أو احذفه",
+        reason: `رفضت ميتا ${w.noun} — لا ${w.show} ولا ${w.spend}`,
+        action: `افتح مدير الإعلانات واقرأ سبب الرفض، ثم عدّل${w.it} أو احذف${w.it}`,
       };
     default:
       // WITH_ISSUES, PENDING_BILLING_INFO, an undocumented state, and the
@@ -424,8 +445,8 @@ function statusGateFired(status: string | null | undefined): Fired {
       return {
         verdict: "too_early",
         rule: "GATE",
-        reason: "هذا الإعلان لا يظهر الآن بسبب مشكلة عند ميتا — لا يصرف ولا يجمع بيانات",
-        action: "افتح مدير الإعلانات وأصلح المشكلة، ثم نحكم عليه",
+        reason: `${w.noun} لا ${w.show} الآن بسبب مشكلة عند ميتا — لا ${w.spend} ولا ${w.gather} بيانات`,
+        action: `افتح مدير الإعلانات وأصلح المشكلة، ثم نحكم علي${w.it}`,
       };
   }
 }
@@ -1683,7 +1704,7 @@ function evaluateNonSales(
   // gated here after passing the status gate (FR-007a).
   const effectiveDelivered = o.effectiveStatus ?? o.status;
   if (!isDeliveringStatus(effectiveDelivered)) {
-    return statusGateFired(effectiveDelivered);
+    return statusGateFired(effectiveDelivered, o.level);
   }
 
   const rate = resolveDailyRate(o);
@@ -1769,7 +1790,7 @@ function evaluateCampaign(
   if (preSep) return preSep;
 
   // Spec 015 / FR-001 — STEP 4. Runs after the NS exemption (step 2)
-  // and the pre-separation guard (step 3) per constitution v1.1.1
+  // and the pre-separation guard (step 3) per constitution v1.1.2
   // Principle I: a non-sales objective records no sales events at all,
   // and a pre-separation snapshot has unknown units — neither can be
   // diagnosed as a settings/event mismatch.
@@ -1946,7 +1967,7 @@ function evaluateAd(
   if (preSep) return preSep;
 
   // Spec 015 / FR-001 — STEP 4. Runs after the NS exemption (step 2)
-  // and the pre-separation guard (step 3) per constitution v1.1.1
+  // and the pre-separation guard (step 3) per constitution v1.1.2
   // Principle I: a non-sales objective records no sales events at all,
   // and a pre-separation snapshot has unknown units — neither can be
   // diagnosed as a settings/event mismatch.
@@ -2033,30 +2054,31 @@ function evaluateAdset(
   if (preSep) return preSep;
 
   // Spec 015 / FR-001 — STEP 4. Runs after the NS exemption (step 2)
-  // and the pre-separation guard (step 3) per constitution v1.1.1
+  // and the pre-separation guard (step 3) per constitution v1.1.2
   // Principle I: a non-sales objective records no sales events at all,
   // and a pre-separation snapshot has unknown units — neither can be
   // diagnosed as a settings/event mismatch.
   const eventMatch = eventMatchGate(o, archetype);
   if (eventMatch) return eventMatch;
 
-  // 2. Circuit breaker FIRST — "يتجاوز كل البوابات"
+  // STEP 7. Circuit breaker BEFORE the data gates — "يتجاوز كل البوابات"
+  // (constitution v1.1.2 Principle I, rulebook §5.3 / §5.5 row 4).
   const cb = circuitBreaker(o, t.unitTarget);
   if (cb) return cb;
 
-  // 1. Gates
+  // STEP 8. Data gates
   const gate = gateVerdict(o, t.unitTarget);
   if (gate) return gate;
 
-  // 3. Kill rules
+  // STEP 9. Kill rules
   const kill = killRulesAdset(o, t, archetype, baselines);
   if (kill) return kill;
 
-  // 7. Watch
+  // STEP 12. Watch (decay and fatigue, steps 10–11, are ad level)
   const watch = watchRules(o, t, archetype, baselines);
   if (watch) return watch;
 
-  // 8. Continue
+  // STEP 13. Continue
   return continueRules(o, t, archetype, baselines);
 }
 
