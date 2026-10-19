@@ -248,4 +248,19 @@ describe("buildSummary — settings_mismatch flag (spec 015 / US1 / T017)", () =
     const row = result.rows.find(r => r.id === mismatchedId)!;
     expect(row.rule).toBe("GATE");
   });
+
+  it("non-sales exempt objects never trip the flag — they exit at step 2, before the event-match gate", () => {
+    const snap = buildDemoSnapshot();
+    // Every object mismatched on paper, but every object is an awareness
+    // objective. Constitution v1.1.1 Principle I step 2 sends these to the
+    // NS ladder; the event-match gate (step 4) is never reached, so no row
+    // is gated and the account-level card must not appear either.
+    for (const o of snap.objects) {
+      stampMismatch(o, 400);
+      o.objective = "OUTCOME_AWARENESS";
+    }
+    const result = runEngine(snap, WEBINAR_FUNNEL);
+    expect(result.rows.some(r => r.rule === "GATE")).toBe(false);
+    expect(result.summary.settings_mismatch).toBe(false);
+  });
 });

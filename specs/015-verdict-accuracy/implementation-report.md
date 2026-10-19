@@ -321,4 +321,319 @@ green. The single failure is the pre-existing DB-dependent suite. The intermitte
 
 ## Phase 3: User Story 1 — event-match gate
 
-*In progress.*
+> The interrupted session wrote all of T012–T021 and checked them off in `tasks.md`, but logged
+> none of them here before the restart. The entries below were reconstructed during recovery from
+> the code in checkpoint `2ee0f07`, and each one was re-verified as described (see **Recovery**).
+
+### T012–T016 — engine tests ✅
+
+`server/engine.test.ts`, new `describe("T012-T016 — event-match gate (spec 015 / US1)")`. 5 tests.
+Each fixture stamps one explicit `w3d` shape onto every object in the demo tree.
+
+| Test | Fixture | Asserts |
+|---|---|---|
+| T012 | webinar, leads 0 / purchases 16 / $809 | every row `too_early`/`GATE`, mismatch reason, Settings action; no K1; no "بدون أي نتيجة" |
+| T013 | webinar, both families 0, $809 | K1 still fires; no mismatch reason |
+| T014 | paid_lto, purchases 0 / leads 12 | every row gated, reason names "تسجيلات" |
+| T015 | as T012 | GATE + mismatch at `ad`, `adset` **and** `campaign` (each level non-empty) |
+| T016 | as T012 + `resultsUnknown: true` | no row carries the mismatch reason |
+
+**Red-before-green (re-verified in recovery, since the original run was not logged):**
+
+- `eventMatchGate` short-circuited to `return null` ⇒ T012, T014 and T015 fail.
+- Only the `resultsUnknown` guard removed ⇒ T016 fails.
+- Only the `other <= 0` (both-zero) guard removed ⇒ T013 fails.
+
+So every test can tell the code with the gate apart from the code without it. Each probe
+restored the file from a byte copy, and `grep -c RECOVERY-PROBE` = 0 afterwards.
+
+### T017 — `settings_mismatch` tests ✅ (extended in recovery)
+
+`server/summaryCounts.test.ts`, new `describe("buildSummary — settings_mismatch flag …")`:
+100% mismatched ⇒ `true`; nothing mismatched ⇒ `false`; one 10-spend mismatched ad set against
+300-spend healthy ones ⇒ `false` **and** that ad set's row is still `GATE`. With the gate disabled,
+the `true` case and the "row still gated" case fail.
+
+Added in recovery: **"non-sales exempt objects never trip the flag"** — see T020 below.
+
+### T018 — `eventMatchGate` ✅
+
+`server/engine.ts`, after `statusGate`. Returns the contract's verdict/rule/reason/action
+byte-for-byte (contracts/gate-order.md §G3). Stands down on `resultsUnknown`, on a counted event
+> 0, on both families 0, and on either split count `undefined`.
+
+**Two deliberate deviations from the letter of §G3. The reviewer should confirm both:**
+
+1. **Counted event for purchase archetypes.** §G3 says counted = `effectiveConversions()`, which is
+   the blended legacy `conversions` for `paid_lto`/`free_lead`. That field is
+   purchase-first-then-lead, so 0 purchases + 12 leads reports `12` and the gate could never fire
+   in that direction. T014 and FR-003 require that it fires. The implementation reads the split
+   `purchaseConversions`/`leadConversions` pair instead. `effectiveConversions` itself is
+   untouched, so every other rule keeps its spec-012 selector.
+2. **`free_lead` is treated as registration-counting** (`countsRegistrations = archetype !==
+   "paid_lto"`). This follows data-model.md §6 ("أجمع بيانات عملاء مجانًا… → registrations"), and
+   contradicts the §G3 table, which groups `free_lead` with purchases. In practice: a `free_lead`
+   account that records only purchases gets ⏳ GATE where it was previously judged on its purchase
+   count. `free_lead` is legacy-only in the UI. **The spec artefacts disagree on this point, so
+   it needs a decision; it was not changed in recovery.**
+
+### T019 — wire after `preSeparationGate` ✅
+
+Order verified in all three evaluators (`server/engine.ts`):
+
+```text
+evaluateCampaign:  statusGate → evaluateNonSales → preSeparationGate → eventMatchGate → …
+evaluateAd:        statusGate → evaluateNonSales → preSeparationGate → eventMatchGate → killK3 → starvedAdMatrix → gateVerdict → …
+evaluateAdset:     statusGate → evaluateNonSales → preSeparationGate → eventMatchGate → circuitBreaker → gateVerdict → killRulesAdset → …
+```
+
+This is constitution v1.1.1 Principle I steps 1 → 2 → 3 → 4, then the rule steps.
+
+### T020 — `settings_mismatch` in `buildSummary` ⚠ → ✅ REDONE in recovery
+
+The checkpoint implementation computed the flag over active ad sets, with the ≥ 50% threshold
+from §S6. But it called `eventMatchGate` **without the step-2 NS exemption** that every evaluator
+applies first. Failure case: a `paid_lto` account with an active awareness/traffic ad set whose
+pixel logs leads. Its row correctly reads NS1/NS2, yet its spend still counted as "mismatched",
+so the card could appear with no gated row anywhere on the page. That breaks §S6 ("objects
+tripping the event-match gate"), because an exempt object never reaches the gate.
+
+- New test first (T017 block, all objects mismatched + `objective = "OUTCOME_AWARENESS"`). It
+  failed before the fix:
+
+  ```text
+   × buildSummary — settings_mismatch flag (spec 015 / US1 / T017) > non-sales exempt objects never trip the flag — they exit at step 2, before the event-match gate
+     → expected true to be false // Object.is equality
+   Tests  1 failed | 12 passed (13)
+  ```
+
+- Fix: `!isNonSalesExempt(o.objective ?? null) &&` added to the numerator condition. Exempt ad sets
+  **stay in the denominator** because they are active spend. The step-3 pre-separation case needs no
+  extra guard: `eventMatchGate` already returns `null` when a split count is `undefined`.
+- After: `summaryCounts.test.ts` 13/13 green.
+
+### T021 — dashboard warning card ✅
+
+`client/src/pages/Dashboard.tsx`. Rendered when `summary.settings_mismatch` is true, placed first
+among the account-level banners, with a link to `/settings/${accountId}`. The spec prescribes no
+wording for the card. Its copy reuses the gate's own phrasing and the action
+"راجع نوع الفانل في الإعدادات". No client test was required by tasks.md for T021, so none was added.
+
+### Phase 3 gate — RAW output
+
+**`npm run check`:**
+
+```text
+> qarar@1.0.0 check
+> tsc --noEmit
+
+===== CHECK_EXIT=0 =====
+```
+
+**`npm test`:**
+
+```text
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+Error: Database connection failed
+ ❯ server/auth-flow.e2e.test.ts:22:13
+     20|     db = await getDb();
+     21|     if (!db) {
+     22|       throw new Error("Database connection failed");
+       |             ^
+     23|     }
+     24|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 54 passed (55)
+      Tests  650 passed | 11 skipped (661)
+   Start at  12:20:56
+   Duration  18.00s (transform 11.62s, setup 83.03s, collect 56.34s, tests 37.11s, environment 24.01s, prepare 24.84s)
+```
+
+Touched suites:
+
+```text
+ ✓ server/nonSalesContainment.test.ts (12 tests) 151ms
+ ✓ server/summaryCounts.test.ts (13 tests) 181ms
+ ✓ server/meta.test.ts (11 tests) 155ms
+ ✓ server/engine.test.ts (98 tests) 415ms
+ ✓ server/summaryStripConsistency.test.ts (7 tests) 148ms
+```
+
+**Gate result: PASS.** 650 = 641 baseline + 5 (T012–T016) + 4 (T017: 3 original + 1 recovery).
+The only failure is the pre-existing DB-dependent `auth-flow.e2e` suite.
+
+**Snapshot**: `git hash-object server/__snapshots__/engine.test.ts.snap` →
+`c8f22dd32e67ffbeabe9303366607a1688387115`, the same as at T011. `vitest -u` was not run. The
+"Snapshot changes" table above stands: no entry changed. This is expected, because the demo mirrors
+`leadConversions = purchaseConversions`, so the gate cannot fire on it (research.md §4.2).
+
+**Phase 3 status: complete (10/10).**
+
+---
+
+## Recovery (after machine restart, 2026-10-19)
+
+### What was found
+
+- `tasks.md`: T001–T021 all `[X]`. `implementation-report.md`: last entry Phase 2. Phase 3 was
+  only a heading with "*In progress.*". The interrupted task was therefore somewhere in
+  **Phase 3 (T012–T021)**: the code was written and checked off, but nothing was logged or gated.
+- WIP checkpoint `2ee0f07` = HEAD; working tree clean at start.
+
+### Integrity check — `git diff HEAD~1 --stat` (RAW)
+
+```text
+ .specify/feature.json                              |   2 +-
+ CLAUDE.md                                          |   2 +-
+ client/src/components/DecisionTable.tsx            |   9 +-
+ client/src/pages/Dashboard.tsx                     |  20 ++
+ server/demo.ts                                     |   8 +
+ server/engine.test.ts                              | 159 ++++++++++
+ server/engine.ts                                   | 204 +++++++++++--
+ server/meta.ts                                     |  49 +++-
+ server/summaryCounts.test.ts                       | 110 ++++++-
+ server/summaryStripConsistency.test.ts             |  29 +-
+ shared/qarar.ts                                    |  64 +++-
+ .../015-verdict-accuracy/implementation-report.md  | 324 +++++++++++++++++++++
+ specs/015-verdict-accuracy/tasks.md                |  42 +--
+ 13 files changed, 952 insertions(+), 70 deletions(-)
+```
+
+I read every hunk in full. **No truncation, empty files, unclosed blocks or duplicated
+sections.** Every new function and `describe` is closed, `summaryCounts.test.ts` now ends with a
+newline (it previously lacked one), and each evaluator has exactly one `statusGate` call and one
+`eventMatchGate` call.
+
+### Recovery gate — RAW output (on the untouched checkpoint, before any recovery edit)
+
+**`npm run check`:**
+
+```text
+> qarar@1.0.0 check
+> tsc --noEmit
+
+===== CHECK_EXIT=0 =====
+```
+
+**`npm test`:**
+
+```text
+ ✓ server/nonSalesBudget.test.ts (10 tests) 123ms
+ ✓ server/meta.test.ts (11 tests) 201ms
+ ✓ server/nonSalesLifetimeBudget.test.ts (9 tests) 172ms
+ ✓ server/summaryCounts.test.ts (12 tests) 216ms
+ ✓ server/summaryStripConsistency.test.ts (7 tests) 200ms
+ ✓ server/nonSalesContainment.test.ts (12 tests) 198ms
+ ✓ server/nonSalesClassification.test.ts (14 tests) 235ms
+ ✓ server/engine.test.ts (98 tests) 463ms
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+ Test Files  1 failed | 54 passed (55)
+      Tests  649 passed | 11 skipped (660)
+   Start at  12:18:33
+   Duration  18.07s (transform 10.95s, setup 99.01s, collect 64.62s, tests 39.37s, environment 29.88s, prepare 32.14s)
+===== TEST_EXIT=1 =====
+```
+
+Green apart from the known DB suite. No `[X]` task had a failing test, but one had incomplete code
+(T020, below).
+
+### Tasks unmarked and redone
+
+| Task | Why | What was redone |
+|---|---|---|
+| T020 | Code incomplete: the numerator of `settings_mismatch` skipped the step-2 NS exemption, so exempt ad sets could raise the card (details under T020 above) | Failing test added first, then the guard. Re-marked `[X]` after green |
+
+Re-verified without change: T012–T019 and T021. The red-before-green probes are under T012–T016.
+
+### Every modified file and its justifying task
+
+Relative to `main` (`0dd90c9…d7bd5b3` base), including the recovery edits:
+
+| File | Justifying task(s) | In Phases 1–3? |
+|---|---|---|
+| `.specify/feature.json` | speckit feature pointer (pre-T001, spec setup) | setup, not a task |
+| `.specify/memory/constitution.md` | committed earlier in `2b65d03` / `0dd90c9` (constitution v1.1.1), not by this implement run | n/a — pre-existing commit |
+| `CLAUDE.md` | speckit agent-context pointer (pre-T001) | setup, not a task |
+| `docs/spec-015/*.md` | committed in `2b65d03` (source docs), not by this run | n/a — pre-existing commit |
+| `specs/015-verdict-accuracy/*` (spec, plan, research, data-model, contracts, quickstart, checklists, analysis-report) | committed in `6cb3669` (spec artefacts) | n/a — pre-existing commit |
+| `specs/015-verdict-accuracy/tasks.md` | checkboxes for T001–T021 | ✅ |
+| `specs/015-verdict-accuracy/implementation-report.md` | log for T001–T021 + this Recovery section | ✅ |
+| `shared/qarar.ts` | T003, T004 (types); T020 (`AccountSummary.settings_mismatch`) | ✅ |
+| `server/meta.ts` | T005 (parser), T006 (30-day totals) | ✅ |
+| `server/demo.ts` | T007 (`purchases30`/`leads30` on the demo baselines, surfaced by tsc) | ✅ |
+| `client/src/components/DecisionTable.tsx` | T007 (null-guard `conversionValue`) | ✅ |
+| `server/engine.ts` | T007 (`roas_3d` guards), T008 (`statusGate`), T018 (`eventMatchGate`), T019 (call sites), T020 (`settings_mismatch` + recovery NS guard) | ✅ |
+| `server/summaryStripConsistency.test.ts` | T009 | ✅ |
+| `server/summaryCounts.test.ts` | T010 (rewrite), T017 (+ recovery test for T020) | ✅ |
+| `server/engine.test.ts` | T012–T016 | ✅ |
+| `client/src/pages/Dashboard.tsx` | T021 | ✅ |
+| `server/__snapshots__/engine.test.ts.snap` | not modified (hash `c8f22dd…` = HEAD) | — |
+
+**Files changed by a task outside Phases 1–3: none.** No Phase 4+ work was started. The
+`statusGate` keeps the strict `!== "ACTIVE"` test, and there is no `statusBadge`, `kill_adsets`,
+exposure floor, S2 change or Settings change.
+
+---
+
+## Summary
+
+**Tasks done (Phases 1–3)**: T001–T021, **21 / 21**.
+
+**Tasks redone after recovery**: **T020**. Added the missing step-2 NS-exemption guard to the
+`settings_mismatch` numerator, with a new failing-then-passing test in `server/summaryCounts.test.ts`.
+
+**Tasks re-verified without change**: T012–T019 and T021. Red-before-green was confirmed by
+temporarily disabling `eventMatchGate` or each of its guards.
+
+**Tasks skipped**: none in Phases 1–3. T022–T091 (Phases 4–11) were **not started, by
+instruction** ("stop after Phase 3").
+
+**Open items for the reviewer**:
+
+1. The `free_lead` counted-event conflict between contracts/gate-order.md §G3 (purchases) and
+   data-model.md §6 (registrations). The code follows data-model §6. This needs a decision.
+2. The DecisionTable footer uses `?? 0` (T007). It is display-only and reasoned above, but it is
+   literally what §U3 forbids.
+3. The baseline is not green: the DB-dependent `auth-flow.e2e` suite fails in this worktree, and
+   `funnelIntegrity`/`inactiveAccess` fail intermittently.
+
+**Nothing committed.** Working tree changes on top of `2ee0f07`: `server/engine.ts`,
+`server/summaryCounts.test.ts`, this report.
+
+**`git diff --stat main`** (RAW, taken after this report was written):
+
+```text
+ .specify/feature.json                                           |   2 +-
+ .specify/memory/constitution.md                                 |  93 +++-
+ CLAUDE.md                                                       |   2 +-
+ client/src/components/DecisionTable.tsx                         |   9 +-
+ client/src/pages/Dashboard.tsx                                  |  20 +
+ docs/spec-015/qarar-rulebook-v2.2.md                            | 613 ++++++++++++++++++++++++++
+ docs/spec-015/spec-015-verdict-accuracy.md                      | 174 ++++++++
+ server/demo.ts                                                  |   8 +
+ server/engine.test.ts                                           | 159 +++++++
+ server/engine.ts                                                | 216 +++++++++-
+ server/meta.ts                                                  |  49 ++-
+ server/summaryCounts.test.ts                                    | 125 +++++-
+ server/summaryStripConsistency.test.ts                          |  29 +-
+ shared/qarar.ts                                                 |  64 ++-
+ specs/015-verdict-accuracy/analysis-report.md                   | 115 +++++
+ specs/015-verdict-accuracy/checklists/requirements.md           |  69 +++
+ specs/015-verdict-accuracy/contracts/gate-order.md              | 141 ++++++
+ .../contracts/settings-target-and-archetype.md                  |  97 +++++
+ specs/015-verdict-accuracy/contracts/starvation-and-scale.md    | 125 ++++++
+ specs/015-verdict-accuracy/contracts/summary-counters.md        |  72 ++++
+ specs/015-verdict-accuracy/contracts/unknown-vs-zero.md         |  69 +++
+ specs/015-verdict-accuracy/data-model.md                        | 177 ++++++++
+ specs/015-verdict-accuracy/implementation-report.md             | 639 ++++++++++++++++++++++++++++
+ specs/015-verdict-accuracy/plan.md                              | 197 +++++++++
+ specs/015-verdict-accuracy/quickstart.md                        | 126 ++++++
+ specs/015-verdict-accuracy/research.md                          | 450 ++++++++++++++++++++
+ specs/015-verdict-accuracy/spec.md                              | 626 +++++++++++++++++++++++++++
+ specs/015-verdict-accuracy/tasks.md                             | 416 ++++++++++++++++++
+ 28 files changed, 4827 insertions(+), 55 deletions(-)
+```

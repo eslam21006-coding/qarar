@@ -2399,6 +2399,12 @@ function buildSummary(
   // being string-matched: one source of truth for "is this a mismatch", and
   // a row can legitimately carry GATE for an unrelated reason (min age,
   // data gates).
+  //
+  // The NS exemption is re-checked too: an exempt ad set exits at step 2
+  // (`evaluateNonSales`) and never reaches the gate, so its row carries
+  // NS1/NS2 — counting it as mismatched would raise the card over rows
+  // that show no mismatch at all. It stays in the denominator: it is
+  // active spend.
   let mismatchSpend = 0;
   let activeAdsetSpend = 0;
   for (const r of rows) {
@@ -2406,7 +2412,13 @@ function buildSummary(
     if (!isActive(r)) continue;
     activeAdsetSpend += r.spend_3d;
     const o = snapObjById.get(r.id);
-    if (o && eventMatchGate(o, archetype)) mismatchSpend += r.spend_3d;
+    if (
+      o &&
+      !isNonSalesExempt(o.objective ?? null) &&
+      eventMatchGate(o, archetype)
+    ) {
+      mismatchSpend += r.spend_3d;
+    }
   }
   const settings_mismatch =
     activeAdsetSpend > 0 && mismatchSpend / activeAdsetSpend >= 0.5;
