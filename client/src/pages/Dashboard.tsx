@@ -5,8 +5,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { VerdictBadge } from "@/components/Verdict";
-import { RULES } from "@shared/qarar";
+import { RULES, targetSourceLabel } from "@shared/qarar";
 import { money, pct, timeAgoAr } from "@/lib/format";
+import { killCountPart, type KillCountPart } from "@/lib/killCountLabel";
 import { trpc } from "@/lib/trpc";
 import type { EngineRow, Finding, TopAction } from "@shared/qarar";
 import {
@@ -170,6 +171,26 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Spec 015 / FR-005 — settings-mismatch card. Raised when at least
+          half of the account's active spend sits on objects whose counted
+          result event is not the event their campaigns record. Placed FIRST
+          among the account-level banners: while this is true every verdict
+          below it is withheld, so the cause belongs above the symptoms. */}
+      {summary.settings_mismatch && (
+        <div className="border-b border-v-kill/40 bg-v-kill/10">
+          <div className="container flex items-start gap-2 py-2 text-xs">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-v-kill" />
+            <span>
+              إعدادات الفانل تعدّ نوعًا من النتائج لا تسجله حملاتك، فلا يمكن الحكم على
+              أرقامك الآن.{" "}
+              <Button asChild variant="link" className="h-auto p-0 text-xs">
+                <Link href={`/settings/${accountId}`}>راجع نوع الفانل في الإعدادات</Link>
+              </Button>
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Account-level CPM alert (US2) — rendered ONCE from summary.account_alert */}
       {summary.account_alert && (
         <div className="border-b border-amber-500/30 bg-amber-500/10">
@@ -239,7 +260,7 @@ export default function Dashboard() {
             value={money(summary.bleed_daily, currencySymbol)}
             cls={summary.bleed_daily > 0 ? "text-v-kill" : "text-v-continue"}
           />
-          <Stat label="للإيقاف 🔴" value={String(summary.counts.kill)} cls="text-v-kill" />
+          <KillCounter adsets={summary.kill_adsets} ads={summary.kill_ads} />
           <Stat label="للمراقبة 🟡" value={String(summary.counts.watch)} cls="text-v-watch" />
           <Stat label="سليمة 🟢" value={String(summary.counts.continue)} cls="text-v-continue" />
           <Stat label="للإنقاذ 🛟" value={String(summary.counts.rescue)} cls="text-v-rescue" />
@@ -268,6 +289,11 @@ export default function Dashboard() {
             // reach this tile (FR-019c / SC-021).
             value={targets.unitTarget === null ? "لم يتحدد بعد" : money(targets.unitTarget, currencySymbol)}
             cls="text-primary"
+            // Spec 015 / FR-018, FR-020 — name the judging target's source.
+            // `targets` is the engine's own `judgingTargets()` result, equal
+            // to `summary.unit_target` / `unit_target_source` by
+            // construction (engine.test T046) and to what Settings shows.
+            sub={targetSourceLabel(targets.unitTargetSource) ?? undefined}
           />
         </div>
       </div>
@@ -394,11 +420,62 @@ function Shell({
   );
 }
 
-function Stat({ label, value, cls }: { label: string; value: string; cls?: string }) {
+/**
+ * Spec 015 / FR-030a (T078) — "للإيقاف: {N} مجموعة · {M} إعلان". N and M come
+ * from the server's split counters (ad sets, ads; never campaigns), so the
+ * figure cannot change with the table's level. A zero part is hidden; both
+ * zero reads "0", as the all-clear counter always has. Numerals sit in
+ * `.num` so they render left-to-right inside the RTL strip.
+ *
+ * Number–noun agreement (self-review M2): `killCountPart` gives "مجموعتان",
+ * "3 مجموعات", "11 إعلانًا" and so on.
+ */
+function KillCounter({ adsets, ads }: { adsets: number; ads: number }) {
+  const parts = [
+    { key: "adset", part: killCountPart(adsets, "adset") },
+    { key: "ad", part: killCountPart(ads, "ad") },
+  ].filter((p): p is { key: string; part: KillCountPart } => p.part !== null);
+  return (
+    <div data-testid="kill-counter" className="min-w-[84px] shrink-0">
+      <div className="text-base font-extrabold text-v-kill">
+        {parts.length === 0 ? (
+          <span className="num">0</span>
+        ) : (
+          parts.map(({ key, part }, i) => (
+            <span key={key}>
+              {i > 0 && " · "}
+              {part.num !== null && (
+                <>
+                  <span className="num">{part.num}</span>{" "}
+                </>
+              )}
+              {part.words}
+            </span>
+          ))
+        )}
+      </div>
+      <div className="text-[10px] text-muted-foreground">للإيقاف: 🔴</div>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  cls,
+  sub,
+}: {
+  label: string;
+  value: string;
+  cls?: string;
+  /** Optional second line under the label (e.g. a target's source). */
+  sub?: string;
+}) {
   return (
     <div className="min-w-[84px] shrink-0">
       <div className={`num text-base font-extrabold ${cls ?? ""}`}>{value}</div>
       <div className="text-[10px] text-muted-foreground">{label}</div>
+      {sub && <div className="text-[9px] text-muted-foreground/80">{sub}</div>}
     </div>
   );
 }
@@ -580,8 +657,15 @@ function DiagnosisSection({
   rows: EngineRow[];
   summary: { account_funnel_cta: { reason_ar: string; ctaUrl: string } | null };
 }) {
+  // Spec 015 / FR-009 (T030) — a status-gated row (it carries a badge such
+  // as "موقوف") never appears here, whatever its verdict. The engine already
+  // gives such rows ⏳ GATE; this guard keeps the panel honest on its own,
+  // as it was the one surface that read no status field at all.
   const diagRows = rows.filter(
-    r => (r.verdict === "kill" || r.verdict === "watch") && r.findings.length > 0
+    r =>
+      !r.statusBadge &&
+      (r.verdict === "kill" || r.verdict === "watch") &&
+      r.findings.length > 0
   );
   if (diagRows.length === 0 && !summary.account_funnel_cta) return null;
   return (

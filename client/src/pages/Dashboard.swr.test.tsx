@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import { createElement } from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { createElement, useState } from "react";
 
 /**
  * Round-12 Part A: stale-while-revalidate tests.
@@ -97,7 +97,24 @@ vi.mock("wouter", async () => {
 
 // Heavy children — stubbed so we don't pull in runEngine etc.
 vi.mock("@/components/DecisionTable", () => ({
-  DecisionTable: () => createElement("div", { "data-testid": "decision-table-stub" }, "table"),
+  // Spec 015 / T073 — the stub owns a level state like the real table, so a
+  // test can switch campaign / ad set / ad and prove the summary counters
+  // do not move with the view (FR-030d).
+  DecisionTable: () => {
+    const [level, setLevel] = useState("campaign");
+    return createElement(
+      "div",
+      { "data-testid": "decision-table-stub", "data-level": level },
+      "table",
+      ...["campaign", "adset", "ad"].map(l =>
+        createElement(
+          "button",
+          { key: l, "data-testid": `level-${l}`, onClick: () => setLevel(l) },
+          l
+        )
+      )
+    );
+  },
   SeriesObj: class {},
 }));
 vi.mock("@/components/TodayActions", () => ({
@@ -309,5 +326,113 @@ describe("Dashboard (spec 012) — no '∞' rendering on null targets (SC-021)",
     // Money-formatted 42 with currency "$" → "$42". The exact rendering
     // is money()/num()/pct()-driven; we only assert "∞"-never-rendered.
     expect(allText).toContain("$42");
+  });
+});
+
+// ===========================================================================
+// Spec 015 / US8 (T073, FR-030a, FR-030d) — the red counter shows the split
+// "للإيقاف: {N} مجموعة · {M} إعلان" from the summary, hides a zero part, and
+// never moves when the table changes level.
+// ===========================================================================
+describe("Dashboard — split kill counter (spec 015 / US8)", () => {
+  function withCounts(kill_adsets: number, kill_ads: number) {
+    mocks.dash.data = {
+      ...READY_SNAPSHOT,
+      result: {
+        ...READY_SNAPSHOT.result,
+        summary: {
+          ...READY_SNAPSHOT.result.summary,
+          // counts.kill still includes a campaign row and must NOT be shown.
+          counts: { kill: kill_adsets + kill_ads + 1, watch: 0, continue: 0, rescue: 0, too_early: 0 },
+          kill_adsets,
+          kill_ads,
+        },
+      },
+    };
+    mocks.dash.isLoading = false;
+    mocks.dash.isError = false;
+    mocks.dash.isFetching = false;
+    mocks.refresh.isPending = false;
+  }
+
+  it("renders N مجموعة · M إعلان from the summary split, not counts.kill", () => {
+    withCounts(2, 3);
+    render(<Dashboard />);
+    const counter = screen.getByTestId("kill-counter");
+    // Self-review M2 — number–noun agreement: 2 → dual, 3–10 → plural.
+    expect(counter.textContent).toContain("مجموعتان · 3 إعلانات");
+    expect(counter.textContent).toContain("للإيقاف");
+    expect(counter.textContent).not.toContain("6");
+    // The numeral renders LTR in `.num`.
+    expect(counter.querySelector(".num")?.textContent).toBe("3");
+  });
+
+  it("M2 — 11+ takes the singular tamyiz: 11 مجموعة · 25 إعلانًا", () => {
+    withCounts(11, 25);
+    render(<Dashboard />);
+    expect(screen.getByTestId("kill-counter").textContent).toContain("11 مجموعة · 25 إعلانًا");
+  });
+
+  it("hides a zero part", () => {
+    withCounts(0, 3);
+    render(<Dashboard />);
+    const text = screen.getByTestId("kill-counter").textContent ?? "";
+    expect(text).toContain("3 إعلانات");
+    expect(text).not.toContain("مجموعة");
+  });
+
+  it("both parts zero ⇒ reads as an all-clear 0", () => {
+    withCounts(0, 0);
+    render(<Dashboard />);
+    const text = screen.getByTestId("kill-counter").textContent ?? "";
+    expect(text).toContain("0");
+    expect(text).not.toContain("مجموعة");
+    expect(text).not.toContain("إعلان");
+  });
+
+  it("T073 — switching the table between campaign, ad-set and ad level changes neither counter", () => {
+    withCounts(2, 3);
+    render(<Dashboard />);
+    const before = screen.getByTestId("kill-counter").textContent;
+    for (const level of ["adset", "ad", "campaign"]) {
+      fireEvent.click(screen.getByTestId(`level-${level}`));
+      expect(screen.getByTestId("decision-table-stub").getAttribute("data-level")).toBe(level);
+      expect(screen.getByTestId("kill-counter").textContent).toBe(before);
+    }
+  });
+});
+
+// ===========================================================================
+// Spec 015 / US1 (FR-005, quickstart V3) — the settings-mismatch warning card
+// renders at the top of the dashboard and links to Settings; it is absent
+// when the flag is false.
+// ===========================================================================
+describe("Dashboard — settings-mismatch card (spec 015 / FR-005)", () => {
+  function withFlag(settings_mismatch: boolean) {
+    mocks.dash.data = {
+      ...READY_SNAPSHOT,
+      result: {
+        ...READY_SNAPSHOT.result,
+        summary: { ...READY_SNAPSHOT.result.summary, settings_mismatch },
+      },
+    };
+    mocks.dash.isLoading = false;
+    mocks.dash.isError = false;
+    mocks.dash.isFetching = false;
+    mocks.refresh.isPending = false;
+  }
+
+  it("flag true ⇒ the card shows, with a link to /settings/{accountId}", () => {
+    withFlag(true);
+    render(<Dashboard />);
+    const link = screen.getByText("راجع نوع الفانل في الإعدادات");
+    expect(link.closest("a")?.getAttribute("href")).toBe("/settings/100");
+    expect(screen.getByText(/إعدادات الفانل تعدّ نوعًا من النتائج لا تسجله حملاتك/)).toBeTruthy();
+  });
+
+  it("flag false ⇒ no card", () => {
+    withFlag(false);
+    render(<Dashboard />);
+    expect(screen.queryByText("راجع نوع الفانل في الإعدادات")).toBeNull();
   });
 });

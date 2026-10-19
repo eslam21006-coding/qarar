@@ -406,7 +406,25 @@ export function parseInsightsRow(row: any): WindowMetrics {
   w.leadConversions = pickAction(row.actions, LEAD_ACTION_TYPES);
   w.purchaseConversions = pickAction(row.actions, PURCHASE_ACTION_TYPES);
   w.lpViews = pickAction(row.actions, ["landing_page_view"]);
-  w.conversionValue = pickAction(row.action_values, CONVERSION_ACTION_TYPES);
+  // Spec 015 / FR-026 — absent `action_values` means the value is UNKNOWN,
+  // not zero. `pickAction` cannot express this: it returns 0 both for an
+  // absent array and for a present array with no matching action_type, so
+  // the test has to be made HERE, while `row.action_values` is still in
+  // scope (contracts/unknown-vs-zero.md §U1). A present array keeps its
+  // numeric total, including a genuine 0.
+  w.conversionValue = row.action_values
+    ? pickAction(row.action_values, CONVERSION_ACTION_TYPES)
+    : null;
+  // Spec 015 / FR-027 — the result COUNTS are unknown in exactly one case:
+  // no `actions` array came back AND link clicks happened. That payload is
+  // internally inconsistent (clicks but no actions at all), so the counts
+  // cannot be trusted as zero. Absent `actions` with zero link clicks is
+  // CONSISTENT — nobody clicked — and is a genuine zero that K1/K3 must
+  // still evaluate. A present array with no purchase/lead entry is also a
+  // genuine zero. Only the inconsistent shape sets the flag.
+  if (!row.actions && w.linkClicks > 0) {
+    w.resultsUnknown = true;
+  }
   w.videoViews3s = pickAction(row.actions, ["video_view"]);
   w.thruplays = pickAction(row.video_thruplay_watched_actions, ["video_view"]);
   // `w.cpa` continues to derive from `w.conversions` (legacy contract).
@@ -1368,7 +1386,12 @@ async function fetchBaselines(
     }
   })();
 
-  const cpaP = (async (): Promise<{ cpaValues: number[]; cplValues: number[] }> => {
+  const cpaP = (async (): Promise<{
+    cpaValues: number[];
+    cplValues: number[];
+    purchases30: number | null;
+    leads30: number | null;
+  }> => {
     try {
       const json = await graphGet(
         `/${accountId}/insights`,
@@ -1389,22 +1412,38 @@ async function fetchBaselines(
       const rows = (json.data ?? []) as any[];
       const cpaValues: number[] = [];
       const cplValues: number[] = [];
+      // Spec 015 / FR-025 — 30-day purchase and lead TOTALS, summed from
+      // these same per-day rows. The Settings save-time funnel-type check
+      // reads them from the cached snapshot, so it issues no request of
+      // its own (research R2). Note `purch` uses PURCHASE_ACTION_TYPES,
+      // not CONVERSION_ACTION_TYPES: the latter is purchase-first-then-lead
+      // and would count leads as purchases on a lead-only account.
+      let purchaseTotal = 0;
+      let leadTotal = 0;
       for (const r of rows) {
         const spend = parseFloat(r.spend) || 0;
         const conv = pickAction(r.actions, CONVERSION_ACTION_TYPES);
         const leads = pickAction(r.actions, LEAD_ACTION_TYPES);
+        const purch = pickAction(r.actions, PURCHASE_ACTION_TYPES);
         // Mirror the existing `conv > 0 ? spend / conv : NaN` +
         // `.filter(Number.isFinite)` shape (legacy contract, contracts/
         // conversion-measurement.md §6).
         cpaValues.push(conv > 0 ? spend / conv : NaN);
         cplValues.push(leads > 0 ? spend / leads : NaN);
+        purchaseTotal += purch;
+        leadTotal += leads;
       }
       return {
         cpaValues: cpaValues.filter((v: number) => Number.isFinite(v)),
         cplValues: cplValues.filter((v: number) => Number.isFinite(v)),
+        // No rows at all = we know nothing about the last 30 days, which
+        // is not the same as "zero purchases" (principle 10). The check
+        // that reads these skips silently on null.
+        purchases30: rows.length > 0 ? purchaseTotal : null,
+        leads30: rows.length > 0 ? leadTotal : null,
       };
     } catch {
-      return { cpaValues: [], cplValues: [] };
+      return { cpaValues: [], cplValues: [], purchases30: null, leads30: null };
     }
   })();
 
@@ -1415,5 +1454,9 @@ async function fetchBaselines(
     cpaMedian30: median(cpaResult.cpaValues),
     cplMedian30: median(cpaResult.cplValues),
     cpmNow: cpm.cpmNow,
+    // Spec 015 / FR-025 — persisted with the rest of `baselines` into
+    // `snapshots.payload`; no extra Graph call (research R2).
+    purchases30: cpaResult.purchases30,
+    leads30: cpaResult.leads30,
   };
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { deriveTargets, runEngine } from "./engine";
+import { deriveTargets, judgingTargets, runEngine } from "./engine";
 import { buildDemoSnapshot, DEMO_FUNNEL } from "./demo";
+import { parseInsightsRow } from "./meta";
 import { FunnelInputs, type AccountSnapshotPayload } from "../shared/qarar";
 
 const baseFunnel: FunnelInputs = {
@@ -187,10 +188,14 @@ describe("runEngine — summary & top-3", () => {
     }
   });
 
-  it("verdict counts add up to total rows", () => {
+  it("verdict counts add up to the ad-set and ad rows — campaigns are never counted (spec 015 / FR-030)", () => {
+    // Spec 015 / T075 — a campaign is a summary of its ad sets (rulebook
+    // §5.0); counting it double-counts the same loss. The demo's two
+    // campaign rows (cmp_test, cmp_scale) are therefore not in the sum.
     const c = result.summary.counts;
     const sum = c.kill + c.watch + c.continue + c.rescue + c.too_early;
-    expect(sum).toBe(result.rows.length);
+    expect(sum).toBe(result.rows.filter(r => r.level !== "campaign").length);
+    expect(sum).toBe(result.rows.length - 2);
   });
 
   it("3-day spend equals campaign-level total", () => {
@@ -1394,5 +1399,774 @@ describe("T033 — appointment stale-input no-verdict (US1 / FR-015a / SC-018)",
     // No reason_ar / action_ar should carry a money() of the stale
     // aov/htoConversionRate-derived figures.
     expect(reasonTextMentionsStale(result)).toBe(false);
+  });
+});
+
+// ===========================================================================
+// Spec 015 / US1 — event-match gate (FR-001…FR-005, rulebook v2.2 §4.1).
+// Live-account evidence: a webinar-configured account whose campaigns record
+// PURCHASES read as zero-result everywhere, so $809 / 16 sales was killed
+// with K1 "صرفت $809 بدون أي نتيجة". The gate stops the engine judging on a
+// zero that only exists because the settings count the wrong event.
+// ===========================================================================
+describe("T012-T016 — event-match gate (spec 015 / US1)", () => {
+  const MISMATCH = "إعدادات الفانل تعدّ نوعًا من النتائج لا تسجله هذه الحملة";
+
+  /** Stamp every object in the demo tree with one explicit w3d shape. */
+  function buildSnap(opts: {
+    leadConversions?: number;
+    purchaseConversions?: number;
+    conversions: number;
+    spend3d: number;
+    resultsUnknown?: boolean;
+  }) {
+    const snap = buildDemoSnapshot();
+    for (const o of snap.objects) {
+      o.w3d = {
+        spend: opts.spend3d,
+        impressions: 20000,
+        reach: 18000,
+        frequency: 1.2,
+        clicks: 400,
+        linkClicks: 340,
+        ctrAll: 2.0,
+        ctrLink: 1.7,
+        cpm: 18,
+        cpc: 1.5,
+        conversions: opts.conversions,
+        conversionValue: opts.conversions * 50,
+        lpViews: 300,
+        cpa: opts.conversions > 0 ? opts.spend3d / opts.conversions : null,
+      };
+      if (opts.leadConversions !== undefined) {
+        o.w3d.leadConversions = opts.leadConversions;
+      }
+      if (opts.purchaseConversions !== undefined) {
+        o.w3d.purchaseConversions = opts.purchaseConversions;
+      }
+      if (opts.resultsUnknown) {
+        o.w3d.resultsUnknown = true;
+      }
+    }
+    return snap;
+  }
+
+  // Counts registrations; demo baseline cplMedian30 = 39 → unitTarget 39.
+  const WEBINAR_FUNNEL: FunnelInputs = {
+    archetype: "webinar",
+    liveComponent: true,
+    aov: 0,
+    htoPrice: 2000,
+    htoConversionRate: 0,
+    frontEndRoas: 1.0,
+    arena: "broad",
+    showUpRate: 70,
+    closeRate: 22,
+  };
+
+  // Counts purchases; unitTarget = aov / frontEndRoas = 43.
+  const PAID_LTO_FUNNEL: FunnelInputs = {
+    archetype: "paid_lto",
+    liveComponent: false,
+    aov: 43,
+    htoPrice: 3500,
+    htoConversionRate: 3,
+    frontEndRoas: 1.0,
+    arena: "broad",
+  };
+
+  it("T012 — webinar, 0 registrations + 16 purchases + $809 ⇒ ⏳ GATE, not K1", () => {
+    const snap = buildSnap({
+      leadConversions: 0,
+      purchaseConversions: 16,
+      conversions: 16,
+      spend3d: 809,
+    });
+    const result = runEngine(snap, WEBINAR_FUNNEL);
+    for (const r of result.rows) {
+      expect(r.verdict, `${r.id} verdict`).toBe("too_early");
+      expect(r.rule, `${r.id} rule`).toBe("GATE");
+      expect(r.reason_ar, `${r.id} reason`).toContain(MISMATCH);
+      expect(r.action_ar, `${r.id} action`).toContain("راجع نوع الفانل في الإعدادات");
+    }
+    // The defect this closes: no row may claim "no result" or be killed.
+    expect(result.rows.some(r => r.rule === "K1")).toBe(false);
+    expect(result.rows.some(r => /بدون أي نتيجة/.test(r.reason_ar))).toBe(false);
+  });
+
+  it("T013 — webinar, BOTH families zero ⇒ real zero, K1 fires unchanged", () => {
+    const snap = buildSnap({
+      leadConversions: 0,
+      purchaseConversions: 0,
+      conversions: 0,
+      spend3d: 809, // ≥ 2 × 39
+    });
+    const result = runEngine(snap, WEBINAR_FUNNEL);
+    // Rulebook §4.1: "الحدثان = 0 → صفر حقيقي — أكمل للقواعد".
+    expect(result.rows.some(r => r.rule === "K1")).toBe(true);
+    expect(result.rows.some(r => r.reason_ar.includes(MISMATCH))).toBe(false);
+  });
+
+  it("T014 — paid_lto, 0 purchases + positive registrations ⇒ gate fires, registration noun", () => {
+    const snap = buildSnap({
+      leadConversions: 12,
+      purchaseConversions: 0,
+      // Legacy blended `conversions` falls through to the lead count when
+      // there are no purchases — which is exactly why the gate reads the
+      // split fields rather than `effectiveConversions`.
+      conversions: 12,
+      spend3d: 500,
+    });
+    const result = runEngine(snap, PAID_LTO_FUNNEL);
+    for (const r of result.rows) {
+      expect(r.verdict, `${r.id} verdict`).toBe("too_early");
+      expect(r.rule, `${r.id} rule`).toBe("GATE");
+      expect(r.reason_ar, `${r.id} reason`).toContain(MISMATCH);
+      // The campaign records the OTHER family — registrations here.
+      expect(r.reason_ar, `${r.id} noun`).toContain("تسجيلات");
+    }
+  });
+
+  it("T015 — the gate fires at ad, ad-set AND campaign level", () => {
+    const snap = buildSnap({
+      leadConversions: 0,
+      purchaseConversions: 16,
+      conversions: 16,
+      spend3d: 809,
+    });
+    const result = runEngine(snap, WEBINAR_FUNNEL);
+    for (const level of ["ad", "adset", "campaign"] as const) {
+      const rows = result.rows.filter(r => r.level === level);
+      expect(rows.length, `${level} rows exist`).toBeGreaterThan(0);
+      for (const r of rows) {
+        expect(r.rule, `${level} ${r.id} rule`).toBe("GATE");
+        expect(r.reason_ar, `${level} ${r.id} reason`).toContain(MISMATCH);
+      }
+    }
+  });
+
+  it("T016 — resultsUnknown ⇒ the event-match gate does NOT fire", () => {
+    const snap = buildSnap({
+      leadConversions: 0,
+      purchaseConversions: 16,
+      conversions: 16,
+      spend3d: 809,
+      resultsUnknown: true,
+    });
+    const result = runEngine(snap, WEBINAR_FUNNEL);
+    // Counts are unknown, not zero — the mismatch comparison is meaningless,
+    // so this gate must stand down. (Full unknown-data handling, including
+    // standing K1 down, is US6 / Phase 8 — not asserted here.)
+    expect(result.rows.some(r => r.reason_ar.includes(MISMATCH))).toBe(false);
+  });
+});
+
+// ===========================================================================
+// Spec 015 / US2 — nothing that is switched off gets judged (FR-006–FR-010).
+// The status gate is step 1 of constitution v1.1.2 Principle I. Each gated
+// state carries a display badge naming its real state; the verdict stays
+// ⏳ GATE in every case (the badge is never a sixth verdict).
+// ===========================================================================
+describe("T022-T025 — status gate badges and coverage (spec 015 / US2)", () => {
+  /** Run the demo with one object's effective status overridden. */
+  function runWithStatus(id: string, effectiveStatus: string) {
+    const snap = buildDemoSnapshot();
+    const o = snap.objects.find(x => x.id === id)!;
+    o.effectiveStatus = effectiveStatus;
+    const result = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+    return result.rows.find(r => r.id === id)!;
+  }
+
+  const BADGE_GROUPS: Array<[string, string]> = [
+    ["PAUSED", "موقوف"],
+    ["CAMPAIGN_PAUSED", "موقوف"],
+    ["ADSET_PAUSED", "موقوف"],
+    ["PENDING_REVIEW", "قيد المراجعة"],
+    ["DISAPPROVED", "مرفوض"],
+    ["WITH_ISSUES", "به مشكلة — راجعه في مدير الإعلانات"],
+    ["PENDING_BILLING_INFO", "به مشكلة — راجعه في مدير الإعلانات"],
+  ];
+
+  for (const [status, badge] of BADGE_GROUPS) {
+    it(`T022 — ${status} ⇒ ⏳ GATE with badge "${badge}"`, () => {
+      // ad_k3 fires K3 (a kill) while active — the strongest test that the
+      // gate runs ahead of every rule.
+      const row = runWithStatus("ad_k3", status);
+      expect(row.verdict).toBe("too_early");
+      expect(row.rule).toBe("GATE");
+      expect(row.statusBadge).toBe(badge);
+      // FR-010 — never tell the user to stop what is not running.
+      expect(row.action_ar).not.toContain("أوقِف");
+      // Only the paused family may describe the object as paused.
+      if (badge !== "موقوف") {
+        expect(row.reason_ar).not.toContain("موقوف");
+      }
+    });
+  }
+
+  it("T022 — an active row carries no badge", () => {
+    const snap = buildDemoSnapshot();
+    const result = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+    for (const r of result.rows) expect(r.statusBadge, r.id).toBeNull();
+  });
+
+  for (const transient of ["IN_PROCESS", "PREAPPROVED"]) {
+    it(`T023 — ${transient} is treated as active and judged by the rules`, () => {
+      const active = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs)
+        .rows.find(r => r.id === "ad_k3")!;
+      const row = runWithStatus("ad_k3", transient);
+      // Identical verdict to the ACTIVE run, so nothing flickers after an edit.
+      expect(row.verdict).toBe(active.verdict);
+      expect(row.rule).toBe(active.rule);
+      expect(row.reason_ar).toBe(active.reason_ar);
+      expect(row.statusBadge).toBeNull();
+    });
+  }
+
+  it("T023 — a transient ad set still enters the summary counters", () => {
+    const snap = buildDemoSnapshot();
+    snap.objects.find(x => x.id === "as_k1")!.effectiveStatus = "IN_PROCESS";
+    const before = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs);
+    const after = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+    expect(after.summary.counts).toEqual(before.summary.counts);
+    expect(after.summary.bleed_daily).toBe(before.summary.bleed_daily);
+  });
+
+  it("T024 — a paused non-exempt CAMPAIGN ⇒ ⏳ GATE (new: campaigns had no status check)", () => {
+    const active = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs)
+      .rows.find(r => r.id === "cmp_scale")!;
+    expect(active.rule).not.toBe("GATE"); // judged in full while active
+    const row = runWithStatus("cmp_scale", "PAUSED");
+    expect(row.verdict).toBe("too_early");
+    expect(row.rule).toBe("GATE");
+    expect(row.statusBadge).toBe("موقوف");
+    expect(row.action_ar).not.toContain("+20%");
+  });
+
+  it("T025 — a paused ad at 0% spend share ⇒ ⏳ موقوف, not 🔴 K5", () => {
+    const snap = buildDemoSnapshot();
+    const ad = snap.objects.find(x => x.id === "ad_rescue")!;
+    ad.effectiveStatus = "PAUSED";
+    ad.ageDays = 8;
+    ad.spendSharePct = 0;
+    ad.w3d = { ...ad.w3d, spend: 0, impressions: 0, ctrLink: 0, conversions: 0,
+      leadConversions: 0, purchaseConversions: 0, cpa: null };
+    for (const d of ad.daily7) Object.assign(d, { spend: 0, impressions: 0, ctrLink: 0 });
+    const row = runEngine(snap, DEMO_FUNNEL as FunnelInputs).rows.find(r => r.id === "ad_rescue")!;
+    expect(row.verdict).toBe("too_early");
+    expect(row.rule).toBe("GATE");
+    expect(row.statusBadge).toBe("موقوف");
+  });
+
+  // Self-review M1 — the status-gate copy names the row's own level, with
+  // gender agreement: الإعلان (masc.), المجموعة / الحملة (fem.). The ad copy
+  // is the pre-015 text, unchanged.
+  const LEVEL_COPY: Array<[string, string, string, string]> = [
+    // [id, status, reason, action]
+    ["ad_k3", "PAUSED", "هذا الإعلان موقوف الآن — لا يصرف ولا يجمع بيانات", "شغّله إن أردت تقييمه، أو احذفه إن لم تعد تحتاجه"],
+    ["as_k1", "PAUSED", "هذه المجموعة موقوفة الآن — لا تصرف ولا تجمع بيانات", "شغّلها إن أردت تقييمها، أو احذفها إن لم تعد تحتاجها"],
+    ["cmp_scale", "PAUSED", "هذه الحملة موقوفة الآن — لا تصرف ولا تجمع بيانات", "شغّلها إن أردت تقييمها، أو احذفها إن لم تعد تحتاجها"],
+    ["ad_k3", "PENDING_REVIEW", "ميتا تراجع هذا الإعلان الآن — لم يبدأ الظهور بعد", "انتظر حتى تنتهي المراجعة، ثم نحكم عليه"],
+    ["as_k1", "PENDING_REVIEW", "ميتا تراجع هذه المجموعة الآن — لم تبدأ الظهور بعد", "انتظر حتى تنتهي المراجعة، ثم نحكم عليها"],
+    ["cmp_scale", "PENDING_REVIEW", "ميتا تراجع هذه الحملة الآن — لم تبدأ الظهور بعد", "انتظر حتى تنتهي المراجعة، ثم نحكم عليها"],
+    ["ad_k3", "DISAPPROVED", "رفضت ميتا هذا الإعلان — لا يظهر ولا يصرف", "افتح مدير الإعلانات واقرأ سبب الرفض، ثم عدّله أو احذفه"],
+    ["as_k1", "DISAPPROVED", "رفضت ميتا هذه المجموعة — لا تظهر ولا تصرف", "افتح مدير الإعلانات واقرأ سبب الرفض، ثم عدّلها أو احذفها"],
+    ["cmp_scale", "DISAPPROVED", "رفضت ميتا هذه الحملة — لا تظهر ولا تصرف", "افتح مدير الإعلانات واقرأ سبب الرفض، ثم عدّلها أو احذفها"],
+    ["ad_k3", "WITH_ISSUES", "هذا الإعلان لا يظهر الآن بسبب مشكلة عند ميتا — لا يصرف ولا يجمع بيانات", "افتح مدير الإعلانات وأصلح المشكلة، ثم نحكم عليه"],
+    ["as_k1", "WITH_ISSUES", "هذه المجموعة لا تظهر الآن بسبب مشكلة عند ميتا — لا تصرف ولا تجمع بيانات", "افتح مدير الإعلانات وأصلح المشكلة، ثم نحكم عليها"],
+    ["cmp_scale", "WITH_ISSUES", "هذه الحملة لا تظهر الآن بسبب مشكلة عند ميتا — لا تصرف ولا تجمع بيانات", "افتح مدير الإعلانات وأصلح المشكلة، ثم نحكم عليها"],
+  ];
+
+  for (const [id, status, reason, action] of LEVEL_COPY) {
+    it(`M1 — ${id} ${status} ⇒ copy names its own level`, () => {
+      const row = runWithStatus(id, status);
+      expect(row.verdict).toBe("too_early");
+      expect(row.rule).toBe("GATE");
+      expect(row.reason_ar).toBe(reason);
+      expect(row.action_ar).toBe(action);
+    });
+  }
+});
+
+describe("T032 — no gated row tells the user to stop it (spec 015 / FR-010)", () => {
+  const GATED = [
+    "PAUSED", "CAMPAIGN_PAUSED", "ADSET_PAUSED", "PENDING_REVIEW",
+    "DISAPPROVED", "WITH_ISSUES", "PENDING_BILLING_INFO", "ARCHIVED", "DELETED",
+  ];
+  for (const status of GATED) {
+    it(`every demo object set to ${status} ⇒ GATE, and no reason/action says "stop"`, () => {
+      for (const funnel of [DEMO_FUNNEL as FunnelInputs, { ...(DEMO_FUNNEL as FunnelInputs), archetype: "webinar" as const }]) {
+        const snap = buildDemoSnapshot();
+        for (const o of snap.objects) o.effectiveStatus = status;
+        const result = runEngine(snap, funnel);
+        for (const r of result.rows) {
+          expect(r.rule, `${status} ${r.id}`).toBe("GATE");
+          expect(`${r.reason_ar} ${r.action_ar}`, `${status} ${r.id}`).not.toMatch(/أوقِف|أوقف|إيقاف/);
+        }
+        // Nothing gated may reach the strip either (FR-009).
+        expect(Object.values(result.summary.counts).reduce((a, b) => a + b, 0)).toBe(0);
+        expect(result.summary.top_3_actions).toEqual([]);
+      }
+    });
+  }
+});
+
+// ===========================================================================
+// Spec 015 / US3 — an ad nobody has seen is not called weak (FR-011–FR-016,
+// contracts/starvation-and-scale.md §K2/§K3). Fixtures reshape the demo's
+// `ad_rescue` (inside `as_good`) — demo ctrLinkMedian90 = 1.7, paid_lto
+// unitTarget = 43.
+// ===========================================================================
+describe("T033-T038 — starvation floor (spec 015 / US3)", () => {
+  const FLOOR_REASON = "ميتا لا تعطيه فرصة ظهور كافية للحكم عليه";
+
+  function starved(opts: {
+    impressions: number;
+    ctrLink: number;
+    conversions: number;
+    /** parent ad set misses the $43 target (else it hits it at $36) */
+    parentMissingTarget?: boolean;
+    /** per-day ad spend against parent spend of 60/61/58 */
+    adDaily?: number[];
+    adDailyCount?: number;
+  }) {
+    const snap = buildDemoSnapshot();
+    const ad = snap.objects.find(o => o.id === "ad_rescue")!;
+    const parent = snap.objects.find(o => o.id === "as_good")!;
+    const adDaily = opts.adDaily ?? [4, 4, 4];
+    const spend = adDaily.reduce((a, b) => a + b, 0);
+    const linkClicks = Math.round((opts.ctrLink / 100) * opts.impressions);
+    ad.w3d = {
+      ...ad.w3d,
+      spend,
+      impressions: opts.impressions,
+      ctrLink: opts.ctrLink,
+      linkClicks,
+      lpViews: Math.round(linkClicks * 0.85),
+      conversions: opts.conversions,
+      leadConversions: opts.conversions,
+      purchaseConversions: opts.conversions,
+      cpa: opts.conversions > 0 ? spend / opts.conversions : null,
+    };
+    // ad.daily7 aligned to the parent's last three dates
+    const parentLast3 = [...parent.daily7].sort((a, b) => a.date.localeCompare(b.date)).slice(-3);
+    ad.daily7 = parentLast3
+      .slice(3 - (opts.adDailyCount ?? 3))
+      .map((p, i, arr) => ({ ...ad.daily7[0], date: p.date, spend: adDaily[3 - arr.length + i] }));
+    // 3-day share of the parent's window, as meta.ts computes it
+    ad.spendSharePct = (spend / parentLast3.reduce((s, d) => s + d.spend, 0)) * 100;
+    if (opts.parentMissingTarget) {
+      parent.w3d = { ...parent.w3d, conversions: 1, leadConversions: 1, purchaseConversions: 1, cpa: parent.w3d.spend };
+    }
+    const row = runEngine(snap, DEMO_FUNNEL as FunnelInputs).rows.find(r => r.id === "ad_rescue")!;
+    return row;
+  }
+
+  it("T033 — starved ad with 0 impressions ⇒ ⏳ K5, no-exposure reason", () => {
+    const row = starved({ impressions: 0, ctrLink: 0, conversions: 0, parentMissingTarget: true });
+    expect(row.verdict).toBe("too_early");
+    expect(row.rule).toBe("K5");
+    expect(row.reason_ar).toBe(FLOOR_REASON);
+    expect(row.action_ar).toBe("اتركه — لا قرار الآن");
+  });
+
+  it("T034 — starved, 800 impressions, CTR below median, 0 results, parent missing target ⇒ 🔴 K5 unchanged", () => {
+    const row = starved({ impressions: 800, ctrLink: 1.0, conversions: 0, parentMissingTarget: true });
+    expect(row.verdict).toBe("kill");
+    expect(row.rule).toBe("K5");
+  });
+
+  it("T035 — starved, 300 impressions, CTR above median ⇒ ⏳, not 🛟", () => {
+    const row = starved({ impressions: 300, ctrLink: 3.4, conversions: 0 });
+    expect(row.verdict).toBe("too_early");
+    expect(row.rule).toBe("K5");
+    expect(row.reason_ar).toBe(FLOOR_REASON);
+  });
+
+  it("T035 — 300 impressions, CTR below median, parent missing target ⇒ ⏳, not 🔴", () => {
+    const row = starved({ impressions: 300, ctrLink: 1.0, conversions: 0, parentMissingTarget: true });
+    expect(row.verdict).toBe("too_early");
+    expect(row.rule).toBe("K5");
+  });
+
+  it("T035 — at the floor (500 impressions) the CTR rescue fires", () => {
+    const row = starved({ impressions: 500, ctrLink: 3.4, conversions: 0 });
+    expect(row.verdict).toBe("rescue");
+    expect(row.rule).toBe("K5");
+  });
+
+  it("T036 — below 10% on the 3-day total but ≥ 10% on one day ⇒ the matrix does not fire", () => {
+    // 3/60 = 5%, 3/61 ≈ 4.9%, 8/58 ≈ 13.8%; total 14/179 ≈ 7.8%
+    const row = starved({ impressions: 1100, ctrLink: 3.4, conversions: 0, adDaily: [3, 3, 8] });
+    expect(row.spend_share_pct).toBeLessThan(10);
+    expect(row.rule).not.toBe("K5");
+  });
+
+  it("T037 — the CPA rescue needs ≥ 1 counted conversion; with one it fires even under the floor", () => {
+    // 0 conversions: effectiveCpa() is null, so no CPA rescue; CTR half is floored.
+    const none = starved({ impressions: 300, ctrLink: 1.0, conversions: 0 });
+    expect(none.verdict).not.toBe("rescue");
+    // 1 conversion at $12 ≤ $43 target: the CPA half rescues, floor does not apply to it.
+    const one = starved({ impressions: 300, ctrLink: 1.0, conversions: 1 });
+    expect(one.verdict).toBe("rescue");
+    expect(one.rule).toBe("K5");
+  });
+
+  it("T038 — fewer than three usable daily7 slices ⇒ the matrix does not fire", () => {
+    const row = starved({ impressions: 1100, ctrLink: 3.4, conversions: 0, adDailyCount: 2 });
+    expect(row.rule).not.toBe("K5");
+  });
+
+  it("T042 — resultsUnknown ⇒ the matrix does not read the zero as weakness", () => {
+    const snapRow = (() => {
+      const snap = buildDemoSnapshot();
+      const ad = snap.objects.find(o => o.id === "ad_rescue")!;
+      const parent = snap.objects.find(o => o.id === "as_good")!;
+      ad.w3d = { ...ad.w3d, impressions: 800, ctrLink: 1.0, linkClicks: 8, conversions: 0,
+        leadConversions: 0, purchaseConversions: 0, cpa: null, resultsUnknown: true };
+      parent.w3d = { ...parent.w3d, conversions: 1, leadConversions: 1, purchaseConversions: 1, cpa: parent.w3d.spend };
+      return runEngine(snap, DEMO_FUNNEL as FunnelInputs).rows.find(r => r.id === "ad_rescue")!;
+    })();
+    expect(snapRow.verdict).not.toBe("kill");
+  });
+});
+
+describe("T046 — dashboard and Settings report one target and one source (spec 015 / FR-020)", () => {
+  const cases: Array<[string, FunnelInputs]> = [
+    ["paid_lto", DEMO_FUNNEL as FunnelInputs],
+    ["webinar (baseline-sourced)", {
+      archetype: "webinar", liveComponent: true, aov: 0, htoPrice: 600,
+      htoConversionRate: 0, frontEndRoas: 1, arena: "broad", showUpRate: 70, closeRate: 22,
+    }],
+  ];
+  for (const [name, funnel] of cases) {
+    it(`${name}: summary.unit_target/source equal judgingTargets() — the pair funnel.get returns`, () => {
+      const snap = buildDemoSnapshot();
+      const result = runEngine(snap, funnel);
+      const settings = judgingTargets(funnel, snap, "USD");
+      expect(result.summary.unit_target).toBe(settings.unitTarget);
+      expect(result.summary.unit_target_source).toBe(settings.unitTargetSource);
+      expect(result.summary.unit_target).toBe(result.targets.unitTarget);
+    });
+  }
+
+  it("webinar with a 30-day baseline judges on the baseline, not funnel math", () => {
+    const snap = buildDemoSnapshot(); // cplMedian30 = 39
+    const t = judgingTargets(cases[1][1], snap, "USD");
+    expect(t.unitTargetSource).toBe("cpl_baseline");
+    expect(t.unitTarget).toBe(39);
+  });
+});
+
+// ===========================================================================
+// Spec 015 / US6 — a number Meta did not send is not a zero (FR-026–FR-028,
+// contracts/unknown-vs-zero.md). Fixtures run a Meta-shaped insights row
+// through the real `parseInsightsRow`, so the three payload shapes are
+// tested end to end: parser → WindowMetrics → engine.
+// ===========================================================================
+describe("T060-T064 — unknown is not zero (spec 015 / US6)", () => {
+  const UNKNOWN_REASON = "ميتا لم ترسل عدد النتائج";
+
+  /** A Meta insights row shaped like the object's current window. */
+  function metaRow(
+    w: { spend: number; impressions: number; ctrLink: number },
+    opts: { linkClicks: number; actions?: unknown[]; actionValues?: unknown[] }
+  ) {
+    const row: Record<string, unknown> = {
+      spend: String(w.spend),
+      impressions: String(w.impressions),
+      inline_link_clicks: String(opts.linkClicks),
+      inline_link_click_ctr: String(w.ctrLink),
+    };
+    if (opts.actions !== undefined) row.actions = opts.actions;
+    if (opts.actionValues !== undefined) row.action_values = opts.actionValues;
+    return row;
+  }
+
+  /** Replace one window of one demo object with a parsed Meta row. */
+  function withParsed(
+    id: string,
+    opts: { linkClicks: number; actions?: unknown[]; actionValues?: unknown[] },
+    window: "w3d" | "today" = "w3d"
+  ) {
+    const snap = buildDemoSnapshot();
+    const o = snap.objects.find(x => x.id === id)!;
+    o[window] = parseInsightsRow(metaRow(o[window], opts));
+    return { snap, o };
+  }
+
+  const rowOf = (snap: AccountSnapshotPayload, id: string) =>
+    runEngine(snap, DEMO_FUNNEL as FunnelInputs).rows.find(r => r.id === id)!;
+
+  // ---- sales value (FR-026) ------------------------------------------------
+
+  it("T060 — no sales-value data anywhere ⇒ no '0.0x' text, no ROAS figure, and no verdict moves", () => {
+    const base = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs);
+    const snap = buildDemoSnapshot();
+    for (const o of snap.objects) {
+      o.w3d.conversionValue = null;
+      o.today.conversionValue = null;
+      for (const d of o.daily7) d.conversionValue = null;
+    }
+    const result = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+    for (const r of result.rows) {
+      expect(r.roas_3d, r.id).toBeNull();
+      expect(`${r.reason_ar} ${r.action_ar}`, r.id).not.toMatch(/0\.0x/);
+      // No rule reads Meta's sales value: the campaign "return" (S2/W6) is
+      // counts × the funnel's configured buyer value. So an unknown value
+      // changes no verdict, which proves no return rule fires on it.
+      const b = base.rows.find(x => x.id === r.id)!;
+      expect([r.verdict, r.rule, r.reason_ar], r.id).toEqual([b.verdict, b.rule, b.reason_ar]);
+    }
+  });
+
+  it("T060 — parser: a campaign with results > 0 and no action_values carries conversionValue null", () => {
+    const { o } = withParsed("cmp_scale", {
+      linkClicks: 800,
+      actions: [{ action_type: "purchase", value: "19" }],
+    });
+    expect(o.w3d.conversions).toBe(19);
+    expect(o.w3d.conversionValue).toBeNull();
+  });
+
+  it("T061 — sales-value data present with a zero total ⇒ a genuine 0, used as before", () => {
+    const { snap, o } = withParsed("cmp_scale", {
+      linkClicks: 800,
+      actions: [{ action_type: "purchase", value: "19" }],
+      actionValues: [{ action_type: "purchase", value: "0" }],
+    });
+    expect(o.w3d.conversionValue).toBe(0);
+    // ROAS column keeps its pre-015 rule for a real zero: "—" (null), not 0.00x.
+    expect(rowOf(snap, "cmp_scale").roas_3d).toBeNull();
+  });
+
+  // ---- result counts (FR-027) ------------------------------------------------
+
+  it("T062 — results absent + link clicks > 0 ⇒ counts unknown, ⏳ naming what is missing, K1 stands down (ad set)", () => {
+    const before = rowOf(buildDemoSnapshot(), "as_k1");
+    expect(before.rule).toBe("K1");
+    const { snap, o } = withParsed("as_k1", { linkClicks: 50 });
+    expect(o.w3d.resultsUnknown).toBe(true);
+    const row = rowOf(snap, "as_k1");
+    expect(row.verdict).toBe("too_early");
+    expect(row.rule).toBe("GATE");
+    expect(row.reason_ar).toContain(UNKNOWN_REASON);
+    expect(row.reason_ar).not.toContain("بدون أي نتيجة");
+  });
+
+  it("T062 — K3 stands down on an unknown-count ad (ad level)", () => {
+    expect(rowOf(buildDemoSnapshot(), "ad_k3").rule).toBe("K3");
+    const { snap } = withParsed("ad_k3", { linkClicks: 21 });
+    const row = rowOf(snap, "ad_k3");
+    expect(row.verdict).toBe("too_early");
+    expect(row.reason_ar).toContain(UNKNOWN_REASON);
+  });
+
+  it("T062 — campaign level: unknown counts ⇒ ⏳, no K1 and no W6 '0.0x'", () => {
+    const { snap } = withParsed("cmp_scale", { linkClicks: 800 });
+    const row = rowOf(snap, "cmp_scale");
+    expect(row.verdict).toBe("too_early");
+    expect(row.reason_ar).toContain(UNKNOWN_REASON);
+    expect(row.reason_ar).not.toMatch(/0\.0x/);
+  });
+
+  it("T062 — today's window unknown ⇒ the circuit breaker stands down", () => {
+    expect(rowOf(buildDemoSnapshot(), "as_cb").rule).toBe("CB2");
+    const { snap } = withParsed("as_cb", { linkClicks: 30 }, "today");
+    expect(rowOf(snap, "as_cb").rule).not.toBe("CB2");
+  });
+
+  it("T063 — results absent + link clicks = 0 ⇒ genuine zero: K1 and K3 evaluate normally", () => {
+    const k1 = withParsed("as_k1", { linkClicks: 0 });
+    expect(k1.o.w3d.resultsUnknown).toBeUndefined();
+    expect(rowOf(k1.snap, "as_k1").rule).toBe("K1");
+    const k3 = withParsed("ad_k3", { linkClicks: 0 });
+    expect(rowOf(k3.snap, "ad_k3").rule).toBe("K3");
+  });
+
+  it("T064 — results present but no purchase/registration entry ⇒ genuine zero: K1 and K3 evaluate normally", () => {
+    const actions = [{ action_type: "landing_page_view", value: "40" }];
+    const k1 = withParsed("as_k1", { linkClicks: 50, actions });
+    expect(k1.o.w3d.resultsUnknown).toBeUndefined();
+    expect(k1.o.w3d.conversions).toBe(0);
+    expect(rowOf(k1.snap, "as_k1").rule).toBe("K1");
+    const k3 = withParsed("ad_k3", { linkClicks: 21, actions });
+    expect(rowOf(k3.snap, "ad_k3").rule).toBe("K3");
+  });
+});
+
+// ===========================================================================
+// Spec 015 / US7 — no "raise the budget" advice while the cost is above
+// target (FR-029, contracts/starvation-and-scale.md §K4). Funnel: AOV $43,
+// ROAS 1 ⇒ target $43; HTO $4,900 × 3% ⇒ full buyer value $190.
+// ===========================================================================
+describe("T068-T069 — scale guard (spec 015 / US7)", () => {
+  const SCALE_FUNNEL: FunnelInputs = {
+    archetype: "paid_lto",
+    liveComponent: false,
+    aov: 43,
+    htoPrice: 4900,
+    htoConversionRate: 3,
+    frontEndRoas: 1.0,
+    arena: "broad",
+  };
+
+  function campaign(spend: number, conversions: number) {
+    const snap = buildDemoSnapshot();
+    const c = snap.objects.find(o => o.id === "cmp_scale")!;
+    c.w3d = {
+      ...c.w3d,
+      spend,
+      conversions,
+      leadConversions: conversions,
+      purchaseConversions: conversions,
+      cpa: spend / conversions,
+    };
+    const result = runEngine(snap, SCALE_FUNNEL);
+    expect(result.targets.unitTarget).toBe(43);
+    expect(result.targets.fullBuyerValue).toBe(190);
+    return result.rows.find(r => r.id === "cmp_scale")!;
+  }
+
+  it("T068 — full return 3.2 with cost at 1.38× target ⇒ no +20%, 'واصل بدون زيادة الميزانية', watch (W1 band)", () => {
+    // $712 / 12 = $59.33 = 1.38 × $43; 12 × $190 / $712 = 3.20x
+    const row = campaign(712, 12);
+    expect(row.action_ar).toBe("واصل بدون زيادة الميزانية");
+    expect(row.action_ar).not.toMatch(/20%/);
+    expect(row.verdict).toBe("watch");
+    expect(row.rule).toBe("W1");
+    expect(row.reason_ar).toContain("3.2x");
+  });
+
+  it("T068 — cost above 1.5× target with a return still ≥ 2 ⇒ W6 'كمّل بحذر', no +20%", () => {
+    // $700 / 10 = $70 = 1.63 × $43; 10 × $190 / $700 = 2.71x
+    const row = campaign(700, 10);
+    expect(row.action_ar).toBe("واصل بدون زيادة الميزانية");
+    expect(row.verdict).toBe("watch");
+    expect(row.rule).toBe("W6");
+    expect(row.reason_ar).toContain("كمّل بحذر — الحكم النهائي للفانل");
+  });
+
+  it("T069 — at or below target with a healthy return ⇒ the S2 +20% action is unchanged", () => {
+    const S2_ACTION = "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة";
+    // below target: $516 / 12 = $43.00 exactly at target
+    const at = campaign(516, 12);
+    expect([at.verdict, at.rule]).toEqual(["continue", "S2"]);
+    // demo cmp_scale with the demo funnel: CPA ≈ $37 < $43
+    const demo = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs).rows.find(
+      r => r.id === "cmp_scale"
+    )!;
+    expect(demo.rule).toBe("S2");
+    expect(demo.action_ar).toBe(S2_ACTION);
+    // and no campaign anywhere in the demo gets +20% above its target
+  });
+});
+
+// ===========================================================================
+// Spec 015 / Polish — T081 (FR-035, analysis finding U2) and T082 (SC-009).
+// ===========================================================================
+describe("T081 — ad-level K1 names the ad (spec 015 / FR-035)", () => {
+  /** An ad that is not starved (it holds most of its ad set's spend). */
+  function zeroResultAd(spend: number, impressions: number) {
+    const snap = buildDemoSnapshot();
+    const ad = snap.objects.find(o => o.id === "ad_s1")!;
+    ad.ageDays = 6;
+    ad.spendSharePct = 80;
+    ad.w3d = {
+      ...ad.w3d,
+      spend,
+      impressions,
+      ctrLink: 1.8,
+      linkClicks: Math.round(impressions * 0.018),
+      conversions: 0,
+      leadConversions: 0,
+      purchaseConversions: 0,
+      cpa: null,
+    };
+    return runEngine(snap, DEMO_FUNNEL as FunnelInputs).rows.find(r => r.id === "ad_s1")!;
+  }
+
+  it("T081 — the ad-level K1 action reads 'أوقِف هذا الإعلان' on an ad row", () => {
+    const row = zeroResultAd(120, 6000); // $120 ≥ 2 × $43, 0 results
+    expect(row.level).toBe("ad");
+    expect(row.rule).toBe("K1");
+    expect(row.verdict).toBe("kill");
+    expect(row.action_ar).toBe("أوقِف هذا الإعلان");
+  });
+
+  it("T081 / U2 — below 500 impressions the ad-level K1 still fires: K1 has no impression floor (SC-003)", () => {
+    const row = zeroResultAd(120, 400);
+    expect(row.impressions_3d).toBeLessThan(500);
+    expect(row.rule).toBe("K1");
+    expect(row.verdict).toBe("kill");
+    expect(row.action_ar).toBe("أوقِف هذا الإعلان");
+  });
+
+  it("T081 — the three ad-set kill rules keep 'أوقِف هذه المجموعة'", () => {
+    const row = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs).rows.find(
+      r => r.id === "as_k1"
+    )!;
+    expect([row.level, row.rule, row.action_ar]).toEqual(["adset", "K1", "أوقِف هذه المجموعة"]);
+  });
+});
+
+describe("T082 — no 🔴 row claims 'no results' while its window has results (spec 015 / SC-009)", () => {
+  const NO_RESULTS = /بدون أي نتيجة|بدون نتائج|بدون أي نتائج/;
+
+  /** Every fixture shape this feature introduced, under every archetype. */
+  function fixtures(): Array<[string, AccountSnapshotPayload]> {
+    const out: Array<[string, AccountSnapshotPayload]> = [["demo", buildDemoSnapshot()]];
+    // event mismatch: registrations 0, purchases > 0
+    const mismatch = buildDemoSnapshot();
+    for (const o of mismatch.objects) {
+      o.w3d = { ...o.w3d, leadConversions: 0, purchaseConversions: o.w3d.conversions };
+    }
+    out.push(["mismatch", mismatch]);
+    // both families zero everywhere (the real-zero path)
+    const zero = buildDemoSnapshot();
+    for (const o of zero.objects) {
+      o.w3d = { ...o.w3d, conversions: 0, leadConversions: 0, purchaseConversions: 0, cpa: null };
+    }
+    out.push(["all-zero", zero]);
+    // unknown counts on every object
+    const unknown = buildDemoSnapshot();
+    for (const o of unknown.objects) o.w3d = { ...o.w3d, resultsUnknown: true };
+    out.push(["unknown", unknown]);
+    // every gated state
+    for (const st of ["PAUSED", "DISAPPROVED", "WITH_ISSUES"]) {
+      const g = buildDemoSnapshot();
+      for (const o of g.objects) o.effectiveStatus = st;
+      out.push([st, g]);
+    }
+    return out;
+  }
+
+  const funnels: FunnelInputs[] = [
+    DEMO_FUNNEL as FunnelInputs,
+    { ...(DEMO_FUNNEL as FunnelInputs), archetype: "free_lead" },
+    {
+      archetype: "webinar", liveComponent: true, aov: 0, htoPrice: 2000,
+      htoConversionRate: 0, frontEndRoas: 1, arena: "broad", showUpRate: 70, closeRate: 22,
+    },
+  ];
+
+  it("holds across every fixture × funnel; a 'today' claim is checked against today's window", () => {
+    let checked = 0;
+    for (const [name, snap] of fixtures()) {
+      const byId = new Map(snap.objects.map(o => [o.id, o]));
+      for (const funnel of funnels) {
+        for (const r of runEngine(snap, funnel).rows) {
+          if (r.verdict !== "kill" || !NO_RESULTS.test(r.reason_ar)) continue;
+          checked++;
+          const o = byId.get(r.id)!;
+          // CB1/CB2 speak about today ("اليوم:"); every other claim is the
+          // 3-day window.
+          const window = r.reason_ar.startsWith("اليوم") ? o.today : o.w3d;
+          expect(window.conversions, `${name}/${funnel.archetype}/${r.id}/${r.rule}`).toBe(0);
+        }
+      }
+    }
+    // The invariant must have been exercised, not vacuously true.
+    expect(checked).toBeGreaterThan(0);
   });
 });

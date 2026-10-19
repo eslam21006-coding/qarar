@@ -388,6 +388,14 @@ export function buildDemoSnapshot(): AccountSnapshotPayload {
       // median therefore equals the existing cpaMedian30. The split is
       // computed by the daily cron for live accounts (research R4).
       cplMedian30: 39,
+      // Spec 015 / FR-025 — 30-day purchase and lead totals, read only by
+      // the Settings save-time funnel-type check. Set EQUAL for the same
+      // reason cplMedian30 equals cpaMedian30 above: the demo snapshot
+      // carries one legacy `conversions` count, so neither event family
+      // dominates. Equal values also mean neither direction of the 3×
+      // mismatch check fires on the demo account.
+      purchases30: 30,
+      leads30: 30,
       cpmNow: 18.5,
     },
     attributionStraddle: true,

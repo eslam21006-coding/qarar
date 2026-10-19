@@ -277,11 +277,18 @@ describe("buildSummary — strip self-consistency (US1 / T005)", () => {
     expect(baseline.summary.counts.kill - afterRun.summary.counts.kill).toBe(1);
   });
 
-it("a paused ad carrying a kill verdict (forced by K3) keeps the kill verdict in its row but does not enter the strip (FR-005a)", () => {
-    // ad_k3 in the demo fires K3 (CTR 0.4%, 5,200 impressions) and is
-    // the canonical case where a kill-capable rule precedes the paused
-    // check (FR-005a / research R5). K3 fires before gateVerdict, so
-    // pausing the row keeps K3 in place — but the strip MUST drop it.
+it("a paused ad no longer carries a kill verdict — the status gate now precedes K3 (spec 015 / FR-006)", () => {
+    // ad_k3 in the demo fires K3 (CTR 0.4%, 5,200 impressions) while
+    // active. It used to be the canonical case where a kill-capable rule
+    // preceded the paused check: the prior spec's FR-005a asserted that
+    // pausing the row KEPT its kill verdict, because K3 ran before
+    // `gateVerdict`, which was where the status check lived.
+    //
+    // Spec 015 / FR-006 deliberately reverses that premise. Rulebook v2.2
+    // §4.2 and constitution v1.1.2 Principle I step 1 put the status gate
+    // ahead of every rule, "بما فيها K3 ومصفوفة المحروم" — a paused object
+    // is reported as paused, not killed on frozen data. "لا يُقال أوقِف
+    // لشيء موقوف."
     //
     // Note on bleed: ad_k3 sits beneath as_k1 (K1 — zero conversions),
     // which is already in the bleed as an adset-level kill. The bleed
@@ -299,11 +306,13 @@ it("a paused ad carrying a kill verdict (forced by K3) keeps the kill verdict in
 
     const afterRun = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
     const afterRow = afterRun.rows.find(r => r.id === "ad_k3")!;
-    // Per FR-005a / R5: K3 still fires (precedes the paused check), so
-    // the row keeps its kill verdict — the live-state strip is what
-    // changes.
-    expect(afterRow.verdict).toBe("kill");
-    // The strip agrees: counts.kill dropped by 1; the paused kill ad
+    // The status gate fires first, so K3 is never reached.
+    expect(afterRow.verdict).toBe("too_early");
+    expect(afterRow.rule).toBe("GATE");
+    // And the action must not tell the user to stop something already
+    // stopped (FR-010).
+    expect(afterRow.action_ar).not.toContain("أوقِف");
+    // The strip agrees: counts.kill dropped by 1; the paused ad
     // is not in top_3_actions.
     expect(afterRun.summary.counts.kill).toBe(beforeRun.summary.counts.kill - 1);
     const inActions = afterRun.summary.top_3_actions.some(

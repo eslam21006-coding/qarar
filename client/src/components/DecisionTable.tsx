@@ -36,6 +36,7 @@ import { aggregateTotals } from "@/lib/aggregate";
 import { presetRangeBounds } from "@/lib/dateWindow";
 import { trpc } from "@/lib/trpc";
 import type { AccountSummary, DailyMetrics, EngineRow, Verdict, WindowMetrics } from "@shared/qarar";
+import { isDeliveringStatus, isHiddenStatus } from "@shared/qarar";
 import {
   ArrowDown,
   ArrowUp,
@@ -67,6 +68,21 @@ export interface SeriesObj {
   today: WindowMetrics;
   w3d: WindowMetrics;
   daily30: DailyMetrics[];
+}
+
+/**
+ * Spec 015 / FR-009 (T031) — archived and deleted objects are not rendered
+ * anywhere. Status resolves through the same chain as every other surface:
+ * series.effectiveStatus ?? series.status ?? row.status.
+ */
+export function dropHiddenRows(
+  rows: EngineRow[],
+  seriesMap: Map<string, SeriesObj>
+): EngineRow[] {
+  return rows.filter(r => {
+    const s = seriesMap.get(r.id);
+    return !isHiddenStatus(s?.effectiveStatus ?? s?.status ?? r.status);
+  });
 }
 
 // ---------- date ranges ----------
@@ -118,7 +134,14 @@ function aggFromWindow(w: WindowMetrics): FilterAgg {
     frequency: null,
     spendShare: null,
     // Hotfix T9: ROAS input for the footer.
-    conversionValue: w.conversionValue,
+    // Spec 015 / FR-026 — `w.conversionValue` is now `number | null`, where
+    // null means Meta sent no value data. Coalescing to 0 HERE is safe and
+    // is NOT the rule-level `?? 0` that contracts/unknown-vs-zero.md §U3
+    // forbids: this is a display sum, every consumer guards the result with
+    // `conversionValue > 0 ? … : null` (lib/aggregate.ts:56), so an unknown
+    // value contributes nothing and the footer renders "—" rather than
+    // "0.0x". No verdict reads this path.
+    conversionValue: w.conversionValue ?? 0,
   };
 }
 
@@ -292,7 +315,7 @@ const OPS_BY_TYPE: Record<string, FilterOp[]> = {
 // ============================================================
 
 export function DecisionTable({
-  rows,
+  rows: allRows,
   series,
   unitTarget,
   actId,
@@ -428,6 +451,9 @@ export function DecisionTable({
   });
 
   const seriesMap = useMemo(() => new Map(series.map(s => [s.id, s])), [series]);
+  // Spec 015 / T031 — every list below reads the rows with archived and
+  // deleted objects already removed.
+  const rows = useMemo(() => dropHiddenRows(allRows, seriesMap), [allRows, seriesMap]);
 
   const adsManagerUrl = (r: EngineRow) => {
     if (!actId) return null;
@@ -444,7 +470,9 @@ export function DecisionTable({
   // effective-status-aware status resolver for filters
   const getStatus = useCallback((r: EngineRow) => {
     const s = seriesMap.get(r.id);
-    return (s?.effectiveStatus ?? s?.status ?? r.status) === "ACTIVE" ? "ACTIVE" : "PAUSED";
+    // Spec 015 / FR-007a — IN_PROCESS / PREAPPROVED count as active, the
+    // same definition the engine's status gate uses.
+    return isDeliveringStatus(s?.effectiveStatus ?? s?.status ?? r.status) ? "ACTIVE" : "PAUSED";
   }, [seriesMap]);
 
   // Distinct objectives present in the rows → dropdown options for the objective
@@ -560,7 +588,7 @@ export function DecisionTable({
   const isPaused = (r: EngineRow) => {
     const s = seriesMap.get(r.id);
     const st = s?.effectiveStatus ?? s?.status ?? r.status;
-    return st !== "ACTIVE";
+    return !isDeliveringStatus(st);
   };
   const visible = useMemo(() => {
     let list: EngineRow[];
@@ -1247,6 +1275,13 @@ export function DecisionTable({
                     ))}
                     <td className="px-2 py-2.5 text-center">
                       <VerdictBadge verdict={r.verdict} rule={r.rule} />
+                      {/* Spec 015 / FR-008 — names the real gated state.
+                          Display-only beside the ⏳ verdict, never a verdict. */}
+                      {r.statusBadge && (
+                        <span className="mt-1 block whitespace-nowrap text-[10px] font-medium text-muted-foreground">
+                          {r.statusBadge}
+                        </span>
+                      )}
                     </td>
                     <td className="max-w-[340px] px-4 py-2.5">
                       <p className="text-xs leading-relaxed">{r.reason_ar}</p>

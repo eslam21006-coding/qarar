@@ -294,3 +294,46 @@ describe("C5.2 — every figure in a finding is isolated LTR", () => {
     expect(nums(container)).toEqual(["2.5%"]);
   });
 });
+
+// ============================================================
+// Spec 015 / US2 (T026, FR-009) — gated rows never reach the panel
+// ============================================================
+
+describe("DiagnosisSection — status-gated rows are excluded (spec 015 / T026)", () => {
+  it("a row carrying a status badge is not rendered, even with a kill verdict and findings", () => {
+    render(
+      <DiagnosisSection
+        rows={[
+          makeRow({
+            id: "paused-ad",
+            name: "إعلان موقوف",
+            statusBadge: "موقوف",
+            findings: [makeFinding()],
+          }),
+          makeRow({
+            id: "live-ad",
+            name: "إعلان نشط",
+            statusBadge: null,
+            findings: [makeFinding()],
+          }),
+        ]}
+        summary={{ account_funnel_cta: null }}
+      />
+    );
+    expect(screen.queryByText("إعلان موقوف")).toBeNull();
+    expect(screen.getByText("إعلان نشط")).toBeTruthy();
+  });
+
+  it("a panel whose only red rows are gated renders nothing at all", () => {
+    const { container } = render(
+      <DiagnosisSection
+        rows={[
+          makeRow({ statusBadge: "مرفوض", findings: [makeFinding()] }),
+          makeRow({ id: "r2", statusBadge: "قيد المراجعة", verdict: "watch", findings: [makeFinding()] }),
+        ]}
+        summary={{ account_funnel_cta: null }}
+      />
+    );
+    expect(container.textContent).toBe("");
+  });
+});

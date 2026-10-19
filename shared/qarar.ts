@@ -184,6 +184,81 @@ export function isNonSalesExempt(
   return NON_SALES_OBJECTIVES.has(objective);
 }
 
+// ---------- Judging-target source labels (spec 015 / FR-018) ----------
+
+/**
+ * Spec 015 / FR-018 — the plain-Arabic line naming where the judging target
+ * came from (data-model.md §5). `null` when there is no target; the page
+ * says what is missing instead.
+ */
+export function targetSourceLabel(
+  source: DerivedTargets["unitTargetSource"]
+): string | null {
+  switch (source) {
+    case "cpl_baseline":
+      return "محسوب من متوسط حسابك في آخر 30 يومًا";
+    case "effective_cpa":
+    case "cpl_funnel_math":
+      return "محسوب من أرقام الفانل";
+    case "cpl_benchmark":
+      return "محسوب من متوسط السوق المُدخل";
+    default:
+      return null;
+  }
+}
+
+// ---------- Delivery status (spec 015 / US2) ----------
+
+/**
+ * Spec 015 / FR-007, FR-007a — effective statuses that count as "active".
+ * `IN_PROCESS` and `PREAPPROVED` are transient post-edit states on objects
+ * that are still delivering; gating them would make verdicts flicker after
+ * every edit. This is the ONE definition of "active": the engine's status
+ * gate, the summary counters and the DecisionTable status filter all read
+ * it, so the gate and the surfaces that filter on it can never disagree
+ * (contracts/gate-order.md §G2).
+ */
+const DELIVERING_STATUSES: ReadonlySet<string> = new Set([
+  "ACTIVE",
+  "IN_PROCESS",
+  "PREAPPROVED",
+]);
+
+/** Spec 015 / FR-009 — statuses whose rows are not rendered at all. */
+const HIDDEN_STATUSES: ReadonlySet<string> = new Set(["ARCHIVED", "DELETED"]);
+
+export function isDeliveringStatus(status: string | null | undefined): boolean {
+  return !!status && DELIVERING_STATUSES.has(status);
+}
+
+export function isHiddenStatus(status: string | null | undefined): boolean {
+  return !!status && HIDDEN_STATUSES.has(status);
+}
+
+/**
+ * Spec 015 / FR-008 — the display badge for a gated state (data-model.md
+ * §3). Display-only: the verdict stays ⏳ `GATE` and the badge is never a
+ * sixth verdict. `null` for delivering statuses (no badge) and for hidden
+ * ones (the row is not rendered). A status outside Meta's documented set
+ * takes the generic "check it in Ads Manager" badge rather than "موقوف",
+ * which would be untrue.
+ */
+export function statusBadgeFor(status: string | null | undefined): string | null {
+  if (isDeliveringStatus(status) || isHiddenStatus(status)) return null;
+  switch (status) {
+    case "PAUSED":
+    case "CAMPAIGN_PAUSED":
+    case "ADSET_PAUSED":
+      return "موقوف";
+    case "PENDING_REVIEW":
+      return "قيد المراجعة";
+    case "DISAPPROVED":
+      return "مرفوض";
+    default:
+      return "به مشكلة — راجعه في مدير الإعلانات";
+  }
+}
+
 // ---------- Metric shapes ----------
 
 export interface WindowMetrics {
@@ -220,8 +295,37 @@ export interface WindowMetrics {
    * undefined-vs-zero semantics as `leadConversions`.
    */
   purchaseConversions?: number;
-  /** value of conversions reported by Meta (used for ROAS = value / spend) */
-  conversionValue: number;
+  /**
+   * Value of conversions reported by Meta (used for ROAS = value / spend).
+   *
+   * Spec 015 / FR-026 — **`null` means Meta returned no `action_values`
+   * array at all**: the value is UNKNOWN, not zero. Every rule that reads
+   * value or ROAS must stand down on `null` rather than coalescing it
+   * (`?? 0` is forbidden — it is what produced "العائد الكلي 0.0x" on
+   * campaigns with real sales). A numeric `0` with the array present is a
+   * real captured zero and keeps its old meaning.
+   *
+   * Snapshots cached before spec 015 store `0` where this code would now
+   * store `null`; they self-clear on the next refresh and are not
+   * back-filled (contracts/unknown-vs-zero.md §U5).
+   */
+  conversionValue: number | null;
+  /**
+   * Spec 015 / FR-027 — the result COUNTS on this row are unknown.
+   *
+   * Set `true` only when Meta returned no `actions` array **and**
+   * `linkClicks > 0` — an inconsistent payload, where clicks happened but
+   * no results came back. Absent/`false` means the counts are a genuine
+   * zero and the zero-result rules (K1) and click-through kill (K3) must
+   * evaluate normally.
+   *
+   * Deliberately a separate field rather than `undefined` on
+   * `leadConversions`/`purchaseConversions`: those already reserve
+   * `undefined` for "snapshot predates the spec-012 split"
+   * (contracts/unknown-vs-zero.md §U4, research R1). The two states need
+   * different copy and have different lifetimes.
+   */
+  resultsUnknown?: boolean;
   /** landing page views (from actions) */
   lpViews: number;
   /** null when conversions = 0 */
@@ -307,6 +411,25 @@ export interface Baselines {
   cplMedian30: number | null;
   /** current account-level CPM (3d) for market-level comparison */
   cpmNow: number | null;
+  /**
+   * Spec 015 / FR-025 — total PURCHASE-type conversions over the last 30
+   * days. Summed inside the SAME `last_30d, time_increment=1` Graph
+   * response that already produces `cpaMedian30` / `cplMedian30`, whose
+   * per-day purchase and lead counts are computed and then discarded
+   * today — so this costs **no new Graph call** (research R2, the same
+   * manoeuvre spec 012 used for `cplMedian30`).
+   *
+   * Read only by the Settings save-time funnel-type check, from the cached
+   * snapshot. `null` when the baselines request produced no usable rows
+   * (principle 10 — absent is not zero), in which case the check is
+   * skipped silently and the save proceeds.
+   */
+  purchases30: number | null;
+  /**
+   * Spec 015 / FR-025 — total LEAD-type conversions over the last 30 days.
+   * Same source, same request, same null semantics as `purchases30`.
+   */
+  leads30: number | null;
 }
 
 export interface AccountSnapshotPayload {
@@ -569,6 +692,14 @@ export interface EngineRow {
   promotion_eligible: boolean;
   promotion_note: string | null;
   learning_phase: boolean;
+  /**
+   * Spec 015 / FR-008 — display badge naming a gated object's real state
+   * ("موقوف" / "قيد المراجعة" / "مرفوض" / "به مشكلة — راجعه في مدير
+   * الإعلانات"), from `statusBadgeFor`. `null` when the object is
+   * delivering. Display-only — never a verdict. The engine always sets it;
+   * optional only so hand-built test rows need not.
+   */
+  statusBadge?: string | null;
 }
 
 export interface TopAction {
@@ -614,6 +745,35 @@ export interface AccountSummary {
    * last new ad, and a simple-Arabic message for the account-level signal.
    */
   cadence: Cadence | null;
+  /**
+   * Spec 015 / FR-005 — at least half of the account's ACTIVE spend sits on
+   * objects tripping the event-match gate, i.e. the funnel type counts an
+   * event these campaigns do not record. Drives one warning card at the top
+   * of the dashboard linking to Settings, instead of leaving the user to
+   * infer the cause from a page of ⏳ rows.
+   *
+   * "Active spend" is the window spend of ad sets that pass the status gate
+   * — the same population the counters use. Below the threshold individual
+   * rows are still gated; only the account-level card is withheld.
+   */
+  settings_mismatch: boolean;
+  /**
+   * Spec 015 / FR-030a — N in "للإيقاف: {N} مجموعة · {M} إعلان": ad-set
+   * rows with verdict `kill` that pass the status gate. Campaigns are never
+   * counted (FR-030); gated objects never are (FR-030c).
+   */
+  kill_adsets: number;
+  /** Spec 015 / FR-030a — M: ad rows with verdict `kill` that pass the status gate. */
+  kill_ads: number;
+  /**
+   * Spec 015 / FR-017, FR-020 — the exact target figure every cost verdict
+   * on this run was judged against, and where it came from. The same pair
+   * `funnel.get` returns to Settings as `judging`, both produced by
+   * `judgingTargets()` in server/engine.ts, so the two screens cannot
+   * disagree.
+   */
+  unit_target: number | null;
+  unit_target_source: DerivedTargets["unitTargetSource"];
 }
 
 export interface EngineResult {
