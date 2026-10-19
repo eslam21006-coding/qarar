@@ -1,18 +1,25 @@
 <!--
-Sync Impact Report — 2026-10-18
-Version change: 1.0.0 → 1.1.0
-Bump rationale: MINOR — Principle I's evaluation order is materially expanded
-(two new gates ahead of everything, K3 and the starved matrix promoted above the
-data gates, and a new campaign-derivation rule). No principle removed or
-redefined, so not MAJOR; more than wording, so not PATCH.
+Sync Impact Report — 2026-10-19
+Version change: 1.1.0 → 1.1.1
+Bump rationale: PATCH — clarification only. Principle I's evaluation order now
+names two guards that already run in the engine and that the rulebook v2.2 §5.5
+table never listed (the non-sales exemption from spec 013 and the pre-separation
+snapshot guard from spec 012). No rule's behaviour, threshold, code or relative
+position changes; the list is made exhaustive rather than redefined.
 
 Modified principles:
-- I. Deterministic engine — no AI in decisions: fixed per-object evaluation order
-  replaced with the owner-approved rulebook v2.2 §5.5 order; rulebook reference
-  updated v2.1 → v2.2.
+- I. Deterministic engine — no AI in decisions: the ordered list grows from 11 to
+  13 steps with the two pre-existing guards inserted at positions 2 and 3, each
+  with its rationale. Every previously listed step keeps its relative order.
 
 Principles II–VII, Engineering constraints, and Governance: unchanged.
 Added sections: none. Removed sections: none.
+
+Why this clarification exists: /speckit-analyze flagged finding C1 — the plan for
+feature 015 placed the non-sales exemption between the status gate and the
+event-match gate, which Principle I's 11-step list did not allow for. The order
+below resolves that by stating the real order rather than by reinterpreting the
+principle.
 
 Consistency propagation:
 - ✅ .specify/templates/plan-template.md — generic "Constitution Check" gate,
@@ -20,6 +27,19 @@ Consistency propagation:
 - ✅ .specify/templates/spec-template.md — no constitution references.
 - ✅ .specify/templates/tasks-template.md — no principle-driven task categories.
 - ✅ .specify/templates/checklist-template.md — no constitution references.
+- ⚠ specs/015-verdict-accuracy/contracts/gate-order.md §G1 — its order table
+  places the pre-separation guard AFTER the event-match gate. This clarification
+  puts it BEFORE. The table and the "documented deviation" note need updating.
+- ⚠ specs/015-verdict-accuracy/research.md R5 and R6 — R5's recorded deviation is
+  now resolved by this amendment and should say so; R6's delta table inherits the
+  same pre-separation ordering correction.
+- ⚠ specs/015-verdict-accuracy/tasks.md T019 — reads "call eventMatchGate
+  immediately after evaluateNonSales"; it must now be called after
+  preSeparationGate.
+- ⚠ specs/015-verdict-accuracy/plan.md — the post-design Constitution Check lists
+  Principle I as "PASS with one documented deviation", and Complexity Tracking
+  carries that deviation as an entry. Both can be cleared once the artifacts above
+  are aligned.
 - ⚠ server/engine.ts (header comment) and shared/qarar.ts (header comment) —
   still cite rulebook v2.1, and the implemented order predates v2.2. Tracked by
   docs/spec-015/spec-015-verdict-accuracy.md §3.
@@ -40,22 +60,32 @@ Deferred placeholders / TODOs: none.
 The decision engine (server/engine.ts) is pure, deterministic math implementing
 the rulebook (محرك القرار الإعلاني v2.2). No LLM or AI inference may appear in any
 verdict or diagnosis logic. The per-object evaluation order is fixed by rulebook
-v2.2 §5.5, and evaluation stops at the first verdict it yields:
+v2.2 §5.5 — plus the two guards named at steps 2 and 3, which the rulebook table
+does not list — and evaluation stops at the first verdict it yields:
 
 1. **Status gate** (§4.2) — an object that is not actually active (paused itself,
    paused by its parent, or not spending) passes through NO rule at all, not even
-   K3 or the starved matrix, and takes ⏳.
-2. **Event-match gate** (§4.1) — no verdict when the configured result event
+   K3 or the starved matrix, and takes ⏳. It runs first so that a paused object of
+   ANY objective, non-sales included, still reports its real state rather than a
+   judgment.
+2. **Non-sales exemption** — NS1/NS2, spec 013. Objectives that record no sales
+   events exit here. They must exit BEFORE the event-match gate, because an
+   objective that was never optimising for a purchase or a registration cannot be
+   diagnosed as having the wrong result event configured.
+3. **Pre-separation snapshot guard** — spec 012. A snapshot captured before the
+   lead/purchase separation carries unknown result units, so it exits before any
+   rule that compares those counts.
+4. **Event-match gate** (§4.1) — no verdict when the configured result event
    counts zero while the account records a different event.
-3. **K3** — the clear CTR kill (from 1,500 impressions), ad level.
-4. **Starved matrix K5** — under the §5.0 conditions, ad level.
-5. **Data gates** (Part 4).
-6. **Circuit breaker** (§5.3) — on today's data, ad-set level.
-7. **Kill rules** K1–K7.
-8. **Decay map** — the 72-hour decay map (K4), ad level.
-9. **Fatigue** (Part 7), ad level.
-10. **Watch** W1–W6.
-11. **Continue and scale** S1–S4.
+5. **K3** — the clear CTR kill (from 1,500 impressions), ad level.
+6. **Starved matrix K5** — under the §5.0 conditions, ad level.
+7. **Data gates** (Part 4).
+8. **Circuit breaker** (§5.3) — on today's data, ad-set level.
+9. **Kill rules** K1–K7.
+10. **Decay map** — the 72-hour decay map (K4), ad level.
+11. **Fatigue** (Part 7), ad level.
+12. **Watch** W1–W6.
+13. **Continue and scale** S1–S4.
 
 The campaign verdict is NOT evaluated independently: it is derived from its own
 ad sets' verdicts (§5.0) after those are evaluated. A campaign holding at least
@@ -124,4 +154,4 @@ isolation requires explicit, written justification in the plan. Reviews
 (human or agent) check work against these principles before it proceeds to the
 next Spec Kit phase.
 
-**Version:** 1.1.0 · **Ratified:** 2026-06-13 · **Last amended:** 2026-10-18
+**Version:** 1.1.1 · **Ratified:** 2026-06-13 · **Last amended:** 2026-10-19
