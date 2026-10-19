@@ -27,19 +27,16 @@ Consistency propagation:
 - ✅ .specify/templates/spec-template.md — no constitution references.
 - ✅ .specify/templates/tasks-template.md — no principle-driven task categories.
 - ✅ .specify/templates/checklist-template.md — no constitution references.
-- ⚠ specs/015-verdict-accuracy/contracts/gate-order.md §G1 — its order table
-  places the pre-separation guard AFTER the event-match gate. This clarification
-  puts it BEFORE. The table and the "documented deviation" note need updating.
-- ⚠ specs/015-verdict-accuracy/research.md R5 and R6 — R5's recorded deviation is
-  now resolved by this amendment and should say so; R6's delta table inherits the
-  same pre-separation ordering correction.
-- ⚠ specs/015-verdict-accuracy/tasks.md T019 — reads "call eventMatchGate
-  immediately after evaluateNonSales"; it must now be called after
+- ✅ specs/015-verdict-accuracy/contracts/gate-order.md §G1 — order table rebuilt
+  as 13 steps with the pre-separation guard at 3 and the event-match gate at 4;
+  the "documented deviation" note replaced with the rationale for steps 2 and 3.
+- ✅ specs/015-verdict-accuracy/research.md R5 and R6 — R5 now records the
+  deviation as resolved at the source; R6's delta table carries the corrected
+  pre-separation ordering.
+- ✅ specs/015-verdict-accuracy/tasks.md T019 — now calls eventMatchGate after
   preSeparationGate.
-- ⚠ specs/015-verdict-accuracy/plan.md — the post-design Constitution Check lists
-  Principle I as "PASS with one documented deviation", and Complexity Tracking
-  carries that deviation as an entry. Both can be cleared once the artifacts above
-  are aligned.
+- ✅ specs/015-verdict-accuracy/plan.md — Constitution Check reads PASS with no
+  deviation; the Complexity Tracking entry for it is removed.
 - ⚠ server/engine.ts (header comment) and shared/qarar.ts (header comment) —
   still cite rulebook v2.1, and the implemented order predates v2.2. Tracked by
   docs/spec-015/spec-015-verdict-accuracy.md §3.
