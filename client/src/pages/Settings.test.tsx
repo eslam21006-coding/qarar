@@ -896,6 +896,23 @@ describe("Settings page — paid-event option and save-time check (spec 015 / US
     );
   });
 
+  it("T053 — the keep action honours the Save button's validity guard (CodeRabbit PR #31)", async () => {
+    const { container } = renderRow(
+      { archetype: "webinar", liveComponent: true },
+      { purchases30: 30, leads30: 5 }
+    );
+    fireEvent.click(screen.getByTestId("settings-save-button"));
+    await screen.findByTestId("settings-event-mismatch-prompt");
+    const closeRate = Array.from(container.querySelectorAll("input")).find(
+      i => (i as HTMLInputElement).value === "22"
+    ) as HTMLInputElement;
+    fireEvent.change(closeRate, { target: { value: "" } });
+    const keep = screen.getByTestId("settings-event-mismatch-keep") as HTMLButtonElement;
+    await waitFor(() => expect(keep.disabled).toBe(true));
+    fireEvent.click(keep);
+    expect(mocks.funnelSaveMutateAsync).not.toHaveBeenCalled();
+  });
+
   it("T053 — accepting the one-click switch saves the paid-event option", async () => {
     renderRow({ archetype: "webinar", liveComponent: true }, { purchases30: 30, leads30: 5 });
     fireEvent.click(screen.getByTestId("settings-save-button"));

@@ -27,8 +27,9 @@ forbidden. See research.md R1.
 - `resultsUnknown === true` ⇒ the zero-result rules (K1) and the click-through kill (K3) MUST NOT
   fire on that window; the object takes ⏳ with a reason naming the missing data (FR-028).
 - `resultsUnknown` absent or `false` ⇒ counts are a genuine zero and all rules evaluate normally.
-- `conversionValue === null` ⇒ every return/ROAS rule stands down (FR-027/FR-028). In particular
-  W6 must not render "العائد الكلي 0.0x".
+- `conversionValue === null` ⇒ only the `roas_3d` display goes blank. No verdict rule reads it:
+  S2/W6 use result counts × the configured buyer value and stand down on `resultsUnknown`
+  instead (contracts/unknown-vs-zero.md §U2).
 - `conversionValue === 0` with the array present ⇒ a real zero, used as before.
 
 ### Three payload shapes (the test matrix)
@@ -91,7 +92,7 @@ chain at `server/engine.ts:341` and `2130–2136`. `IN_PROCESS` and `PREAPPROVED
 
 | Field | Before | After | Why |
 |---|---|---|---|
-| `counts` | `Record<Verdict, number>` over all levels | unchanged | Left intact to avoid breaking unrelated readers mid-feature (research.md R8) |
+| `counts` | `Record<Verdict, number>` over all levels | same shape, over active ad-set and ad rows only; campaigns excluded (FR-030) | Shape kept so unrelated readers do not break mid-feature (research.md R8); a campaign summarises its ad sets, so counting it double-counts |
 | `kill_adsets` | — | `number` (new) | FR-030a. N in the split counter |
 | `kill_ads` | — | `number` (new) | FR-030a. M in the split counter |
 | `settings_mismatch` | — | `boolean` (new) | FR-005. Drives the top-of-dashboard warning card |

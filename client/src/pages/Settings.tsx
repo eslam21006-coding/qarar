@@ -877,6 +877,7 @@ export default function Settings() {
                   size="sm"
                   variant="outline"
                   data-testid="settings-event-mismatch-keep"
+                  disabled={!valid || save.isPending}
                   onClick={() => {
                     setEventPrompt(null);
                     doSave();

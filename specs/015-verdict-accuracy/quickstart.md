@@ -7,22 +7,25 @@ exact behaviour lives in [contracts/](./contracts/). This file is the run guide 
 
 ## Prerequisites
 
-- Node toolchain installed, dependencies present (`npm install` if the tree is fresh).
+- Node toolchain installed, dependencies present (`pnpm install --frozen-lockfile` if the tree is fresh).
 - No database migration is required for this feature — `drizzle/schema.ts` is untouched, so
-  `npm run db:push` is **not** part of this validation.
+  `pnpm run db:push` is **not** part of this validation.
+- The full `pnpm test` gate includes `server/auth-flow.e2e.test.ts`, which needs a reachable
+  MySQL database through `DATABASE_URL`. Run without one (`DATABASE_URL=""`), that one suite
+  fails with "Database connection failed" and every other suite must pass.
 - For the live replay in §4, access to the Meta ad account used in the 15–17 Oct 2026 evidence.
   Everything else is validated from fixtures and needs no credentials.
 
 ## 1. Gates
 
 ```bash
-npm run check    # tsc — must report zero errors
-npm test         # vitest — full suite
+pnpm run check   # tsc — must report zero errors
+pnpm test        # vitest — full suite
 ```
 
 Both must pass before the feature is considered done. The `conversionValue` type change is the
 most likely source of compile errors, because `DailyMetrics extends WindowMetrics` propagates it
-into every `daily7` / `daily30` reader — expect `npm run check` to find those call sites for you.
+into every `daily7` / `daily30` reader — expect `pnpm run check` to find those call sites for you.
 
 ## 2. Unit-level validation
 
@@ -119,7 +122,7 @@ refresh it before investigating — see [unknown-vs-zero §U5](./contracts/unkno
 
 ## 6. Definition of done
 
-- `npm run check` clean; `npm test` green.
+- `pnpm run check` clean; `pnpm test` green (apart from `auth-flow.e2e` when no database is set).
 - Every V-scenario above verified.
 - Every snapshot and test change accounted for in [research.md §4](./research.md), with a reason.
 - Verdict set still exactly five; every rule code emitted verbatim (`shared/qarar.ts:24–31`).
