@@ -170,6 +170,26 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Spec 015 / FR-005 — settings-mismatch card. Raised when at least
+          half of the account's active spend sits on objects whose counted
+          result event is not the event their campaigns record. Placed FIRST
+          among the account-level banners: while this is true every verdict
+          below it is withheld, so the cause belongs above the symptoms. */}
+      {summary.settings_mismatch && (
+        <div className="border-b border-v-kill/40 bg-v-kill/10">
+          <div className="container flex items-start gap-2 py-2 text-xs">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-v-kill" />
+            <span>
+              إعدادات الفانل تعدّ نوعًا من النتائج لا تسجله حملاتك، فلا يمكن الحكم على
+              أرقامك الآن.{" "}
+              <Button asChild variant="link" className="h-auto p-0 text-xs">
+                <Link href={`/settings/${accountId}`}>راجع نوع الفانل في الإعدادات</Link>
+              </Button>
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Account-level CPM alert (US2) — rendered ONCE from summary.account_alert */}
       {summary.account_alert && (
         <div className="border-b border-amber-500/30 bg-amber-500/10">

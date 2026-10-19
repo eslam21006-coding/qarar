@@ -40,8 +40,8 @@ Existing web application. No new directories; every task lands in a file that al
 
 **Purpose**: Establish the baseline the whole feature is measured against
 
-- [ ] T001 Capture the pre-change baseline: run `npm test` and `npm run check`, and record the passing test count and clean-tsc result for the PR description
-- [ ] T002 [P] Re-verify the anchors in [research.md §1](./research.md) still resolve (`server/engine.ts` 266/336/536/1513/1581/1631/1704/2119, `server/meta.ts` 385/1371–1409, `shared/qarar.ts` 24/745, `client/src/pages/Settings.tsx` 254/503/516/711, `client/src/pages/Dashboard.tsx` 242/576/583, `client/src/components/DecisionTable.tsx` 96/1072) and correct `specs/015-verdict-accuracy/research.md` §1 if any moved
+- [X] T001 Capture the pre-change baseline: run `npm test` and `npm run check`, and record the passing test count and clean-tsc result for the PR description
+- [X] T002 [P] Re-verify the anchors in [research.md §1](./research.md) still resolve (`server/engine.ts` 266/336/536/1513/1581/1631/1704/2119, `server/meta.ts` 385/1371–1409, `shared/qarar.ts` 24/745, `client/src/pages/Settings.tsx` 254/503/516/711, `client/src/pages/Dashboard.tsx` 242/576/583, `client/src/components/DecisionTable.tsx` 96/1072) and correct `specs/015-verdict-accuracy/research.md` §1 if any moved
 
 ---
 
@@ -53,15 +53,15 @@ Existing web application. No new directories; every task lands in a file that al
 move that both P1 stories depend on, and it is where the "a paused object keeps its kill verdict"
 premise is deliberately reversed.
 
-- [ ] T003 Change `conversionValue` to `number | null` and add `resultsUnknown?: boolean` to `WindowMetrics` in `shared/qarar.ts`, per [data-model.md §1](./data-model.md)
-- [ ] T004 [P] Add `purchases30: number | null` and `leads30: number | null` to `Baselines` in `shared/qarar.ts`, per [data-model.md §2](./data-model.md)
-- [ ] T005 Set `conversionValue = null` when `action_values` is absent, and set `resultsUnknown` per the three payload shapes, in `parseInsightsRow` at `server/meta.ts:385` — the absence test must be made where `row.actions` is still in scope, because `pickAction` (376–383) discards it, per [contracts/unknown-vs-zero.md §U1](./contracts/unknown-vs-zero.md)
-- [ ] T006 Sum the 30-day purchase and lead totals inside the existing `last_30d, time_increment=1` loop at `server/meta.ts:1371–1409` and return them in the baselines object at `server/meta.ts:1415–1416` — **no new Graph request**, per [research.md R2](./research.md)
-- [ ] T007 Run `npm run check` and null-guard every `conversionValue` reader it surfaces across `server/` and `client/` — `DailyMetrics extends WindowMetrics`, so `daily7`/`daily30` readers are included, per [research.md R3](./research.md)
-- [ ] T008 Extract the non-active branch at `server/engine.ts:341–349` out of `gateVerdict()` into `statusGate(o)` and call it first in `evaluateAd` (1631), `evaluateAdset` (1704) and `evaluateCampaign` (1513), preserving today's paused copy and the `effectiveStatus ?? status` fallback, per [contracts/gate-order.md §G2](./contracts/gate-order.md)
-- [ ] T009 Rewrite `server/summaryStripConsistency.test.ts:280–318` so the paused `ad_k3` row asserts `too_early`/`GATE` instead of `kill`, and replace its "K3 still fires (precedes the paused check)" comment — which cites **a prior spec's FR-005a**, not this spec's FR-005 — with the new rule, per [research.md §4.1](./research.md) item 1
-- [ ] T010 Rewrite `server/summaryCounts.test.ts:113–139` so the paused `as_cb` row asserts `too_early`/`GATE` instead of `kill`/`CB2`, and replace its comment citing **a prior spec's FR-005a** (unrelated to this spec's FR-005, the 50% mismatch threshold), per [research.md §4.1](./research.md) item 2
-- [ ] T011 Regenerate `server/__snapshots__/engine.test.ts.snap` with `npx vitest run -u` after reviewing every diff line by line: the `T007` block (lines 1–86) MUST come back byte-identical, and on the analysis in [research.md §4.2](./research.md) no `T008` entry should change
+- [X] T003 Change `conversionValue` to `number | null` and add `resultsUnknown?: boolean` to `WindowMetrics` in `shared/qarar.ts`, per [data-model.md §1](./data-model.md)
+- [X] T004 [P] Add `purchases30: number | null` and `leads30: number | null` to `Baselines` in `shared/qarar.ts`, per [data-model.md §2](./data-model.md)
+- [X] T005 Set `conversionValue = null` when `action_values` is absent, and set `resultsUnknown` per the three payload shapes, in `parseInsightsRow` at `server/meta.ts:385` — the absence test must be made where `row.actions` is still in scope, because `pickAction` (376–383) discards it, per [contracts/unknown-vs-zero.md §U1](./contracts/unknown-vs-zero.md)
+- [X] T006 Sum the 30-day purchase and lead totals inside the existing `last_30d, time_increment=1` loop at `server/meta.ts:1371–1409` and return them in the baselines object at `server/meta.ts:1415–1416` — **no new Graph request**, per [research.md R2](./research.md)
+- [X] T007 Run `npm run check` and null-guard every `conversionValue` reader it surfaces across `server/` and `client/` — `DailyMetrics extends WindowMetrics`, so `daily7`/`daily30` readers are included, per [research.md R3](./research.md)
+- [X] T008 Extract the non-active branch at `server/engine.ts:341–349` out of `gateVerdict()` into `statusGate(o)` and call it first in `evaluateAd` (1631), `evaluateAdset` (1704) and `evaluateCampaign` (1513), preserving today's paused copy and the `effectiveStatus ?? status` fallback, per [contracts/gate-order.md §G2](./contracts/gate-order.md)
+- [X] T009 Rewrite `server/summaryStripConsistency.test.ts:280–318` so the paused `ad_k3` row asserts `too_early`/`GATE` instead of `kill`, and replace its "K3 still fires (precedes the paused check)" comment — which cites **a prior spec's FR-005a**, not this spec's FR-005 — with the new rule, per [research.md §4.1](./research.md) item 1
+- [X] T010 Rewrite `server/summaryCounts.test.ts:113–139` so the paused `as_cb` row asserts `too_early`/`GATE` instead of `kill`/`CB2`, and replace its comment citing **a prior spec's FR-005a** (unrelated to this spec's FR-005, the 50% mismatch threshold), per [research.md §4.1](./research.md) item 2
+- [X] T011 Regenerate `server/__snapshots__/engine.test.ts.snap` with `npx vitest run -u` after reviewing every diff line by line: the `T007` block (lines 1–86) MUST come back byte-identical, and on the analysis in [research.md §4.2](./research.md) no `T008` entry should change
 
 **Checkpoint**: types and gate ordering in place; `npm run check` clean; suite green with the two
 rewritten tests. User stories can now proceed.
@@ -81,19 +81,19 @@ still fires.
 
 > Write these first and confirm they fail before implementing T018–T021.
 
-- [ ] T012 [P] [US1] Test: webinar archetype with `{leadConversions: 0, purchaseConversions: 16, spend: 809}` ⇒ `too_early`/`GATE` with the mismatch reason and the Settings action — not K1 — in `server/engine.test.ts`
-- [ ] T013 [P] [US1] Test: both families zero ⇒ K1 fires unchanged, in `server/engine.test.ts`
-- [ ] T014 [P] [US1] Test: a purchase-counting archetype with 0 purchases and positive registrations ⇒ the gate fires with the registration noun, in `server/engine.test.ts`
-- [ ] T015 [P] [US1] Test: the gate fires at ad, ad-set and campaign level, in `server/engine.test.ts`
-- [ ] T016 [P] [US1] Test: `resultsUnknown === true` ⇒ the event-match gate does NOT fire (the unknown-data path owns that row), in `server/engine.test.ts`
-- [ ] T017 [P] [US1] Test: gated objects holding ≥ 50% of active spend ⇒ `summary.settings_mismatch === true`; below the threshold ⇒ `false` while rows stay gated, in `server/summaryCounts.test.ts`
+- [X] T012 [P] [US1] Test: webinar archetype with `{leadConversions: 0, purchaseConversions: 16, spend: 809}` ⇒ `too_early`/`GATE` with the mismatch reason and the Settings action — not K1 — in `server/engine.test.ts`
+- [X] T013 [P] [US1] Test: both families zero ⇒ K1 fires unchanged, in `server/engine.test.ts`
+- [X] T014 [P] [US1] Test: a purchase-counting archetype with 0 purchases and positive registrations ⇒ the gate fires with the registration noun, in `server/engine.test.ts`
+- [X] T015 [P] [US1] Test: the gate fires at ad, ad-set and campaign level, in `server/engine.test.ts`
+- [X] T016 [P] [US1] Test: `resultsUnknown === true` ⇒ the event-match gate does NOT fire (the unknown-data path owns that row), in `server/engine.test.ts`
+- [X] T017 [P] [US1] Test: gated objects holding ≥ 50% of active spend ⇒ `summary.settings_mismatch === true`; below the threshold ⇒ `false` while rows stay gated, in `server/summaryCounts.test.ts`
 
 ### Implementation for User Story 1
 
-- [ ] T018 [US1] Implement `eventMatchGate(o, archetype)` in `server/engine.ts` per [contracts/gate-order.md §G3](./contracts/gate-order.md), reading `w3d.purchaseConversions` / `w3d.leadConversions` (both already populated at `server/meta.ts:406–407` — no parser change)
-- [ ] T019 [US1] Call `eventMatchGate` immediately after `preSeparationGate` in `evaluateAd`, `evaluateAdset` and `evaluateCampaign` in `server/engine.ts` — both the NS exemption and the pre-separation guard stay ahead of it, per constitution v1.1.1 Principle I steps 2–4 and [contracts/gate-order.md §G1](./contracts/gate-order.md)
-- [ ] T020 [US1] Add `settings_mismatch` to `buildSummary()` at `server/engine.ts:2119`, computed over status-gate-passing ad-set spend, per [contracts/summary-counters.md §S6](./contracts/summary-counters.md)
-- [ ] T021 [US1] Render the top-of-dashboard warning card linking to Settings when `settings_mismatch` is true, in `client/src/pages/Dashboard.tsx`
+- [X] T018 [US1] Implement `eventMatchGate(o, archetype)` in `server/engine.ts` per [contracts/gate-order.md §G3](./contracts/gate-order.md), reading `w3d.purchaseConversions` / `w3d.leadConversions` (both already populated at `server/meta.ts:406–407` — no parser change)
+- [X] T019 [US1] Call `eventMatchGate` immediately after `preSeparationGate` in `evaluateAd`, `evaluateAdset` and `evaluateCampaign` in `server/engine.ts` — both the NS exemption and the pre-separation guard stay ahead of it, per constitution v1.1.1 Principle I steps 2–4 and [contracts/gate-order.md §G1](./contracts/gate-order.md)
+- [X] T020 [US1] Add `settings_mismatch` to `buildSummary()` at `server/engine.ts:2119`, computed over status-gate-passing ad-set spend, per [contracts/summary-counters.md §S6](./contracts/summary-counters.md)
+- [X] T021 [US1] Render the top-of-dashboard warning card linking to Settings when `settings_mismatch` is true, in `client/src/pages/Dashboard.tsx`
 
 **Checkpoint**: the live-account replay's five campaigns read ⏳ with the mismatch message. MVP
 deliverable — the false-kill class is closed.

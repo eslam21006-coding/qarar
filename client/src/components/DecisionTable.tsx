@@ -118,7 +118,14 @@ function aggFromWindow(w: WindowMetrics): FilterAgg {
     frequency: null,
     spendShare: null,
     // Hotfix T9: ROAS input for the footer.
-    conversionValue: w.conversionValue,
+    // Spec 015 / FR-026 — `w.conversionValue` is now `number | null`, where
+    // null means Meta sent no value data. Coalescing to 0 HERE is safe and
+    // is NOT the rule-level `?? 0` that contracts/unknown-vs-zero.md §U3
+    // forbids: this is a display sum, every consumer guards the result with
+    // `conversionValue > 0 ? … : null` (lib/aggregate.ts:56), so an unknown
+    // value contributes nothing and the footer renders "—" rather than
+    // "0.0x". No verdict reads this path.
+    conversionValue: w.conversionValue ?? 0,
   };
 }
 

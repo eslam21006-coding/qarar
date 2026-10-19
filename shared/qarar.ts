@@ -220,8 +220,37 @@ export interface WindowMetrics {
    * undefined-vs-zero semantics as `leadConversions`.
    */
   purchaseConversions?: number;
-  /** value of conversions reported by Meta (used for ROAS = value / spend) */
-  conversionValue: number;
+  /**
+   * Value of conversions reported by Meta (used for ROAS = value / spend).
+   *
+   * Spec 015 / FR-026 — **`null` means Meta returned no `action_values`
+   * array at all**: the value is UNKNOWN, not zero. Every rule that reads
+   * value or ROAS must stand down on `null` rather than coalescing it
+   * (`?? 0` is forbidden — it is what produced "العائد الكلي 0.0x" on
+   * campaigns with real sales). A numeric `0` with the array present is a
+   * real captured zero and keeps its old meaning.
+   *
+   * Snapshots cached before spec 015 store `0` where this code would now
+   * store `null`; they self-clear on the next refresh and are not
+   * back-filled (contracts/unknown-vs-zero.md §U5).
+   */
+  conversionValue: number | null;
+  /**
+   * Spec 015 / FR-027 — the result COUNTS on this row are unknown.
+   *
+   * Set `true` only when Meta returned no `actions` array **and**
+   * `linkClicks > 0` — an inconsistent payload, where clicks happened but
+   * no results came back. Absent/`false` means the counts are a genuine
+   * zero and the zero-result rules (K1) and click-through kill (K3) must
+   * evaluate normally.
+   *
+   * Deliberately a separate field rather than `undefined` on
+   * `leadConversions`/`purchaseConversions`: those already reserve
+   * `undefined` for "snapshot predates the spec-012 split"
+   * (contracts/unknown-vs-zero.md §U4, research R1). The two states need
+   * different copy and have different lifetimes.
+   */
+  resultsUnknown?: boolean;
   /** landing page views (from actions) */
   lpViews: number;
   /** null when conversions = 0 */
@@ -307,6 +336,25 @@ export interface Baselines {
   cplMedian30: number | null;
   /** current account-level CPM (3d) for market-level comparison */
   cpmNow: number | null;
+  /**
+   * Spec 015 / FR-025 — total PURCHASE-type conversions over the last 30
+   * days. Summed inside the SAME `last_30d, time_increment=1` Graph
+   * response that already produces `cpaMedian30` / `cplMedian30`, whose
+   * per-day purchase and lead counts are computed and then discarded
+   * today — so this costs **no new Graph call** (research R2, the same
+   * manoeuvre spec 012 used for `cplMedian30`).
+   *
+   * Read only by the Settings save-time funnel-type check, from the cached
+   * snapshot. `null` when the baselines request produced no usable rows
+   * (principle 10 — absent is not zero), in which case the check is
+   * skipped silently and the save proceeds.
+   */
+  purchases30: number | null;
+  /**
+   * Spec 015 / FR-025 — total LEAD-type conversions over the last 30 days.
+   * Same source, same request, same null semantics as `purchases30`.
+   */
+  leads30: number | null;
 }
 
 export interface AccountSnapshotPayload {
@@ -614,6 +662,18 @@ export interface AccountSummary {
    * last new ad, and a simple-Arabic message for the account-level signal.
    */
   cadence: Cadence | null;
+  /**
+   * Spec 015 / FR-005 — at least half of the account's ACTIVE spend sits on
+   * objects tripping the event-match gate, i.e. the funnel type counts an
+   * event these campaigns do not record. Drives one warning card at the top
+   * of the dashboard linking to Settings, instead of leaving the user to
+   * infer the cause from a page of ⏳ rows.
+   *
+   * "Active spend" is the window spend of ad sets that pass the status gate
+   * — the same population the counters use. Below the threshold individual
+   * rows are still gated; only the account-level card is withheld.
+   */
+  settings_mismatch: boolean;
 }
 
 export interface EngineResult {

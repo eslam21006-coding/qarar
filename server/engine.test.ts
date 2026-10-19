@@ -1396,3 +1396,162 @@ describe("T033 — appointment stale-input no-verdict (US1 / FR-015a / SC-018)",
     expect(reasonTextMentionsStale(result)).toBe(false);
   });
 });
+
+// ===========================================================================
+// Spec 015 / US1 — event-match gate (FR-001…FR-005, rulebook v2.2 §4.1).
+// Live-account evidence: a webinar-configured account whose campaigns record
+// PURCHASES read as zero-result everywhere, so $809 / 16 sales was killed
+// with K1 "صرفت $809 بدون أي نتيجة". The gate stops the engine judging on a
+// zero that only exists because the settings count the wrong event.
+// ===========================================================================
+describe("T012-T016 — event-match gate (spec 015 / US1)", () => {
+  const MISMATCH = "إعدادات الفانل تعدّ نوعًا من النتائج لا تسجله هذه الحملة";
+
+  /** Stamp every object in the demo tree with one explicit w3d shape. */
+  function buildSnap(opts: {
+    leadConversions?: number;
+    purchaseConversions?: number;
+    conversions: number;
+    spend3d: number;
+    resultsUnknown?: boolean;
+  }) {
+    const snap = buildDemoSnapshot();
+    for (const o of snap.objects) {
+      o.w3d = {
+        spend: opts.spend3d,
+        impressions: 20000,
+        reach: 18000,
+        frequency: 1.2,
+        clicks: 400,
+        linkClicks: 340,
+        ctrAll: 2.0,
+        ctrLink: 1.7,
+        cpm: 18,
+        cpc: 1.5,
+        conversions: opts.conversions,
+        conversionValue: opts.conversions * 50,
+        lpViews: 300,
+        cpa: opts.conversions > 0 ? opts.spend3d / opts.conversions : null,
+      };
+      if (opts.leadConversions !== undefined) {
+        o.w3d.leadConversions = opts.leadConversions;
+      }
+      if (opts.purchaseConversions !== undefined) {
+        o.w3d.purchaseConversions = opts.purchaseConversions;
+      }
+      if (opts.resultsUnknown) {
+        o.w3d.resultsUnknown = true;
+      }
+    }
+    return snap;
+  }
+
+  // Counts registrations; demo baseline cplMedian30 = 39 → unitTarget 39.
+  const WEBINAR_FUNNEL: FunnelInputs = {
+    archetype: "webinar",
+    liveComponent: true,
+    aov: 0,
+    htoPrice: 2000,
+    htoConversionRate: 0,
+    frontEndRoas: 1.0,
+    arena: "broad",
+    showUpRate: 70,
+    closeRate: 22,
+  };
+
+  // Counts purchases; unitTarget = aov / frontEndRoas = 43.
+  const PAID_LTO_FUNNEL: FunnelInputs = {
+    archetype: "paid_lto",
+    liveComponent: false,
+    aov: 43,
+    htoPrice: 3500,
+    htoConversionRate: 3,
+    frontEndRoas: 1.0,
+    arena: "broad",
+  };
+
+  it("T012 — webinar, 0 registrations + 16 purchases + $809 ⇒ ⏳ GATE, not K1", () => {
+    const snap = buildSnap({
+      leadConversions: 0,
+      purchaseConversions: 16,
+      conversions: 16,
+      spend3d: 809,
+    });
+    const result = runEngine(snap, WEBINAR_FUNNEL);
+    for (const r of result.rows) {
+      expect(r.verdict, `${r.id} verdict`).toBe("too_early");
+      expect(r.rule, `${r.id} rule`).toBe("GATE");
+      expect(r.reason_ar, `${r.id} reason`).toContain(MISMATCH);
+      expect(r.action_ar, `${r.id} action`).toContain("راجع نوع الفانل في الإعدادات");
+    }
+    // The defect this closes: no row may claim "no result" or be killed.
+    expect(result.rows.some(r => r.rule === "K1")).toBe(false);
+    expect(result.rows.some(r => /بدون أي نتيجة/.test(r.reason_ar))).toBe(false);
+  });
+
+  it("T013 — webinar, BOTH families zero ⇒ real zero, K1 fires unchanged", () => {
+    const snap = buildSnap({
+      leadConversions: 0,
+      purchaseConversions: 0,
+      conversions: 0,
+      spend3d: 809, // ≥ 2 × 39
+    });
+    const result = runEngine(snap, WEBINAR_FUNNEL);
+    // Rulebook §4.1: "الحدثان = 0 → صفر حقيقي — أكمل للقواعد".
+    expect(result.rows.some(r => r.rule === "K1")).toBe(true);
+    expect(result.rows.some(r => r.reason_ar.includes(MISMATCH))).toBe(false);
+  });
+
+  it("T014 — paid_lto, 0 purchases + positive registrations ⇒ gate fires, registration noun", () => {
+    const snap = buildSnap({
+      leadConversions: 12,
+      purchaseConversions: 0,
+      // Legacy blended `conversions` falls through to the lead count when
+      // there are no purchases — which is exactly why the gate reads the
+      // split fields rather than `effectiveConversions`.
+      conversions: 12,
+      spend3d: 500,
+    });
+    const result = runEngine(snap, PAID_LTO_FUNNEL);
+    for (const r of result.rows) {
+      expect(r.verdict, `${r.id} verdict`).toBe("too_early");
+      expect(r.rule, `${r.id} rule`).toBe("GATE");
+      expect(r.reason_ar, `${r.id} reason`).toContain(MISMATCH);
+      // The campaign records the OTHER family — registrations here.
+      expect(r.reason_ar, `${r.id} noun`).toContain("تسجيلات");
+    }
+  });
+
+  it("T015 — the gate fires at ad, ad-set AND campaign level", () => {
+    const snap = buildSnap({
+      leadConversions: 0,
+      purchaseConversions: 16,
+      conversions: 16,
+      spend3d: 809,
+    });
+    const result = runEngine(snap, WEBINAR_FUNNEL);
+    for (const level of ["ad", "adset", "campaign"] as const) {
+      const rows = result.rows.filter(r => r.level === level);
+      expect(rows.length, `${level} rows exist`).toBeGreaterThan(0);
+      for (const r of rows) {
+        expect(r.rule, `${level} ${r.id} rule`).toBe("GATE");
+        expect(r.reason_ar, `${level} ${r.id} reason`).toContain(MISMATCH);
+      }
+    }
+  });
+
+  it("T016 — resultsUnknown ⇒ the event-match gate does NOT fire", () => {
+    const snap = buildSnap({
+      leadConversions: 0,
+      purchaseConversions: 16,
+      conversions: 16,
+      spend3d: 809,
+      resultsUnknown: true,
+    });
+    const result = runEngine(snap, WEBINAR_FUNNEL);
+    // Counts are unknown, not zero — the mismatch comparison is meaningless,
+    // so this gate must stand down. (Full unknown-data handling, including
+    // standing K1 down, is US6 / Phase 8 — not asserted here.)
+    expect(result.rows.some(r => r.reason_ar.includes(MISMATCH))).toBe(false);
+  });
+});

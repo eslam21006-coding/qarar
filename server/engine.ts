@@ -333,11 +333,27 @@ function explicitCtrKillAllowed(o: NormalizedObject): boolean {
   return o.w3d.impressions >= 1500 && o.w3d.ctrLink < 0.5;
 }
 
-function gateVerdict(o: NormalizedObject, target: number): Fired | null {
-  // Paused / not active → frozen data, no judgment (US4 / T027).
-  // The subtraction (2000 − impressions) would otherwise always read "needs
-  // 2,000 more" because paused objects carry zero impressions in the 3-day
-  // window. Branch FIRST so the message matches the actual state.
+/**
+ * Spec 015 / FR-006, FR-007 — STEP 1 of the evaluation order.
+ *
+ * Constitution v1.1.1 Principle I and rulebook v2.2 §4.2/§5.5 (row 0): an
+ * object whose status in Meta is not active passes through NO rule at all,
+ * "بما فيها K3 ومصفوفة المحروم". It was previously the first branch inside
+ * `gateVerdict`, which runs AFTER `killK3` and `starvedAdMatrix` in
+ * `evaluateAd` and AFTER `circuitBreaker` in `evaluateAdset` — so a paused
+ * object could still be killed by one of those three rules. That is the
+ * defect this move fixes.
+ *
+ * The verdict, rule, reason and action are carried over byte-identically
+ * from the old branch. Per-state badges (FR-008) and treating
+ * IN_PROCESS / PREAPPROVED as active (FR-007a) are US2 work, deliberately
+ * NOT done here.
+ *
+ * `effectiveStatus ?? status` is the whole chain on a `NormalizedObject`;
+ * the three-step form in `buildSummary` adds the engine row's own status,
+ * which does not exist at this layer (contracts/gate-order.md §G2).
+ */
+function statusGate(o: NormalizedObject): Fired | null {
   const effectiveDelivered = o.effectiveStatus ?? o.status;
   if (effectiveDelivered !== "ACTIVE") {
     return {
@@ -347,6 +363,73 @@ function gateVerdict(o: NormalizedObject, target: number): Fired | null {
       action: "شغّله إن أردت تقييمه، أو احذفه إن لم تعد تحتاجه",
     };
   }
+  return null;
+}
+
+/**
+ * Spec 015 / FR-001…FR-004 — STEP 4 of the evaluation order.
+ *
+ * Rulebook v2.2 §4.1: before any rule that depends on a result count, check
+ * that the event the settings COUNT is the event the campaigns actually
+ * RECORD. A webinar-configured account whose campaigns sell tickets reads as
+ * zero-result everywhere, and the engine then kills it for "بدون أي نتيجة"
+ * while the table shows 16 sales. "قتل حملة تبيع لأن الإعدادات تعدّ حدثًا
+ * آخر هو أسوأ خطأ يمكن أن يرتكبه المحرك."
+ *
+ * Why this reads the SPLIT fields rather than `effectiveConversions`:
+ * `effectiveConversions` returns the legacy blended `conversions` for
+ * `paid_lto` / `free_lead`, and that field is purchase-first-then-lead — so
+ * a purchase-counting account with 0 purchases and 12 leads reports 12, and
+ * the mismatch could never be detected in that direction. Spec FR-002 asks
+ * for "the event implied by the funnel type" versus "the opposite family",
+ * which only the explicit `leadConversions` / `purchaseConversions` pair can
+ * express. `effectiveConversions` is deliberately left untouched: every
+ * other rule keeps today's selector (spec 012 SC-025).
+ *
+ * Returns `null` — i.e. continue to the rules — when:
+ *   - the counted event is > 0 (nothing to diagnose), or
+ *   - both families are 0 ("الحدثان = 0 → صفر حقيقي — أكمل للقواعد"), or
+ *   - either count is absent (a pre-separation snapshot; the units are
+ *     unknown and `preSeparationGate` at step 3 owns that case), or
+ *   - the counts are unknown for this window (FR-027) — unknown is not a
+ *     zero, so there is no mismatch to report.
+ */
+function eventMatchGate(
+  o: NormalizedObject,
+  archetype: FunnelInputs["archetype"]
+): Fired | null {
+  if (o.w3d.resultsUnknown) return null;
+
+  // Which event does this funnel type count? `paid_lto` sells; every other
+  // archetype captures a registration (data-model.md §6).
+  const countsRegistrations = archetype !== "paid_lto";
+  const counted = countsRegistrations
+    ? o.w3d.leadConversions
+    : o.w3d.purchaseConversions;
+  const other = countsRegistrations
+    ? o.w3d.purchaseConversions
+    : o.w3d.leadConversions;
+
+  if (counted === undefined || other === undefined) return null;
+  if (counted > 0) return null;
+  if (other <= 0) return null;
+
+  // The noun names what the campaign DOES record — the opposite family.
+  const otherNoun = countsRegistrations ? "مبيعات" : "تسجيلات";
+  return {
+    verdict: "too_early",
+    rule: "GATE",
+    reason: `إعدادات الفانل تعدّ نوعًا من النتائج لا تسجله هذه الحملة — هذه الحملة تسجل ${otherNoun} من النوع الآخر`,
+    action: "راجع نوع الفانل في الإعدادات",
+  };
+}
+
+function gateVerdict(o: NormalizedObject, target: number): Fired | null {
+  // Spec 015 / FR-006 — the paused branch that used to open this function
+  // now lives in `statusGate`, called first by every evaluator. Do not
+  // re-add a status check here: two sources of truth for "is this active"
+  // is exactly how a paused object kept picking up kill verdicts.
+  //
   // Minimum age gate: < 48h → no judgment at all (quick matrix: عمره < 48 ساعة → لا شيء)
   if (o.ageDays < 2 && !explicitCtrKillAllowed(o)) {
     return {
@@ -1518,8 +1601,15 @@ function evaluateCampaign(
   archetype: FunnelInputs["archetype"],
   nsThreshold: number
 ): Fired {
-  // Spec 013 / T025 — exempt branch entered FIRST and ONLY for exempt
-  // objects (FR-009b). Non-exempt objects continue with the existing
+  // Spec 015 / FR-006 — STEP 1. Campaign level had NO status check at all
+  // before this (outside the exempt branch's own), so a paused campaign was
+  // judged in full by the sales rulebook. This is new capability, not a
+  // reordering (research.md §1.3).
+  const status = statusGate(o);
+  if (status) return status;
+
+  // Spec 013 / T025 — exempt branch, STEP 2 of the order. Entered ONLY for
+  // exempt objects (FR-009b). Non-exempt objects continue with the existing
   // pipeline byte-identically (FR-020, SC-010).
   const ns = evaluateNonSales(o, nsThreshold);
   if (ns) return ns;
@@ -1530,6 +1620,14 @@ function evaluateCampaign(
   // child objects, all of which are also pre-separation).
   const preSep = preSeparationGate(o, archetype);
   if (preSep) return preSep;
+
+  // Spec 015 / FR-001 — STEP 4. Runs after the NS exemption (step 2)
+  // and the pre-separation guard (step 3) per constitution v1.1.1
+  // Principle I: a non-sales objective records no sales events at all,
+  // and a pre-separation snapshot has unknown units — neither can be
+  // diagnosed as a settings/event mismatch.
+  const eventMatch = eventMatchGate(o, archetype);
+  if (eventMatch) return eventMatch;
   const { spend } = o.w3d;
   // T025 / T026 — campaign-level conversion count follows the archetype
   // selector. `paid_lto` / `free_lead` keep the legacy field (SC-025);
@@ -1636,8 +1734,16 @@ function evaluateAd(
   baselines: Baselines,
   nsThreshold: number
 ): Fired {
-  // Spec 013 / T023 — exempt branch entered FIRST and ONLY for exempt
-  // objects (FR-009b). Reaches before preSeparationGate, K3 explicit
+  // Spec 015 / FR-006 — STEP 1, ahead of everything. Previously the status
+  // check sat inside `gateVerdict`, which runs AFTER `killK3` and
+  // `starvedAdMatrix` — so a paused ad could be killed by K3 or K5 on
+  // frozen data. Rulebook §4.2: a non-active object passes no rule, "بما
+  // فيها K3 ومصفوفة المحروم".
+  const status = statusGate(ad);
+  if (status) return status;
+
+  // Spec 013 / T023 — exempt branch, STEP 2 of the order. Entered ONLY for
+  // exempt objects (FR-009b). Reaches before preSeparationGate, K3 explicit
   // kill, and the starved matrix (C2.2). Non-exempt objects continue
   // with the existing pipeline byte-identically (FR-020, SC-010).
   const ns = evaluateNonSales(ad, nsThreshold);
@@ -1650,6 +1756,14 @@ function evaluateAd(
   // archetypes read the legacy `conversions`, which is always populated).
   const preSep = preSeparationGate(ad, archetype);
   if (preSep) return preSep;
+
+  // Spec 015 / FR-001 — STEP 4. Runs after the NS exemption (step 2)
+  // and the pre-separation guard (step 3) per constitution v1.1.1
+  // Principle I: a non-sales objective records no sales events at all,
+  // and a pre-separation snapshot has unknown units — neither can be
+  // diagnosed as a settings/event mismatch.
+  const eventMatch = eventMatchGate(ad, archetype);
+  if (eventMatch) return eventMatch;
 
   // K3 explicit kill allowed even at low sample (1,500 imp + CTR < 0.5%)
   const k3 = killK3(ad);
@@ -1708,9 +1822,16 @@ function evaluateAdset(
   baselines: Baselines,
   nsThreshold: number
 ): Fired {
-  // Spec 013 / T024 — exempt branch entered FIRST and ONLY for exempt
-  // objects (FR-009b). Reaches before preSeparationGate and the circuit
-  // breaker (C2.2). Non-exempt objects continue with the existing
+  // Spec 015 / FR-006 — STEP 1, ahead of everything. Previously the status
+  // check sat inside `gateVerdict`, which runs AFTER `circuitBreaker` — so
+  // a paused ad set could still be killed by CB1/CB2 on today's frozen
+  // data. Rulebook §4.2.
+  const status = statusGate(o);
+  if (status) return status;
+
+  // Spec 013 / T024 — exempt branch, STEP 2 of the order. Entered ONLY for
+  // exempt objects (FR-009b). Reaches before preSeparationGate and the
+  // circuit breaker (C2.2). Non-exempt objects continue with the existing
   // pipeline byte-identically (FR-020, SC-010).
   const ns = evaluateNonSales(o, nsThreshold);
   if (ns) return ns;
@@ -1718,6 +1839,14 @@ function evaluateAdset(
   // T026 — pre-separation snapshot guard (see evaluateAd for the rationale).
   const preSep = preSeparationGate(o, archetype);
   if (preSep) return preSep;
+
+  // Spec 015 / FR-001 — STEP 4. Runs after the NS exemption (step 2)
+  // and the pre-separation guard (step 3) per constitution v1.1.1
+  // Principle I: a non-sales objective records no sales events at all,
+  // and a pre-separation snapshot has unknown units — neither can be
+  // diagnosed as a settings/event mismatch.
+  const eventMatch = eventMatchGate(o, archetype);
+  if (eventMatch) return eventMatch;
 
   // 2. Circuit breaker FIRST — "يتجاوز كل البوابات"
   const cb = circuitBreaker(o, t.unitTarget);
@@ -1860,9 +1989,15 @@ export function runEngine(
       learning_phase: !!o.learningPhase || weeklyConversions(o, funnel.archetype) < 50,
       // Hotfix T9: 3-day ROAS = conversionValue / spend. null when either
       // is 0 — surfaces an explicit "—" in the column instead of 0.00x.
-      roas_3d: o.w3d.spend > 0 && o.w3d.conversionValue > 0
-        ? round2(o.w3d.conversionValue / o.w3d.spend)
-        : null,
+      // Spec 015 / FR-027 — `conversionValue` is now `number | null`, where
+      // null means Meta sent no value data. An unknown value yields null
+      // here too, never 0.00x: unknown and zero must not look alike.
+      roas_3d:
+        o.w3d.spend > 0 &&
+        o.w3d.conversionValue !== null &&
+        o.w3d.conversionValue > 0
+          ? round2(o.w3d.conversionValue / o.w3d.spend)
+          : null,
     };
   };
 
@@ -1921,7 +2056,7 @@ export function runEngine(
   // `o.objective ?? null` read, so no per-row backfill is required here.
   // The shape of the output (`EngineRow.objective`) is unchanged.
 
-  const summary = buildSummary(rows, snapshot, targets);
+  const summary = buildSummary(rows, snapshot, targets, funnel.archetype);
   return { rows, summary, targets, currencySymbol: _currency };
 }
 
@@ -1978,14 +2113,18 @@ function buildNoTargetResult(
       promotion_eligible: false,
       promotion_note: null,
       learning_phase: !!o.learningPhase || weeklyConversions(o, archetype) < 50,
+      // Spec 015 / FR-027 — see the sibling comment in the main row
+      // builder: an unknown value must not render as 0.00x.
       roas_3d:
-        o.w3d.spend > 0 && o.w3d.conversionValue > 0
+        o.w3d.spend > 0 &&
+        o.w3d.conversionValue !== null &&
+        o.w3d.conversionValue > 0
           ? round2(o.w3d.conversionValue / o.w3d.spend)
           : null,
     };
   };
   const rows = snapshot.objects.map(toRow);
-  const summary = buildSummary(rows, snapshot, targets);
+  const summary = buildSummary(rows, snapshot, targets, archetype);
   return { rows, summary, targets, currencySymbol: _currency };
 }
 
@@ -2119,7 +2258,8 @@ function round2(n: number): number {
 function buildSummary(
   rows: EngineRow[],
   snapshot: AccountSnapshotPayload,
-  targets: DerivedTargets
+  targets: DerivedTargets,
+  archetype: FunnelInputs["archetype"]
 ): AccountSummary {
   // Spec 013 / US1 — the three live-state elements (counts, bleed,
   // top_3_actions) describe only the LIVE account. `EngineRow` has no
@@ -2247,6 +2387,30 @@ function buildSummary(
   }
   const top3 = actions.slice(0, 3).map((a, i) => ({ ...a, rank: i + 1 }));
 
+  // Spec 015 / FR-005 — account-level settings-mismatch flag.
+  //
+  // Measured over AD SETS that pass the status gate: the ad set is the
+  // rulebook's judgment unit (§5.0), campaigns would double-count their own
+  // children, and gated objects are excluded from both numerator and
+  // denominator (spec Assumptions) so paused history cannot drag the
+  // threshold either way.
+  //
+  // `eventMatchGate` is re-called here rather than the row's rule/reason
+  // being string-matched: one source of truth for "is this a mismatch", and
+  // a row can legitimately carry GATE for an unrelated reason (min age,
+  // data gates).
+  let mismatchSpend = 0;
+  let activeAdsetSpend = 0;
+  for (const r of rows) {
+    if (r.level !== "adset") continue;
+    if (!isActive(r)) continue;
+    activeAdsetSpend += r.spend_3d;
+    const o = snapObjById.get(r.id);
+    if (o && eventMatchGate(o, archetype)) mismatchSpend += r.spend_3d;
+  }
+  const settings_mismatch =
+    activeAdsetSpend > 0 && mismatchSpend / activeAdsetSpend >= 0.5;
+
   // Spec 014 / contract §C6.1, §C6.1a — account-level funnel card.
 
   /**
@@ -2319,5 +2483,7 @@ function buildSummary(
     // "unknown". Otherwise bucket by days since last new ad: stall
     // (>14), reminder (>7), ok (≤7 → null).
     cadence: computeCadence(snapshot),
+    // Spec 015 / FR-005.
+    settings_mismatch,
   };
 }

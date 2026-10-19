@@ -110,7 +110,7 @@ describe("buildSummary — active-only counters (US1 / T004)", () => {
     expect(sum).toBe(0);
   });
 
-  it("paused rows keep their verdict, rule code, reason, and action — only the counter excludes them (FR-004, SC-006)", () => {
+  it("paused rows are gated to ⏳ GATE — the status gate now precedes the circuit breaker (spec 015 / FR-006)", () => {
     const snap = buildDemoSnapshot();
     // Identify one of the demo's kill-verdict ad sets (as_cb fires CB2).
     const beforeRun = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
@@ -125,16 +125,21 @@ describe("buildSummary — active-only counters (US1 / T004)", () => {
 
     const afterRun = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
     const afterRow = afterRun.rows.find(r => r.id === "as_cb")!;
-    // Per FR-005a / R5: CB2 fires BEFORE the paused check at ad-set
-    // level, so the per-row verdict stays "kill CB2" — the paused
-    // status does not override the kill-capable rule. FR-004 / SC-006
-    // require the verdict, rule, reason, and action to be unchanged
-    // for the row itself.
-    expect(afterRow.verdict).toBe("kill");
-    expect(afterRow.rule).toBe("CB2");
-    expect(afterRow.reason_ar).toBe(beforeRow.reason_ar);
-    expect(afterRow.action_ar).toBe(beforeRow.action_ar);
-    // The strip (the live-state element) is what excludes the paused row.
+    // The prior spec's FR-005a asserted the opposite: that CB2 fired
+    // BEFORE the paused check at ad-set level, so the row kept "kill CB2".
+    // Spec 015 / FR-006 reverses that premise — rulebook v2.2 §4.2 and
+    // constitution v1.1.1 Principle I step 1 place the status gate ahead
+    // of every rule, the circuit breaker included. A paused ad set reports
+    // that it is paused; it is not killed on today's frozen data.
+    expect(afterRow.verdict).toBe("too_early");
+    expect(afterRow.rule).toBe("GATE");
+    // The reason and action now describe the real state, so they MUST
+    // differ from the CB2 copy they replaced.
+    expect(afterRow.reason_ar).not.toBe(beforeRow.reason_ar);
+    expect(afterRow.action_ar).not.toBe(beforeRow.action_ar);
+    // FR-010 — never tell the user to stop what is already stopped.
+    expect(afterRow.action_ar).not.toContain("أوقِف");
+    // The strip still excludes the paused row from the kill counter.
     expect(afterRun.summary.counts.kill).toBeLessThan(beforeRun.summary.counts.kill);
   });
 
@@ -161,5 +166,86 @@ describe("buildSummary — active-only counters (US1 / T004)", () => {
     expect(b.summary.counts).toEqual(a.summary.counts);
     expect(b.summary.bleed_daily).toBe(a.summary.bleed_daily);
     expect(b.summary.top_3_actions).toEqual(a.summary.top_3_actions);
+  });
+});
+/**
+ * Spec 015 / US1 (T017, FR-005) — account-level settings-mismatch flag.
+ *
+ * When objects tripping the event-match gate hold at least half of the
+ * account's ACTIVE spend, the dashboard must raise one warning card instead
+ * of leaving the user to infer it from a page of ⏳ rows. "Active spend" is
+ * the window spend of ad sets that pass the status gate — the same
+ * population the counters use (spec Assumptions, contracts/
+ * summary-counters.md §S6).
+ */
+describe("buildSummary — settings_mismatch flag (spec 015 / US1 / T017)", () => {
+  const WEBINAR_FUNNEL: FunnelInputs = {
+    archetype: "webinar",
+    liveComponent: true,
+    aov: 0,
+    htoPrice: 2000,
+    htoConversionRate: 0,
+    frontEndRoas: 1.0,
+    arena: "broad",
+    showUpRate: 70,
+    closeRate: 22,
+  };
+
+  /** registrations counted, purchases recorded → trips the gate */
+  function stampMismatch(o: NormalizedObject, spend: number) {
+    o.w3d = {
+      ...o.w3d,
+      spend,
+      conversions: 8,
+      leadConversions: 0,
+      purchaseConversions: 8,
+      cpa: spend / 8,
+    };
+  }
+
+  /** registrations counted and recorded → does not trip the gate */
+  function stampHealthy(o: NormalizedObject, spend: number) {
+    o.w3d = {
+      ...o.w3d,
+      spend,
+      conversions: 20,
+      leadConversions: 20,
+      purchaseConversions: 0,
+      cpa: spend / 20,
+    };
+  }
+
+  it("mismatched objects hold 100% of active spend ⇒ settings_mismatch true", () => {
+    const snap = buildDemoSnapshot();
+    for (const o of snap.objects) stampMismatch(o, 400);
+    const result = runEngine(snap, WEBINAR_FUNNEL);
+    expect(result.summary.settings_mismatch).toBe(true);
+  });
+
+  it("no mismatched object ⇒ settings_mismatch false", () => {
+    const snap = buildDemoSnapshot();
+    for (const o of snap.objects) stampHealthy(o, 400);
+    const result = runEngine(snap, WEBINAR_FUNNEL);
+    expect(result.summary.settings_mismatch).toBe(false);
+  });
+
+  it("mismatched ad sets hold a clear minority of active spend ⇒ settings_mismatch false, rows still gated", () => {
+    const snap = buildDemoSnapshot();
+    const adsets = snap.objects.filter(o => o.level === "adset");
+    expect(adsets.length).toBeGreaterThan(2);
+    // One low-spend ad set mismatched, every other ad set healthy and far
+    // larger — the mismatched share is well under the 50% threshold.
+    adsets.forEach((o, i) => (i === 0 ? stampMismatch(o, 10) : stampHealthy(o, 300)));
+    // Children follow their parent so the tree stays coherent.
+    for (const o of snap.objects.filter(o => o.level !== "adset")) {
+      stampHealthy(o, 300);
+    }
+    const mismatchedId = adsets[0].id;
+    const result = runEngine(snap, WEBINAR_FUNNEL);
+    expect(result.summary.settings_mismatch).toBe(false);
+    // The individual row is still gated even though the account-level card
+    // is withheld (FR-005).
+    const row = result.rows.find(r => r.id === mismatchedId)!;
+    expect(row.rule).toBe("GATE");
   });
 });
