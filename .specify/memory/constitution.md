@@ -1,50 +1,44 @@
 <!--
 Sync Impact Report — 2026-10-19
-Version change: 1.1.0 → 1.1.1
-Bump rationale: PATCH — clarification only. Principle I's evaluation order now
-names two guards that already run in the engine and that the rulebook v2.2 §5.5
-table never listed (the non-sales exemption from spec 013 and the pre-separation
-snapshot guard from spec 012). No rule's behaviour, threshold, code or relative
-position changes; the list is made exhaustive rather than redefined.
+Version change: 1.1.1 → 1.1.2
+Bump rationale: PATCH — codifies existing engine behaviour. evaluateAdset has
+always run circuitBreaker before gateVerdict; Principle I's list said the
+opposite. No rule's behaviour, threshold, code or output changes, and the
+verdict snapshot is unaffected.
 
 Modified principles:
-- I. Deterministic engine — no AI in decisions: the ordered list grows from 11 to
-  13 steps with the two pre-existing guards inserted at positions 2 and 3, each
-  with its rationale. Every previously listed step keeps its relative order.
+- I. Deterministic engine — no AI in decisions: the circuit breaker (ad-set
+  level) moves from step 8 to step 7, ahead of the data gates (now step 8).
+  The rationale is stated inline: rulebook §5.3 says the circuit breaker
+  "يتجاوز كل البوابات" and Part 4 names it as the only exception to the data
+  gates. If the data gates ran first, a young ad set burning 2.5× its target
+  today would be gated ⏳ and CB2 could never fire. The intro sentence notes
+  this departure from the §5.5 table. Every other step keeps its position.
 
 Principles II–VII, Engineering constraints, and Governance: unchanged.
 Added sections: none. Removed sections: none.
 
-Why this clarification exists: /speckit-analyze flagged finding C1 — the plan for
-feature 015 placed the non-sales exemption between the status gate and the
-event-match gate, which Principle I's 11-step list did not allow for. The order
-below resolves that by stating the real order rather than by reinterpreting the
-principle.
+Why this patch exists: spec 015's implementation report (Decisions for the
+owner, item 2) flagged that the ad-set order in server/engine.ts contradicted
+Principle I v1.1.1. The owner chose to codify the engine's order.
 
 Consistency propagation:
 - ✅ .specify/templates/plan-template.md — generic "Constitution Check" gate,
   no principle-specific text to update.
-- ✅ .specify/templates/spec-template.md — no constitution references.
-- ✅ .specify/templates/tasks-template.md — no principle-driven task categories.
-- ✅ .specify/templates/checklist-template.md — no constitution references.
-- ✅ specs/015-verdict-accuracy/contracts/gate-order.md §G1 — order table rebuilt
-  as 13 steps with the pre-separation guard at 3 and the event-match gate at 4;
-  the "documented deviation" note replaced with the rationale for steps 2 and 3.
-- ✅ specs/015-verdict-accuracy/research.md R5 and R6 — R5 now records the
-  deviation as resolved at the source; R6's delta table carries the corrected
-  pre-separation ordering.
-- ✅ specs/015-verdict-accuracy/tasks.md T019 — now calls eventMatchGate after
-  preSeparationGate.
-- ✅ specs/015-verdict-accuracy/plan.md — Constitution Check reads PASS with no
-  deviation; the Complexity Tracking entry for it is removed.
-- ⚠ server/engine.ts (header comment) and shared/qarar.ts (header comment) —
-  still cite rulebook v2.1, and the implemented order predates v2.2. Tracked by
-  docs/spec-015/spec-015-verdict-accuracy.md §3.
-- ⚠ docs/spec-015/qarar-rulebook-v2.2.md is not yet committed next to the code
-  references. Tracked by spec-015 §3.
-- ⚠ docs/audit-finding.md, docs/qarar-open-issues-plan.md, docs/polish-report.md,
-  docs/gate-review-014.md and specs/001…007 describe the pre-v2.2 order. These
-  are historical records of completed work and are deliberately left as written.
+- ✅ .specify/templates/spec-template.md, tasks-template.md,
+  checklist-template.md — no constitution or order references.
+- ✅ server/engine.ts — already runs circuitBreaker before gateVerdict; no change.
+- ⚠ docs/spec-015/qarar-rulebook-v2.2.md §5.5 table — still lists data gates
+  (row 4) before the circuit breaker (row 5), contradicting its own §5.3 and
+  Part 4. Left unchanged per the owner's "no other changes".
+- ⚠ specs/015-verdict-accuracy/contracts/gate-order.md §G1 — rows 7/8 still
+  show gateVerdict before circuitBreaker and cite v1.1.1. Left unchanged per
+  the owner's "no other changes".
+- ⚠ specs/015-verdict-accuracy/implementation-report.md — the "adset CB vs
+  data-gate order" deviation note is now resolved by this patch.
+
+Prior history: 1.1.0 → 1.1.1 (2026-10-19) named the non-sales exemption and
+the pre-separation guard at steps 2 and 3.
 
 Deferred placeholders / TODOs: none.
 -->
@@ -58,7 +52,8 @@ The decision engine (server/engine.ts) is pure, deterministic math implementing
 the rulebook (محرك القرار الإعلاني v2.2). No LLM or AI inference may appear in any
 verdict or diagnosis logic. The per-object evaluation order is fixed by rulebook
 v2.2 §5.5 — plus the two guards named at steps 2 and 3, which the rulebook table
-does not list — and evaluation stops at the first verdict it yields:
+does not list, and with the circuit breaker ahead of the data gates as §5.3 and
+Part 4 require — and evaluation stops at the first verdict it yields:
 
 1. **Status gate** (§4.2) — an object that is not actually active (paused itself,
    paused by its parent, or not spending) passes through NO rule at all, not even
@@ -76,8 +71,11 @@ does not list — and evaluation stops at the first verdict it yields:
    counts zero while the account records a different event.
 5. **K3** — the clear CTR kill (from 1,500 impressions), ad level.
 6. **Starved matrix K5** — under the §5.0 conditions, ad level.
-7. **Data gates** (Part 4).
-8. **Circuit breaker** (§5.3) — on today's data, ad-set level.
+7. **Circuit breaker** (§5.3) — on today's data, ad-set level. It runs BEFORE
+   the data gates because §5.3 says it "يتجاوز كل البوابات" and Part 4 names it
+   as the only exception to them: if the data gates ran first, a young ad set
+   burning 2.5× its target today would be gated ⏳ and CB2 could never fire.
+8. **Data gates** (Part 4).
 9. **Kill rules** K1–K7.
 10. **Decay map** — the 72-hour decay map (K4), ad level.
 11. **Fatigue** (Part 7), ad level.
@@ -151,4 +149,4 @@ isolation requires explicit, written justification in the plan. Reviews
 (human or agent) check work against these principles before it proceeds to the
 next Spec Kit phase.
 
-**Version:** 1.1.1 · **Ratified:** 2026-06-13 · **Last amended:** 2026-10-19
+**Version:** 1.1.2 · **Ratified:** 2026-06-13 · **Last amended:** 2026-10-19
