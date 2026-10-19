@@ -171,7 +171,7 @@ Re-run against constitution v1.1.0 after Phase 1.
 
 | Principle | Post-design finding | Verdict |
 |---|---|---|
-| **I. Deterministic engine, fixed order** | The designed order in gate-order.md §G1 now matches constitution v1.1.1 step for step: status gate → NS exemption → pre-separation guard → event-match gate → K3 → K5 → data gates → circuit breaker → kill rules → decay map → fatigue → watch → continue. The earlier deviation is gone — the constitution was amended to name the two pre-existing guards (and rulebook §5.5 rows 0b/0c now list them), so this is conformance, not an exception. | ✅ PASS |
+| **I. Deterministic engine, fixed order** | The designed order in gate-order.md §G1 now matches constitution v1.1.2 step for step: status gate → NS exemption → pre-separation guard → event-match gate → K3 → K5 → circuit breaker → data gates → kill rules → decay map → fatigue → watch → continue. The earlier deviation is gone — the constitution was amended to name the two pre-existing guards (and rulebook §5.5 rows 0b/0c now list them), so this is conformance, not an exception. v1.1.2 then codified the engine's existing ad-set order (circuit breaker before data gates, rulebook §5.3 "يتجاوز كل البوابات"; §5.5 rows 4/5 match). | ✅ PASS |
 | **II. Rule codes verbatim** | No code added to `RuleCode` (`shared/qarar.ts:24–31`). New outputs reuse `GATE` and `K5`; the scale guard reuses S2/W1/W6. | ✅ PASS |
 | **III. Simple Arabic** | All strings fixed in the contracts. One known gap carried forward: number–noun agreement in the split counter label awaits feature 018's helper (summary-counters.md §S3). | ✅ PASS |
 | **IV. Data isolation** | No new query path. The save-time check reads the existing per-account snapshot. | ✅ PASS |
@@ -193,5 +193,6 @@ reasons in research.md §4.
 The change to the engine's evaluation order itself needs no justification entry: it was
 owner-approved and ratified into the constitution — as v1.1.0 for the rulebook v2.2 order, then
 clarified as v1.1.1 to name the NS1/NS2 exemption and the pre-separation guard — before this plan
-was finalised. The implementation conforms to that order rather than departing from it, so no
+was finalised. v1.1.2 (after implementation) moved no code: it codified the engine's existing
+ad-set order, circuit breaker before data gates. The implementation conforms to that order rather than departing from it, so no
 complexity exception remains for this feature.

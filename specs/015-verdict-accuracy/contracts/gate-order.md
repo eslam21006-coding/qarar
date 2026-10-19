@@ -4,8 +4,9 @@
 
 ## G1. Required evaluation order
 
-Per constitution Principle I (v1.1.1) and rulebook §5.5 — whose table now carries the two
-previously unlisted guards as rows 0b and 0c — evaluation stops at the first verdict.
+Per constitution Principle I (v1.1.2) and rulebook §5.5 — whose table now carries the two
+previously unlisted guards as rows 0b and 0c, and lists the circuit breaker ahead of the data
+gates — evaluation stops at the first verdict.
 
 | # | Step | Levels |
 |---|---|---|
@@ -15,16 +16,16 @@ previously unlisted guards as rows 0b and 0c — evaluation stops at the first v
 | 4 | **`eventMatchGate`** (new) | all |
 | 5 | `killK3` | ad |
 | 6 | `starvedAdMatrix` (K5) | ad |
-| 7 | `gateVerdict` (data gates, minus the status branch) | all |
-| 8 | `circuitBreaker` (CB1/CB2) | ad set |
+| 7 | `circuitBreaker` (CB1/CB2) | ad set |
+| 8 | `gateVerdict` (data gates, minus the status branch) | all |
 | 9 | kill rules K1–K7 | ad set, and K1 inline at ad level |
 | 10 | `decayMap` (K4) | ad |
 | 11 | `fatigueSignals` (F1/F2) | ad |
 | 12 | `watchRules` (W1–W6) | all |
 | 13 | `continueRules` (S1–S4) | all |
 
-**Why steps 2 and 3 precede the event-match gate** (constitution v1.1.1, rulebook §5.5 rows
-0b/0c):
+**Why steps 2 and 3 precede the event-match gate** (constitution v1.1.1 onward, rulebook §5.5
+rows 0b/0c):
 
 - A non-sales objective records no sales events at all, so it cannot be diagnosed as having the
   wrong result event configured. It must exit first — otherwise an incidental opposite-family
@@ -37,6 +38,14 @@ previously unlisted guards as rows 0b and 0c — evaluation stops at the first v
 Both guards already run in the engine; the constitution amendment named them rather than moving
 them. For a sales object on a current snapshot, steps 2 and 3 both return `null` and the order
 reduces to status → event-match → rules.
+
+**Why step 7 (circuit breaker) precedes step 8 (data gates)** (constitution v1.1.2, rulebook §5.5
+row 4): rulebook §5.3 says the circuit breaker "يتجاوز كل البوابات", and Part 4 names it as the only
+exception to the data gates. If the data gates ran first, a young ad set burning 2.5× its target
+today would be gated ⏳ and CB2 could never fire. `evaluateAdset` has always run `circuitBreaker`
+before `gateVerdict`; v1.1.2 codified that order rather than moving code. The breaker reads only
+**today's** count and stands down on its own when `today.resultsUnknown` (unknown-vs-zero.md §U2),
+so it never acts on a figure Meta did not return.
 
 ## G2. `statusGate(o)` → `Fired | null`
 

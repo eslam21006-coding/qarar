@@ -908,7 +908,11 @@ describe("Settings page — paid-event option and save-time check (spec 015 / US
   it("T053 — the reverse direction: purchases counted while leads30 ≥ 3 × purchases30 ⇒ asks too", async () => {
     renderRow({ archetype: "paid_lto", liveComponent: true }, { purchases30: 2, leads30: 40 });
     fireEvent.click(screen.getByTestId("settings-save-button"));
-    expect(await screen.findByTestId("settings-event-mismatch-prompt")).toBeTruthy();
+    const prompt = await screen.findByTestId("settings-event-mismatch-prompt");
+    // Owner-approved reverse copy (2026-10-19).
+    expect(prompt.textContent).toContain(
+      "حملاتك تسجل تسجيلات أكثر بكثير من المبيعات — هل الفعالية مجانية؟"
+    );
     expect(mocks.funnelSaveMutateAsync).not.toHaveBeenCalled();
   });
 

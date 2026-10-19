@@ -12,11 +12,17 @@ Modified principles:
   The rationale is stated inline: rulebook §5.3 says the circuit breaker
   "يتجاوز كل البوابات" and Part 4 names it as the only exception to the data
   gates. If the data gates ran first, a young ad set burning 2.5× its target
-  today would be gated ⏳ and CB2 could never fire. The intro sentence notes
-  this departure from the §5.5 table. Every other step keeps its position.
+  today would be gated ⏳ and CB2 could never fire. Rulebook §5.5 lists the
+  same order (row 4 circuit breaker, row 5 data gates). Every other step keeps
+  its position.
 
 Principles II–VII, Engineering constraints, and Governance: unchanged.
 Added sections: none. Removed sections: none.
+
+Editorial correction (2026-10-19, no version bump): Principle I's opening
+sentence no longer claims the rulebook §5.5 table "does not list" the guards at
+steps 2 and 3 — it lists them as rows 0b and 0c. The sentence now simply says
+the order follows rulebook v2.2 §5.5. No step, rule or meaning changes.
 
 Why this patch exists: spec 015's implementation report (Decisions for the
 owner, item 2) flagged that the ad-set order in server/engine.ts contradicted
@@ -28,14 +34,12 @@ Consistency propagation:
 - ✅ .specify/templates/spec-template.md, tasks-template.md,
   checklist-template.md — no constitution or order references.
 - ✅ server/engine.ts — already runs circuitBreaker before gateVerdict; no change.
-- ⚠ docs/spec-015/qarar-rulebook-v2.2.md §5.5 table — still lists data gates
-  (row 4) before the circuit breaker (row 5), contradicting its own §5.3 and
-  Part 4. Left unchanged per the owner's "no other changes".
-- ⚠ specs/015-verdict-accuracy/contracts/gate-order.md §G1 — rows 7/8 still
-  show gateVerdict before circuitBreaker and cite v1.1.1. Left unchanged per
-  the owner's "no other changes".
-- ⚠ specs/015-verdict-accuracy/implementation-report.md — the "adset CB vs
-  data-gate order" deviation note is now resolved by this patch.
+- ✅ docs/spec-015/qarar-rulebook-v2.2.md §5.5 table — row 4 circuit breaker
+  (before the data gates), row 5 data gates; matches this order.
+- ✅ specs/015-verdict-accuracy/contracts/gate-order.md §G1, research.md,
+  plan.md — aligned to v1.1.2 (circuit breaker at 7, data gates at 8).
+- ✅ specs/015-verdict-accuracy/implementation-report.md — "Decisions for the
+  owner" item 2 marked resolved.
 
 Prior history: 1.1.0 → 1.1.1 (2026-10-19) named the non-sales exemption and
 the pre-separation guard at steps 2 and 3.
@@ -50,10 +54,8 @@ Deferred placeholders / TODOs: none.
 ### I. Deterministic engine — no AI in decisions
 The decision engine (server/engine.ts) is pure, deterministic math implementing
 the rulebook (محرك القرار الإعلاني v2.2). No LLM or AI inference may appear in any
-verdict or diagnosis logic. The per-object evaluation order is fixed by rulebook
-v2.2 §5.5 — plus the two guards named at steps 2 and 3, which the rulebook table
-does not list, and with the circuit breaker ahead of the data gates as §5.3 and
-Part 4 require — and evaluation stops at the first verdict it yields:
+verdict or diagnosis logic. The per-object evaluation order follows rulebook
+v2.2 §5.5, and evaluation stops at the first verdict it yields:
 
 1. **Status gate** (§4.2) — an object that is not actually active (paused itself,
    paused by its parent, or not spending) passes through NO rule at all, not even

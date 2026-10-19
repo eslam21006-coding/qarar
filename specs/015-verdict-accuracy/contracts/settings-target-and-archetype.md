@@ -79,6 +79,11 @@ chosen counts purchases     AND leads30     >= 3 × purchases30 → ask
 **Prompt**: "حملاتك تسجل مبيعات أكثر بكثير من التسجيلات — هل الفعالية مدفوعة؟" with a one-click
 switch to the matching option.
 
+**Reverse prompt** (purchases counted, leads dominate; owner-approved 2026-10-19): "حملاتك تسجل
+تسجيلات أكثر بكثير من المبيعات — هل الفعالية مجانية؟" with a one-click switch to the free-event
+option. Both totals zero ⇒ no prompt. The switch saves immediately only if the switched-to type's
+required fields are filled; otherwise it only changes the selection.
+
 **Data source**: `baselines.purchases30` / `baselines.leads30`, read from the cached snapshot. Both
 are summed inside the existing baselines loop (`server/meta.ts:1371–1409`) — see data-model.md §2.
 

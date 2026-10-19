@@ -1863,10 +1863,12 @@ exit 0.
    down" was **not** implemented: it would disarm S2/W6 on every account that sends no
    `action_values`. Return rules stand down on unknown **counts** instead (T067). This is a
    two-line change if the literal reading is wanted.
-2. **Constitution order, ad-set level (pre-existing).** `evaluateAdset` runs the circuit breaker
+2. ~~**Constitution order, ad-set level (pre-existing).** `evaluateAdset` runs the circuit breaker
    (step 8) before the data gates (step 7), citing rulebook §5.3 "يتجاوز كل البوابات". Spec 015 did
    not touch it, and with T067 both orders give the same result on unknown counts. The owner should
-   decide which text wins.
+   decide which text wins.~~ **✅ Resolved 2026-10-19:** the owner approved the code's order.
+   Constitution v1.1.2 and rulebook §5.5 now put the circuit breaker (step 7) before the data gates
+   (step 8). See "Owner decisions on the pass-2 open items" below.
 3. **`counts` population (Phase 10).** `counts` keeps its shape but no longer includes campaigns,
    as T075/T076 require. `kill_adsets`/`kill_ads` were added.
 4. **T040.** A below-floor ad in a *winning* ad set now gets ⏳ K5 rather than the old K5 "continue",
@@ -1964,4 +1966,95 @@ New files not yet tracked by git (so absent from the stat above):
 ```text
  client/src/components/DecisionTable.status.test.ts | 53 + (untracked, new)
  specs/015-verdict-accuracy/release-note.md | 54 + (untracked, new)
+```
+
+## Owner decisions on the pass-2 open items (2026-10-19)
+
+Applied after pass 2. Nothing committed. The engine code is unchanged: every decision either
+approves existing behaviour or changes documentation and test copy only.
+
+| # | Decision | What I did | Files |
+|---|---|---|---|
+| 1 | S2/W6 stand down on unknown **counts**, not unknown sales value — APPROVED | Rewrote contract §U2: the `conversionValue === null` row now says no verdict rule stands down (only the `roas_3d` display goes blank). The W6 paragraph is replaced with the approved rule and its reason: `fullRoas` = counts × configured buyer value, so the only unknown figure S2/W6 can read is the count, and they stand down via `RESULTS_UNKNOWN_FIRED` at the data-gate position. Standing down on null value would disarm S2/W6 on every account that sends no `action_values`. | `contracts/unknown-vs-zero.md` |
+| 2 | Circuit breaker before data gates — APPROVED (constitution v1.1.2) | §G1 rows 7/8 swapped (7 `circuitBreaker`, 8 `gateVerdict`), version cite → v1.1.2, and a "Why step 7 precedes step 8" paragraph added. research.md R5 gets a v1.1.2 amendment note, and R6 notes that the ad-set order already matches. plan.md's Constitution Check order and its justification paragraph now read v1.1.2. Item 2 above is marked resolved. The T067 table's step numbers (7 data gates / 8 circuit breaker) are left as a historical record of the order the work cited at the time. | `contracts/gate-order.md`, `research.md`, `plan.md`, this report |
+| 3 | `counts` change — APPROVED | Consumer audit below. Every consumer keeps its meaning. | none (audit only) |
+| 4 | ⏳ K5 below 500 impressions in a winning ad set — APPROVED | No change; T040 behaviour and its tests stand. | none |
+| 5 | Reverse pre-save wording "حملاتك تسجل تسجيلات أكثر بكثير من المبيعات — هل الفعالية مجانية؟"; other save-check choices APPROVED | The shipped string at `client/src/pages/Settings.tsx:863` already matches byte-for-byte, so the code is unchanged. The T053 reverse-direction test previously checked only that the prompt appears; it now also asserts this exact copy. The contract now records the reverse prompt, the both-zero ⇒ no-prompt rule and the switch-saves-only-if-valid rule. | `client/src/pages/Settings.test.tsx`, `contracts/settings-target-and-archetype.md` |
+| 6 | Rulebook §5.5 now lists the circuit breaker before the data gates | Re-read §5.5: row 4 is the circuit breaker ("**قبل** بوابات البيانات لأنه يتجاوز كل البوابات"), row 5 the data gates. Removed the clause I had added to Principle I's opening sentence, which now reads exactly as in v1.1.1. Cleared the ⚠ items in the Sync Impact Report (rulebook, gate-order, report → ✅) and replaced "notes this departure from the §5.5 table" with "Rulebook §5.5 lists the same order". No version bump; still 1.1.2. | `.specify/memory/constitution.md` |
+
+### `summary.counts` consumer audit (decision 3)
+
+Searched for `\bcounts\b`, `counts[`, `kill_adsets` and `kill_ads` across `server/`, `client/src/`,
+`shared/` and `scripts/` (`.ts`, `.tsx`, `.js`, `.mjs`), and for `summary` in `server/dailyRefresh.ts`,
+`server/_core/notification.ts`, `server/email.ts` and `server/adminApi.ts`.
+
+| Consumer | Reads | Meaning before → after | Verdict |
+|---|---|---|---|
+| `client/src/pages/Dashboard.tsx:263–266` | `summary.counts.watch / continue / rescue / too_early` (strip tiles) | live objects per verdict → live **ad sets + ads** per verdict. Campaign verdicts are derived from their ad sets (§5.0), so counting them double-counted the same objects. | same meaning, without the double count (FR-030) |
+| `client/src/pages/Dashboard.tsx:262` | `summary.kill_adsets`, `summary.kill_ads` (the `KillCounter`) | new in T078. It replaced the old `counts.kill` tile. | new |
+| `server/dailyRefresh.ts` `diffKillSet` (79–94) → `notifyOwner` (329) | `rows.filter(verdict === "kill")` and `summary.bleed_daily`. **Not `summary.counts`.** | unchanged. Rows still include campaign rows, so a newly-killed campaign still notifies. `bleed_daily` was not changed by Phase 10. | unaffected |
+| `server/dailyRefresh.ts:405` auth-expiry `notifyOwner` | fixed copy, no summary | — | unaffected |
+| `server/_core/notification.ts`, `server/email.ts`, `server/adminApi.ts` | no `summary` / `counts` reads | — | unaffected |
+| `server/routers.ts` | passes `summary` through to the client without reading `counts` | — | unaffected |
+| `server/meta.ts:1196` | a local `counts` in the refresh instrumentation log (`campaigns/adsets/ads/keptObjects`) | unrelated object, not `AccountSummary.counts` | unaffected |
+| tests: `server/engine.test.ts:191–195, 1631, 1678`, `server/summaryCounts.test.ts`, `server/summaryStripConsistency.test.ts`, `client/src/pages/Dashboard.swr.test.tsx:148, 338–358` | `counts.*` | They assert relative changes (paused rows drop out, before == after) or the new population (T010/T076 rewrites). All green. | consistent |
+
+No owner-notification path reads `summary.counts`.
+
+### Gate (DB disabled: `$env:DATABASE_URL=""; pnpm test`)
+
+`.env` has `DATABASE_URL=` empty, and every run here set it empty explicitly. No test touched any
+database.
+
+`pnpm run check` (raw):
+
+```text
+﻿
+> qarar@1.0.0 check D:\Qarar worktrees\Qarar-015-verdict-accuracy
+> tsc --noEmit
+
+exit 0
+```
+
+`pnpm test` (raw tail; `stdout |` / `stderr |` log lines and jsdom `act(...)` warnings filtered):
+
+```text
+T051 — choosing the low-priced option saves paid_lto with liveComponent false
+ ✓ client/src/pages/Settings.test.tsx (27 tests) 1926ms
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+Error: Database connection failed
+ ❯ server/auth-flow.e2e.test.ts:22:13
+     20|     db = await getDb();
+     21|     if (!db) {
+     22|       throw new Error("Database connection failed");
+       |             ^
+     23|     }
+     24|   });
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+ Test Files  1 failed | 53 passed | 2 skipped (56)
+      Tests  705 passed | 37 skipped (742)
+   Start at  18:45:24
+   Duration  15.71s (transform 8.90s, setup 106.43s, collect 63.43s, tests 25.92s, environment 30.93s, prepare 30.51s)
+ ELIFECYCLE  Test failed. See above for more details.
+exit 1
+```
+
+Same totals as the pass-2 final no-DB gate (705 passed, 37 skipped). The only failing suite is
+`auth-flow.e2e`, which needs a database. The modified test is in `Settings.test.tsx` (27/27 green).
+
+`git diff main -- server/__snapshots__/engine.test.ts.snap`: **empty** (0 lines). `git hash-object`
+is still `c8f22dd32e67ffbeabe9303366607a1688387115`, and `vitest -u` was not run.
+
+### Files changed by this step (uncommitted, vs HEAD `da156e5`)
+
+```text
+ .specify/memory/constitution.md                    | 22 +++++++++----------
+ client/src/pages/Settings.test.tsx                 |  6 +++++-
+ specs/015-verdict-accuracy/contracts/gate-order.md | 21 ++++++++++++------
+ .../contracts/settings-target-and-archetype.md     |  5 +++++
+ .../contracts/unknown-vs-zero.md                   | 25 +++++++++++++++++-----
+ specs/015-verdict-accuracy/plan.md                 |  5 +++--
+ specs/015-verdict-accuracy/research.md             | 11 ++++++++--
+ + specs/015-verdict-accuracy/implementation-report.md (this section, item 2 marked resolved)
 ```

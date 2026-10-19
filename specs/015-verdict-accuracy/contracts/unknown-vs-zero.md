@@ -28,14 +28,29 @@ where `row.actions` is still in scope.
 | Condition | Rules that stand down | Verdict |
 |---|---|---|
 | `resultsUnknown === true` | K1 (zero-result kill), K3 (click-through kill), and any rule reading a counted result as zero | ⏳ with a reason naming the missing data |
-| `conversionValue === null` | every return / ROAS rule, including W6 | ⏳ with a reason naming the missing data |
+| `conversionValue === null` | none of the verdict rules — no rule reads it (see below); only the `roas_3d` display goes blank instead of "0.0x" | as before |
 | `conversionValue === 0`, array present | none — a real zero | as before |
 | `resultsUnknown` false/absent | none — a real zero | as before |
 
-**W6 specifically**: the fallback at `server/engine.ts:1619–1624` renders
-`العائد الكلي على الإنفاق ${fullRoas.toFixed(1)}x`. `fullRoas` is computed at 1553–1556 from
-`conversions * t.fullBuyerValue / spend`. When `conversionValue` is `null` this branch must not be
-reached (FR-027).
+**Return rules (S2, W6) stand down on unknown COUNTS, not on unknown sales value** (owner-approved
+2026-10-19, after pass 2). The campaign "return" read by S2, W6 and the W6 "0.0x" fallback — and
+the ad-set W6 inside `watchRules` — is `fullRoas = conversions × t.fullBuyerValue / spend`: Meta's
+result **count** times the funnel's **configured** buyer value. No verdict rule reads Meta's
+`conversionValue`; its only readers are the two `roas_3d` display fields, which render blank when it
+is `null`.
+
+So the unknown figure a return rule can actually read is the count, and that is where it stands
+down: when `w3d.resultsUnknown` is true, the data-gate position returns `RESULTS_UNKNOWN_FIRED` (⏳
+`GATE`, "ميتا لم ترسل عدد النتائج لهذه الفترة رغم وجود نقرات — لا نحكم على رقم لم يصلنا") — in
+`gateVerdict` for ad sets and ads, and right after the event-match gate in `evaluateCampaign` —
+before S2, W6 or the "0.0x" fallback can be reached (FR-027).
+
+**Why not stand down on `conversionValue === null`**: that reading would disarm S2/W6 on every
+account whose campaigns send no `action_values` — most registration-counting accounts — on the
+strength of a figure those rules never read. FR-028 targets rules *reading* an unknown figure;
+`fullRoas` does not read the value. The "0.0x" seen in the live replay came from a count read as 0
+under the wrong funnel type, which the event-match gate (gate-order.md §G3) fixes. T060a locks this:
+nulling every `conversionValue` changes no verdict and produces no "0.0x".
 
 ## U3. Invariants
 

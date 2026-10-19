@@ -179,6 +179,12 @@ where the row is assembled and consumed by the client.
 I's order, and rulebook v2.2 §4.2/§5.5 were updated to match (§5.5 rows 0b and 0c). The
 implementation conforms to the stated order; no deviation remains.
 
+**Later amendment (v1.1.2, 2026-10-19)**: the implementation report flagged that `evaluateAdset`
+runs `circuitBreaker` before `gateVerdict`, while v1.1.1 listed data gates first. The owner
+approved the code's order: rulebook §5.3 says the breaker "يتجاوز كل البوابات", and with the data
+gates first CB2 could never fire on a young ad set burning 2.5× target today. Constitution v1.1.2
+and rulebook §5.5 (row 4 breaker, row 5 data gates) now state it; no code moved.
+
 **Why the two guards precede the event-match gate**:
 
 - A non-sales objective (traffic, awareness) records no sales events, so it cannot be diagnosed as
@@ -215,7 +221,7 @@ Verified current order (first fired wins):
 | 9 | `watchRules` | — | inline W6 losing (1619) |
 | 10 | `continueRules` | — | — |
 
-**Delta required** (to reach the constitution v1.1.1 order):
+**Delta required** (to reach the constitution order — v1.1.1 when written, v1.1.2 now):
 
 1. Insert `statusGate` at position 0 in all three evaluators.
 2. Insert `eventMatchGate` **after** `preSeparationGate` in all three — not after
@@ -224,7 +230,8 @@ Verified current order (first fired wins):
 3. Remove the non-active branch from `gateVerdict`.
 
 The relative order of K3, the starved matrix and `gateVerdict` in `evaluateAd` already matches
-rulebook §5.5 (K3 → K5 → data gates) and must not be touched.
+rulebook §5.5 (K3 → K5 → data gates) and must not be touched. Likewise `evaluateAdset`'s
+`circuitBreaker → gateVerdict` already matches constitution v1.1.2 steps 7–8 and is not touched.
 
 ### R7 — The starved matrix needs three separate changes, not one
 
