@@ -463,7 +463,9 @@ describe("Settings page (T008 / US1 / SC-001 / FR-001)", () => {
     // Radix renders each option as `<div role="option">` WITHOUT
     // `data-value`; identification is by visible Arabic text.
     const ARABIC_LABEL: Record<"appointment" | "paid_lto" | "free_lead", string> = {
-      paid_lto: "أبيع منتجًا أو خدمة مباشرة",
+      // Spec 015 / T055 (FR-021) — option 1 is re-worded to say "low-priced"
+      // so it cannot be confused with the new paid-event option 2.
+      paid_lto: "أبيع منتجًا أو خدمة بسعر منخفض مباشرة",
       free_lead: "أجمع بيانات عملاء مجانًا",
       appointment: "أحجز استشارة مجانية",
     };
@@ -676,4 +678,259 @@ describe("Settings page — FR-027b/c over-ceiling message (SC-026)", () => {
       DISCOVERY_CALL_URL
     );
   });
+});
+// ===========================================================================
+// Spec 015 / US4 (T043–T045, FR-017–FR-019) — the target shown is the target
+// the engine judges with. `funnel.get` now returns `judging`: the engine's
+// own `{ unitTarget, unitTargetSource }`, derived WITH the cached snapshot's
+// baselines (the old page derived with `null` baselines and so showed funnel
+// math while the engine judged on the account's history).
+//
+// Fixture: webinar, showUp 70% × close 22% × HTO $600 → funnel math $46.20.
+// ===========================================================================
+describe("Settings page — judging target and its source (spec 015 / US4)", () => {
+  const WEBINAR_ROW = {
+    archetype: "webinar",
+    liveComponent: true,
+    offerDescription: null,
+    ticketPrice: null,
+    arena: "broad",
+    bestInterest: null,
+    geoTiers: null,
+    inputCurrency: "USD",
+    aov: 0,
+    htoPrice: 600,
+    htoConversionRate: 0,
+    frontEndRoas: 1,
+    dailyBudget: null,
+    marketCplBenchmark: null,
+    htoUnderperforming: false,
+    bookRate: null,
+    showRate: null,
+    closeRate: 22,
+    showUpRate: 70,
+  };
+
+  function renderWith(judging: { unitTarget: number | null; unitTargetSource: string | null }) {
+    mocks.funnelGet.mockReturnValue({
+      data: { status: "found", settings: WEBINAR_ROW, targets: {}, judging },
+      isLoading: false,
+      isError: false,
+    });
+    mocks.accounts.mockReturnValue({ data: [{ id: 100, currency: "USD" }] });
+    mocks.useUtils.mockReturnValue({
+      funnel: { get: { invalidate: vi.fn() } },
+      dashboard: { get: { invalidate: vi.fn() } },
+    });
+    return render(<Settings />);
+  }
+
+  it("T043 — 30-day median $300 vs funnel math $46.20 ⇒ $300 is the judging number, with the history source line", async () => {
+    renderWith({ unitTarget: 300, unitTargetSource: "cpl_baseline" });
+    const target = await screen.findByTestId("settings-judging-target");
+    expect(target.textContent).toMatch(/300/);
+    expect(target.textContent).not.toMatch(/46\.2/);
+    expect(screen.getByTestId("settings-target-source").textContent).toBe(
+      "محسوب من متوسط حسابك في آخر 30 يومًا"
+    );
+  });
+
+  it("T044 — the two figures differ by > 20% ⇒ both are shown and the page says which one the engine uses", async () => {
+    renderWith({ unitTarget: 300, unitTargetSource: "cpl_baseline" });
+    const both = await screen.findByTestId("settings-target-divergence");
+    expect(both.textContent).toMatch(/46\.2/);
+    expect(both.textContent).toMatch(/300/);
+    expect(both.textContent).toContain("يحكم التطبيق");
+  });
+
+  it("T044 — within 20% ⇒ no second figure", async () => {
+    renderWith({ unitTarget: 50, unitTargetSource: "cpl_baseline" });
+    await screen.findByTestId("settings-judging-target");
+    expect(screen.queryByTestId("settings-target-divergence")).toBeNull();
+  });
+
+  it("T045 — no usable history ⇒ the funnel-math figure is the judging number, with its own source line", async () => {
+    renderWith({ unitTarget: 46.2, unitTargetSource: "cpl_funnel_math" });
+    const target = await screen.findByTestId("settings-judging-target");
+    expect(target.textContent).toMatch(/46\.2/);
+    expect(screen.getByTestId("settings-target-source").textContent).toBe("محسوب من أرقام الفانل");
+    expect(screen.queryByTestId("settings-target-divergence")).toBeNull();
+  });
+});
+
+// ===========================================================================
+// Spec 015 / US5 (T051–T054, FR-021–FR-025) — a paid event cannot be filed as
+// a free one. Option 2 ("أقدّم فعالية مدفوعة…") is a presentation mapping onto
+// `paid_lto` + `liveComponent: true`; the save-time check reads only the
+// cached snapshot's 30-day totals (`recorded30`) returned by `funnel.get`.
+// ===========================================================================
+describe("Settings page — paid-event option and save-time check (spec 015 / US5)", () => {
+  const PAID_EVENT_LABEL = "أقدّم فعالية مدفوعة";
+  const BASE_ROW = {
+    liveComponent: false,
+    offerDescription: null,
+    ticketPrice: null,
+    arena: "broad",
+    bestInterest: null,
+    geoTiers: null,
+    inputCurrency: "USD",
+    aov: 250,
+    htoPrice: 600,
+    htoConversionRate: 4,
+    frontEndRoas: 1,
+    dailyBudget: null,
+    marketCplBenchmark: null,
+    htoUnderperforming: false,
+    bookRate: null,
+    showRate: null,
+    closeRate: 22,
+    showUpRate: 70,
+  };
+
+  function renderRow(
+    row: Record<string, unknown>,
+    recorded30: { purchases30: number | null; leads30: number | null } | null = null
+  ) {
+    mocks.funnelSaveMutateAsync.mockReset();
+    mocks.funnelGet.mockReturnValue({
+      data: {
+        status: "found",
+        settings: { ...BASE_ROW, ...row },
+        targets: {},
+        judging: { unitTarget: 43, unitTargetSource: "effective_cpa" },
+        recorded30,
+      },
+      isLoading: false,
+      isError: false,
+    });
+    mocks.accounts.mockReturnValue({ data: [{ id: 100, currency: "USD" }] });
+    mocks.useUtils.mockReturnValue({
+      funnel: { get: { invalidate: vi.fn() } },
+      dashboard: { get: { invalidate: vi.fn() } },
+    });
+    if (!(Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView) {
+      (Element.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView =
+        () => undefined;
+    }
+    return render(<Settings />);
+  }
+
+  const trigger = (container: HTMLElement) =>
+    container.querySelector('button[role="combobox"]') as HTMLElement;
+
+  function openSelect(container: HTMLElement) {
+    const t = trigger(container);
+    const el = t as unknown as {
+      hasPointerCapture?: () => boolean;
+      releasePointerCapture?: () => void;
+    };
+    el.hasPointerCapture ??= () => false;
+    el.releasePointerCapture ??= () => undefined;
+    fireEvent.pointerDown(t, { button: 0, pointerType: "mouse", pointerId: 1, isPrimary: true });
+  }
+
+  async function chooseOption(container: HTMLElement, needle: string) {
+    openSelect(container);
+    const item = await waitFor(() => {
+      const found = Array.from(document.body.querySelectorAll('[role="option"]')).find(o =>
+        (o.textContent ?? "").includes(needle)
+      ) as HTMLElement | undefined;
+      if (!found) throw new Error(`option "${needle}" not found`);
+      return found;
+    });
+    act(() => {
+      fireEvent.click(item);
+    });
+  }
+
+  it("T051 — choosing the paid-event option saves archetype paid_lto with liveComponent true", async () => {
+    const { container } = renderRow({ archetype: "paid_lto", liveComponent: false });
+    await chooseOption(container, PAID_EVENT_LABEL);
+    await waitFor(() => expect(trigger(container).textContent).toContain(PAID_EVENT_LABEL));
+    fireEvent.click(screen.getByTestId("settings-save-button"));
+    expect(mocks.funnelSaveMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ archetype: "paid_lto", liveComponent: true })
+    );
+  });
+
+  it("T051 — choosing the low-priced option saves paid_lto with liveComponent false", async () => {
+    const { container } = renderRow({ archetype: "paid_lto", liveComponent: true });
+    await chooseOption(container, "أبيع منتجًا أو خدمة بسعر منخفض مباشرة");
+    await waitFor(() => expect(trigger(container).textContent).not.toContain(PAID_EVENT_LABEL));
+    fireEvent.click(screen.getByTestId("settings-save-button"));
+    expect(mocks.funnelSaveMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ archetype: "paid_lto", liveComponent: false })
+    );
+  });
+
+  it("T052 — a stored paid_lto + liveComponent row re-selects the paid-event option on load", async () => {
+    const { container } = renderRow({ archetype: "paid_lto", liveComponent: true });
+    await waitFor(() => expect(trigger(container).textContent).toContain(PAID_EVENT_LABEL));
+  });
+
+  it("T052 — every option names what Qarar counts, and the free-event option emphasises مجانية", async () => {
+    const { container } = renderRow({ archetype: "paid_lto", liveComponent: false });
+    openSelect(container);
+    const options = await waitFor(() => {
+      const all = Array.from(document.body.querySelectorAll('[role="option"]'));
+      if (all.length < 4) throw new Error("options not rendered");
+      return all;
+    });
+    for (const o of options) expect(o.textContent).toMatch(/نعدّ: (المشتريات|التسجيلات)/);
+    const free = options.find(o => (o.textContent ?? "").includes("فعالية مجانية"))!;
+    expect(free.querySelector("strong")?.textContent).toBe("مجانية");
+  });
+
+  it("T053 — registrations counted while purchases30 ≥ 3 × leads30 ⇒ the question appears; declining saves the original choice", async () => {
+    renderRow({ archetype: "webinar", liveComponent: true }, { purchases30: 30, leads30: 5 });
+    fireEvent.click(screen.getByTestId("settings-save-button"));
+    const prompt = await screen.findByTestId("settings-event-mismatch-prompt");
+    expect(prompt.textContent).toContain(
+      "حملاتك تسجل مبيعات أكثر بكثير من التسجيلات — هل الفعالية مدفوعة؟"
+    );
+    expect(mocks.funnelSaveMutateAsync).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("settings-event-mismatch-keep"));
+    expect(mocks.funnelSaveMutateAsync).toHaveBeenCalledTimes(1);
+    expect(mocks.funnelSaveMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ archetype: "webinar" })
+    );
+  });
+
+  it("T053 — accepting the one-click switch saves the paid-event option", async () => {
+    renderRow({ archetype: "webinar", liveComponent: true }, { purchases30: 30, leads30: 5 });
+    fireEvent.click(screen.getByTestId("settings-save-button"));
+    fireEvent.click(await screen.findByTestId("settings-event-mismatch-switch"));
+    expect(mocks.funnelSaveMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ archetype: "paid_lto", liveComponent: true })
+    );
+  });
+
+  it("T053 — the reverse direction: purchases counted while leads30 ≥ 3 × purchases30 ⇒ asks too", async () => {
+    renderRow({ archetype: "paid_lto", liveComponent: true }, { purchases30: 2, leads30: 40 });
+    fireEvent.click(screen.getByTestId("settings-save-button"));
+    expect(await screen.findByTestId("settings-event-mismatch-prompt")).toBeTruthy();
+    expect(mocks.funnelSaveMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("T053 — below the 3× ratio ⇒ no question, the save goes straight through", async () => {
+    renderRow({ archetype: "webinar", liveComponent: true }, { purchases30: 14, leads30: 5 });
+    fireEvent.click(screen.getByTestId("settings-save-button"));
+    expect(mocks.funnelSaveMutateAsync).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("settings-event-mismatch-prompt")).toBeNull();
+  });
+
+  const SKIPS: Array<[string, { purchases30: number | null; leads30: number | null } | null]> = [
+    ["no snapshot", null],
+    ["purchases30 null", { purchases30: null, leads30: 5 }],
+    ["leads30 null", { purchases30: 30, leads30: null }],
+    ["both zero", { purchases30: 0, leads30: 0 }],
+  ];
+  for (const [name, recorded30] of SKIPS) {
+    it(`T054 — ${name} ⇒ the check is skipped silently and the save proceeds`, async () => {
+      renderRow({ archetype: "webinar", liveComponent: true }, recorded30);
+      fireEvent.click(screen.getByTestId("settings-save-button"));
+      expect(mocks.funnelSaveMutateAsync).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId("settings-event-mismatch-prompt")).toBeNull();
+    });
+  }
 });

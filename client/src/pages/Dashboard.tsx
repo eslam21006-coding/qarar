@@ -5,7 +5,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { VerdictBadge } from "@/components/Verdict";
-import { RULES } from "@shared/qarar";
+import { RULES, targetSourceLabel } from "@shared/qarar";
 import { money, pct, timeAgoAr } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 import type { EngineRow, Finding, TopAction } from "@shared/qarar";
@@ -259,7 +259,7 @@ export default function Dashboard() {
             value={money(summary.bleed_daily, currencySymbol)}
             cls={summary.bleed_daily > 0 ? "text-v-kill" : "text-v-continue"}
           />
-          <Stat label="للإيقاف 🔴" value={String(summary.counts.kill)} cls="text-v-kill" />
+          <KillCounter adsets={summary.kill_adsets ?? 0} ads={summary.kill_ads ?? 0} />
           <Stat label="للمراقبة 🟡" value={String(summary.counts.watch)} cls="text-v-watch" />
           <Stat label="سليمة 🟢" value={String(summary.counts.continue)} cls="text-v-continue" />
           <Stat label="للإنقاذ 🛟" value={String(summary.counts.rescue)} cls="text-v-rescue" />
@@ -288,6 +288,11 @@ export default function Dashboard() {
             // reach this tile (FR-019c / SC-021).
             value={targets.unitTarget === null ? "لم يتحدد بعد" : money(targets.unitTarget, currencySymbol)}
             cls="text-primary"
+            // Spec 015 / FR-018, FR-020 — name the judging target's source.
+            // `targets` is the engine's own `judgingTargets()` result, equal
+            // to `summary.unit_target` / `unit_target_source` by
+            // construction (engine.test T046) and to what Settings shows.
+            sub={targetSourceLabel(targets.unitTargetSource) ?? undefined}
           />
         </div>
       </div>
@@ -414,11 +419,56 @@ function Shell({
   );
 }
 
-function Stat({ label, value, cls }: { label: string; value: string; cls?: string }) {
+/**
+ * Spec 015 / FR-030a (T078) — "للإيقاف: {N} مجموعة · {M} إعلان". N and M come
+ * from the server's split counters (ad sets, ads; never campaigns), so the
+ * figure cannot change with the table's level. A zero part is hidden; both
+ * zero reads "0", as the all-clear counter always has. Numerals sit in
+ * `.num` so they render left-to-right inside the RTL strip.
+ *
+ * Number–noun agreement ("2 مجموعة" should be "مجموعتان") is deliberately not
+ * handled here: the shared helper is feature 018's T14 (spec Assumptions).
+ */
+function KillCounter({ adsets, ads }: { adsets: number; ads: number }) {
+  const parts: Array<[number, string]> = [];
+  if (adsets > 0) parts.push([adsets, "مجموعة"]);
+  if (ads > 0) parts.push([ads, "إعلان"]);
+  return (
+    <div data-testid="kill-counter" className="min-w-[84px] shrink-0">
+      <div className="text-base font-extrabold text-v-kill">
+        {parts.length === 0 ? (
+          <span className="num">0</span>
+        ) : (
+          parts.map(([n, noun], i) => (
+            <span key={noun}>
+              {i > 0 && " · "}
+              <span className="num">{n}</span> {noun}
+            </span>
+          ))
+        )}
+      </div>
+      <div className="text-[10px] text-muted-foreground">للإيقاف: 🔴</div>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  cls,
+  sub,
+}: {
+  label: string;
+  value: string;
+  cls?: string;
+  /** Optional second line under the label (e.g. a target's source). */
+  sub?: string;
+}) {
   return (
     <div className="min-w-[84px] shrink-0">
       <div className={`num text-base font-extrabold ${cls ?? ""}`}>{value}</div>
       <div className="text-[10px] text-muted-foreground">{label}</div>
+      {sub && <div className="text-[9px] text-muted-foreground/80">{sub}</div>}
     </div>
   );
 }
@@ -600,8 +650,15 @@ function DiagnosisSection({
   rows: EngineRow[];
   summary: { account_funnel_cta: { reason_ar: string; ctaUrl: string } | null };
 }) {
+  // Spec 015 / FR-009 (T030) — a status-gated row (it carries a badge such
+  // as "موقوف") never appears here, whatever its verdict. The engine already
+  // gives such rows ⏳ GATE; this guard keeps the panel honest on its own,
+  // as it was the one surface that read no status field at all.
   const diagRows = rows.filter(
-    r => (r.verdict === "kill" || r.verdict === "watch") && r.findings.length > 0
+    r =>
+      !r.statusBadge &&
+      (r.verdict === "kill" || r.verdict === "watch") &&
+      r.findings.length > 0
   );
   if (diagRows.length === 0 && !summary.account_funnel_cta) return null;
   return (

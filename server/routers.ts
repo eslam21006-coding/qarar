@@ -23,7 +23,7 @@ import {
   META_APP_ID,
 } from "./meta";
 import { buildDemoSnapshot, DEMO_FUNNEL } from "./demo";
-import { deriveTargets, runEngine } from "./engine";
+import { deriveTargets, judgingTargets, runEngine } from "./engine";
 import {
   AccountSnapshotPayload,
   DailyMetrics,
@@ -151,6 +151,53 @@ function hasPagesVisibility(scopes: string | null | undefined): boolean {
       .filter(Boolean)
   );
   return scopeSet.has("pages_show_list") && scopeSet.has("pages_read_engagement");
+}
+
+/**
+ * Spec 015 / FR-017–FR-020 (T048) — the judging pair for Settings: the
+ * figure the engine judges with and its source, from the SAME
+ * `judgingTargets()` call `runEngine` makes, over the same cached snapshot
+ * `dashboard.get` evaluates. A database read only — no Meta request
+ * (Principle V). With no usable snapshot there are no baselines, so the pair
+ * falls back to funnel math and says so.
+ *
+ * `targets` on the `funnel.get` payload keeps its old meaning (funnel math
+ * with null baselines); Settings uses it only for the >20% comparison.
+ */
+async function cachedPayloadFor(
+  userId: string,
+  adAccountId: number
+): Promise<AccountSnapshotPayload | null> {
+  const snap = await db.getLatestSnapshot(userId, adAccountId);
+  return snap && snap.payload && snap.status !== "error"
+    ? (snap.payload as AccountSnapshotPayload)
+    : null;
+}
+
+function judgingFrom(
+  funnelRow: Parameters<typeof funnelToInputs>[0],
+  payload: AccountSnapshotPayload | null,
+  accountCurrency: string | null
+) {
+  const t = judgingTargets(funnelToInputs(funnelRow), payload, accountCurrency);
+  return { unitTarget: t.unitTarget, unitTargetSource: t.unitTargetSource };
+}
+
+/**
+ * Spec 015 / FR-025 (T059) — the account's 30-day recorded purchase and lead
+ * totals, read from the cached snapshot's baselines for the Settings
+ * save-time funnel-type check. Both were summed inside the existing
+ * `last_30d` baselines request (T006), so this costs no Meta call, and the
+ * check adds nothing to the save path. `null` with no snapshot; the
+ * individual totals may be `null` too. Either way the client skips the
+ * check silently (principle 10: unknown, not a mismatch).
+ */
+function recorded30From(payload: AccountSnapshotPayload | null) {
+  if (!payload) return null;
+  return {
+    purchases30: payload.baselines?.purchases30 ?? null,
+    leads30: payload.baselines?.leads30 ?? null,
+  };
 }
 
 export const appRouter = router({
@@ -369,7 +416,15 @@ export const appRouter = router({
             direct.inputCurrency,
             account.currency ?? null
           );
-          return { status: "found" as const, settings: direct, targets };
+          const payload = await cachedPayloadFor(ctx.user.id, input.adAccountId);
+          const judging = judgingFrom(direct, payload, account.currency ?? null);
+          return {
+            status: "found" as const,
+            settings: direct,
+            targets,
+            judging,
+            recorded30: recorded30From(payload),
+          };
         }
 
         // (2) stable-id fallback (research R1.1, FR-031/FR-032) — only
@@ -390,7 +445,15 @@ export const appRouter = router({
               healed.inputCurrency,
               account.currency ?? null
             );
-            return { status: "found" as const, settings: healed, targets };
+            const payload = await cachedPayloadFor(ctx.user.id, input.adAccountId);
+            const judging = judgingFrom(healed, payload, account.currency ?? null);
+            return {
+              status: "found" as const,
+              settings: healed,
+              targets,
+              judging,
+              recorded30: recorded30From(payload),
+            };
           }
         }
 
@@ -477,6 +540,13 @@ export const appRouter = router({
           // linter stays quiet on the happy path.
           void sql;
           return result;
+        }
+        if (result.status === "never_configured") {
+          // Spec 015 / FR-025 — a first-time setup is where the live
+          // failure's mis-selection happened; give the save-time check its
+          // totals here too.
+          const payload = await cachedPayloadFor(ctx.user.id, input.adAccountId);
+          return { ...result, recorded30: recorded30From(payload) };
         }
         return result;
       }),

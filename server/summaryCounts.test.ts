@@ -19,7 +19,7 @@ import type { AccountSnapshotPayload, FunnelInputs, NormalizedObject } from "../
  *     it; verified rather than implied by architecture).
  */
 describe("buildSummary — active-only counters (US1 / T004)", () => {
-  it("the demo snapshot's five counters sum to its active row count (all rows are ACTIVE per the demoInvariants test)", () => {
+  it("the demo snapshot's five counters sum to its active AD-SET and AD row count (all rows are ACTIVE per the demoInvariants test)", () => {
     const snap = buildDemoSnapshot();
     const result = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
     const c = result.summary.counts;
@@ -28,7 +28,8 @@ describe("buildSummary — active-only counters (US1 / T004)", () => {
     // (T003 invariant), so the active count equals rows.length — weaker
     // than the FR-001 claim (same number), but proves the predicate is
     // not silently dropping active rows.
-    expect(sum).toBe(result.rows.length);
+    // Spec 015 / T076 (FR-030) — campaign rows are never counted.
+    expect(sum).toBe(result.rows.filter(r => r.level !== "campaign").length);
   });
 
   it("per-verdict tally matches a manual count of active rows with that verdict", () => {
@@ -41,7 +42,8 @@ describe("buildSummary — active-only counters (US1 / T004)", () => {
       rescue: 0,
       too_early: 0,
     };
-    for (const r of result.rows) manual[r.verdict]++;
+    // Spec 015 / T076 (FR-030) — the manual tally skips campaign rows.
+    for (const r of result.rows) if (r.level !== "campaign") manual[r.verdict]++;
     expect(result.summary.counts).toEqual(manual);
   });
 
@@ -96,7 +98,8 @@ describe("buildSummary — active-only counters (US1 / T004)", () => {
     // counts — the predicate walks: effectiveStatus (absent) → object.status
     // ("ACTIVE") → row.status. We assert the fallback path doesn't drop
     // a row whose snapshot object status is ACTIVE.
-    expect(sum).toBe(result.rows.length);
+    // Spec 015 / T076 (FR-030) — campaign rows are never counted.
+    expect(sum).toBe(result.rows.filter(r => r.level !== "campaign").length);
   });
 
   it("snapshot object status 'PAUSED' excludes the row even if row.status reads 'ACTIVE'", () => {
@@ -262,5 +265,73 @@ describe("buildSummary — settings_mismatch flag (spec 015 / US1 / T017)", () =
     const result = runEngine(snap, WEBINAR_FUNNEL);
     expect(result.rows.some(r => r.rule === "GATE")).toBe(false);
     expect(result.summary.settings_mismatch).toBe(false);
+  });
+});
+
+/**
+ * Spec 015 / US8 (T071, T072, T074, FR-030–FR-030d) — two counters that each
+ * equal the rows they claim to count, and a bleed that counts no spend twice.
+ *
+ * Demo reds while active: as_k1 (K1, ad set) ⊃ ad_k3 (K3, ad);
+ * as_good (W3, ad set) ⊃ ad_flash (K4, ad); as_cb (CB2, ad set).
+ * Other reds are switched off with a gated status so each fixture isolates
+ * exactly the shape under test.
+ */
+describe("buildSummary — split kill counters and parent-most bleed (spec 015 / US8)", () => {
+  function run(paused: string[]) {
+    const snap = buildDemoSnapshot();
+    for (const o of snap.objects) {
+      if (paused.includes(o.id)) o.effectiveStatus = "PAUSED";
+    }
+    return runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+  }
+  const red = (rows: { verdict: string; level: string; statusBadge?: string | null }[], level: string) =>
+    rows.filter(r => r.verdict === "kill" && r.level === level && !r.statusBadge);
+
+  it("T071 — red ad inside a yellow ad set ⇒ kill_ads = 1, that ad set not counted, bleed = the ad's spend", () => {
+    const result = run(["as_k1", "ad_k3", "as_cb"]);
+    const ad = result.rows.find(r => r.id === "ad_flash")!;
+    const parent = result.rows.find(r => r.id === "as_good")!;
+    expect(ad.verdict).toBe("kill");
+    expect(parent.verdict).not.toBe("kill");
+    expect(result.summary.kill_ads).toBe(1);
+    expect(result.summary.kill_adsets).toBe(0);
+    const adBleed = ad.spend_today > 0 ? ad.spend_today : ad.spend_3d / 3;
+    expect(result.summary.bleed_daily).toBeCloseTo(adBleed, 2);
+  });
+
+  it("T072 — red ad inside a red ad set ⇒ kill_adsets = 1, kill_ads = 1, bleed = the ad set's spend only", () => {
+    const result = run(["ad_flash", "as_cb"]);
+    const adset = result.rows.find(r => r.id === "as_k1")!;
+    const ad = result.rows.find(r => r.id === "ad_k3")!;
+    expect([adset.verdict, ad.verdict]).toEqual(["kill", "kill"]);
+    expect(result.summary.kill_adsets).toBe(1);
+    expect(result.summary.kill_ads).toBe(1);
+    const adsetBleed = adset.daily_budget ?? adset.spend_3d / 3;
+    expect(result.summary.bleed_daily).toBeCloseTo(adsetBleed, 2);
+  });
+
+  it("T072 — the counters equal the red ad-set and red ad rows, and no campaign is counted (FR-030d)", () => {
+    const result = run([]);
+    expect(result.summary.kill_adsets).toBe(red(result.rows, "adset").length);
+    expect(result.summary.kill_ads).toBe(red(result.rows, "ad").length);
+    // Every red ad/ad set in top actions is covered by N or M.
+    for (const a of result.summary.top_3_actions.filter(a => a.verdict === "kill")) {
+      expect(["adset", "ad"]).toContain(a.level);
+    }
+  });
+
+  it("T074 — an account whose only red rows are gated ⇒ both counters zero, no bleed, panels empty", () => {
+    const result = run(["as_k1", "ad_k3", "ad_flash", "as_cb"]);
+    expect(result.summary.kill_adsets).toBe(0);
+    expect(result.summary.kill_ads).toBe(0);
+    expect(result.summary.counts.kill).toBe(0);
+    expect(result.summary.bleed_daily).toBe(0);
+    expect(result.summary.top_3_actions.filter(a => a.verdict === "kill")).toEqual([]);
+    // DiagnosisSection reads kill/watch rows with findings and no badge.
+    const panel = result.rows.filter(
+      r => !r.statusBadge && r.verdict === "kill" && r.findings.length > 0
+    );
+    expect(panel).toEqual([]);
   });
 });

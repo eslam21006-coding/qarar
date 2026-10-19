@@ -604,6 +604,9 @@ the rest stay out.
   child ad sets; ±20% controls move to the right level by budget type.
 - **T7** — a single source for the results and cost columns, counted with the same selector as
   the verdict, with the cost shown whenever results are greater than zero.
+  - Recorded deviation from feature 015 (T007, accepted by the owner 2026-10-19): the
+    DecisionTable footer aggregation coalesces `conversionValue ?? 0`. The footer must treat an
+    unknown `conversionValue` as unknown, not 0.
 - **T8** — verdict/diagnosis consistency post-check: a row diagnosed "insufficient data" cannot
   hold 🔴 unless the rule was designed to work without a full sample.
 

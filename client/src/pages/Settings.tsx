@@ -25,6 +25,7 @@ import {
   deriveTargets,
   DISCOVERY_CALL_URL,
   SUPPORTED_CURRENCIES,
+  targetSourceLabel,
   type FunnelInputs,
 } from "@shared/qarar";
 import {
@@ -115,6 +116,19 @@ function emptyFormState(accountCurrency: string): FormState {
     showUpRate: "",
     closeRate: "",
   };
+}
+
+/** Spec 015 / FR-021 — the select's options: the four archetypes plus the
+ *  paid-event presentation option (stored as `paid_lto` + `liveComponent`). */
+type ArchetypeOption = FunnelArchetype | "paid_event";
+
+/** Spec 015 / FR-023 (T057) — the one-line "what Qarar counts" under an option. */
+function CountsLine({ counts }: { counts: "purchases" | "registrations" }) {
+  return (
+    <span className="block text-[11px] font-normal text-muted-foreground">
+      {counts === "purchases" ? "نعدّ: المشتريات" : "نعدّ: التسجيلات"}
+    </span>
+  );
 }
 
 function toNumber(s: string, fallback = 0): number {
@@ -257,6 +271,42 @@ export default function Settings() {
     [inputs, form.inputCurrency, accountCurrency]
   );
   const targets = targetsInAccount;
+
+  // Spec 015 / FR-017–FR-019 (T049/T050) — the judging number is the one the
+  // engine uses. `funnel.get` returns it as `judging`, derived WITH the cached
+  // snapshot's baselines by the same `judgingTargets()` call the dashboard
+  // makes. The local `deriveTargets(inputs, null)` above passes no
+  // baselines, so on its own it can only ever produce funnel math, which is
+  // exactly why the page used to show $45 while the engine judged on $300.
+  //
+  // The server pair is used whenever its source is the account's history
+  // and the archetype on screen is the saved one. Every other source is a
+  // pure function of the inputs, so the live local figure IS the figure the
+  // engine will use once saved; it tracks unsaved edits too. The local figure
+  // is kept only for the >20% divergence comparison (FR-019).
+  // `db.getFunnelResult`'s own "found" variant carries no `judging`; only
+  // the router's direct and healed branches do.
+  const savedJudging =
+    funnel.data?.status === "found" && "judging" in funnel.data
+      ? funnel.data.judging ?? null
+      : null;
+  const savedArchetype =
+    funnel.data?.status === "found" ? funnel.data.settings?.archetype ?? null : null;
+  const judgingFromHistory =
+    savedJudging !== null &&
+    savedJudging.unitTargetSource === "cpl_baseline" &&
+    savedArchetype === form.archetype;
+  const judgingTarget = judgingFromHistory ? savedJudging.unitTarget : targets.unitTarget;
+  const judgingSource = judgingFromHistory
+    ? savedJudging.unitTargetSource
+    : targets.unitTargetSource;
+  const funnelMathTarget = targets.unitTarget;
+  const targetsDiverge =
+    judgingFromHistory &&
+    judgingTarget !== null &&
+    judgingTarget > 0 &&
+    funnelMathTarget !== null &&
+    Math.abs(funnelMathTarget - judgingTarget) / judgingTarget > 0.2;
   const showDualCurrency = form.inputCurrency !== accountCurrency;
   // Spec 012 / T034 — validity is archetype-aware. Paid_lto / free_lead
   // need aov + frontEndRoas; appointment needs the three stage rates
@@ -295,6 +345,65 @@ export default function Settings() {
       : form.archetype === "appointment"
         ? appointmentValid
         : legacyValid;
+  // Spec 015 / FR-021, FR-022 (T056/T058) — the select shows a UI option,
+  // not the raw archetype. "paid_event" is `paid_lto` + `liveComponent`, so a
+  // stored paid_lto row with a live component re-selects it on load, with no
+  // extra hydration code (the form already carries `liveComponent`).
+  const archetypeOption: ArchetypeOption =
+    form.archetype === "paid_lto" && form.liveComponent ? "paid_event" : form.archetype;
+  const chooseArchetypeOption = (o: ArchetypeOption) => {
+    setEventPrompt(null);
+    if (o === "paid_event") {
+      setForm(f => ({ ...f, archetype: "paid_lto", liveComponent: true }));
+    } else if (o === "paid_lto") {
+      setForm(f => ({ ...f, archetype: "paid_lto", liveComponent: false }));
+    } else {
+      // `liveComponent` stays an independent field for the other types.
+      set("archetype", o);
+    }
+  };
+
+  // Spec 015 / FR-025 (T059) — advisory save-time check. Reads ONLY the
+  // cached snapshot's 30-day totals that `funnel.get` already returned; no
+  // request is made here, so the save is never delayed. No snapshot, or
+  // either total null (unknown, not zero) ⇒ skipped silently. Both totals
+  // zero is skipped as well: there is nothing to compare.
+  const [eventPrompt, setEventPrompt] = useState<"toPaid" | "toFree" | null>(null);
+  const recorded30 =
+    funnel.data && "recorded30" in funnel.data ? funnel.data.recorded30 ?? null : null;
+  const eventMismatch = (): "toPaid" | "toFree" | null => {
+    if (!recorded30) return null;
+    const { purchases30: p, leads30: l } = recorded30;
+    if (p === null || l === null) return null;
+    const countsRegistrations = form.archetype !== "paid_lto";
+    if (countsRegistrations && p > 0 && p >= 3 * l) return "toPaid";
+    if (!countsRegistrations && l > 0 && l >= 3 * p) return "toFree";
+    return null;
+  };
+  const doSave = (override?: Partial<FunnelInputs>) =>
+    save.mutate({ adAccountId: accountId, ...inputs, ...override });
+  const requestSave = () => {
+    const mismatch = eventMismatch();
+    if (mismatch) {
+      setEventPrompt(mismatch);
+      return;
+    }
+    doSave();
+  };
+  // One-click switch. Saves at once when the switched-to type already has
+  // what it needs; otherwise it only switches the selection, so the user
+  // can fill the fields that type asks for (a webinar row often has no AOV).
+  const acceptEventSwitch = () => {
+    setEventPrompt(null);
+    if (eventPrompt === "toPaid") {
+      setForm(f => ({ ...f, archetype: "paid_lto", liveComponent: true }));
+      if (legacyValid) doSave({ archetype: "paid_lto", liveComponent: true });
+    } else {
+      setForm(f => ({ ...f, archetype: "webinar" }));
+      if (webinarValid) doSave({ archetype: "webinar" });
+    }
+  };
+
   // For appointment / webinar the preview renders when the rates are
   // entered (the engine falls through to too_early otherwise, but the
   // preview's purpose is to show "what your target will become once you
@@ -493,14 +602,27 @@ export default function Settings() {
               <div className="space-y-2 sm:col-span-2">
                 <Label>{labelFor("archetype")}</Label>
                 <Select
-                  value={form.archetype}
-                  onValueChange={v => set("archetype", v as FunnelArchetype)}
+                  value={archetypeOption}
+                  onValueChange={v => chooseArchetypeOption(v as ArchetypeOption)}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="h-auto min-h-9 text-right">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="paid_lto">أبيع منتجًا أو خدمة مباشرة، أو أقدم فعالية أو استشارة مدفوعة</SelectItem>
+                    {/* Spec 015 / FR-021–FR-024 (T056/T057) — option 1 says
+                        "low-priced" and option 2 names the paid event, so a
+                        paid webinar can no longer land on the free option.
+                        Option 2 is a presentation mapping only: it stores
+                        `paid_lto` + `liveComponent: true` (no new engine
+                        archetype). Every option names what Qarar counts. */}
+                    <SelectItem value="paid_lto">
+                      أبيع منتجًا أو خدمة بسعر منخفض مباشرة
+                      <CountsLine counts="purchases" />
+                    </SelectItem>
+                    <SelectItem value="paid_event">
+                      أقدّم فعالية مدفوعة: ندوة أو تحدٍّ أو ورشة أو ماستر كلاس، ثم أبيع بعدها
+                      <CountsLine counts="purchases" />
+                    </SelectItem>
                     {/* `free_lead` is withdrawn as a NEW choice — `appointment`
                         / `webinar` replace it going forward. The archetype
                         itself is untouched (schema, enum and all derived logic
@@ -510,10 +632,19 @@ export default function Settings() {
                         show a blank trigger for a value with no matching
                         option. Nobody else ever sees it. */}
                     {form.archetype === "free_lead" && (
-                      <SelectItem value="free_lead">أجمع بيانات عملاء مجانًا ثم أبيع منتجًا غاليًا</SelectItem>
+                      <SelectItem value="free_lead">
+                        أجمع بيانات عملاء مجانًا ثم أبيع منتجًا غاليًا
+                        <CountsLine counts="registrations" />
+                      </SelectItem>
                     )}
-                    <SelectItem value="appointment">أحجز استشارة مجانية ثم أبيع بعدها</SelectItem>
-                    <SelectItem value="webinar">أدعو الناس إلى فعالية مجانية: ندوة أو تحدٍّ أو ماستر كلاس، ثم أبيع بعدها</SelectItem>
+                    <SelectItem value="appointment">
+                      أحجز استشارة مجانية ثم أبيع بعدها
+                      <CountsLine counts="registrations" />
+                    </SelectItem>
+                    <SelectItem value="webinar">
+                      أدعو الناس إلى فعالية <strong className="font-extrabold">مجانية</strong>: ندوة أو تحدٍّ أو ماستر كلاس، ثم أبيع بعدها
+                      <CountsLine counts="registrations" />
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 {/* Spec 012 / T039 — paid-versus-free helper, short and
@@ -708,7 +839,7 @@ export default function Settings() {
             size="lg"
             className="w-full font-bold"
             disabled={!valid || save.isPending}
-            onClick={() => save.mutate({ adAccountId: accountId, ...inputs })}
+            onClick={requestSave}
             data-testid="settings-save-button"
           >
             {save.isPending ? (
@@ -718,6 +849,44 @@ export default function Settings() {
             )}
             احفظ وارجع للوحة
           </Button>
+          {/* Spec 015 / FR-025 (T059) — advisory question before saving.
+              Rendered only after a click; the save itself never waits on
+              any request. */}
+          {eventPrompt && (
+            <div
+              data-testid="settings-event-mismatch-prompt"
+              className="space-y-3 rounded-lg border border-v-watch/40 bg-v-watch/10 p-4 text-sm"
+            >
+              <p className="font-bold">
+                {eventPrompt === "toPaid"
+                  ? "حملاتك تسجل مبيعات أكثر بكثير من التسجيلات — هل الفعالية مدفوعة؟"
+                  : "حملاتك تسجل تسجيلات أكثر بكثير من المبيعات — هل الفعالية مجانية؟"}
+              </p>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  size="sm"
+                  className="font-bold"
+                  data-testid="settings-event-mismatch-switch"
+                  onClick={acceptEventSwitch}
+                >
+                  {eventPrompt === "toPaid"
+                    ? "نعم — اختر «أقدّم فعالية مدفوعة»"
+                    : "نعم — اختر «أدعو الناس إلى فعالية مجانية»"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  data-testid="settings-event-mismatch-keep"
+                  onClick={() => {
+                    setEventPrompt(null);
+                    doSave();
+                  }}
+                >
+                  لا — احفظ اختياري كما هو
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="lg:sticky lg:top-6 lg:self-start">
@@ -751,24 +920,29 @@ export default function Settings() {
                         currency rendering reuses the existing
                         `targetsInInput` / `targetsInAccount` pattern. */}
                     {(() => {
-                      const previewTarget =
-                        form.archetype === "appointment" || form.archetype === "webinar"
-                          ? targets.unitTarget
-                          : targets.effectiveCPA;
-                      const previewTargetInInput =
-                        form.archetype === "appointment" || form.archetype === "webinar"
-                          ? targetsInInput.unitTarget
-                          : targetsInInput.effectiveCPA;
+                      // Spec 015 / T049 — the judging number (see
+                      // `judgingTarget` above), for every archetype. For
+                      // paid_lto it equals `effectiveCPA`, as before.
+                      const previewTarget = judgingTarget;
+                      const previewTargetInInput = targetsInInput.unitTarget;
                       if (previewTarget === null) {
                         return (
-                          <p className="num my-1 text-2xl font-extrabold text-primary">
+                          <p
+                            data-testid="settings-judging-target"
+                            className="num my-1 text-2xl font-extrabold text-primary"
+                          >
                             —
                           </p>
                         );
                       }
-                      if (showDualCurrency) {
+                      // A history-derived target is already in account
+                      // currency; there is no input-currency figure for it.
+                      if (showDualCurrency && !judgingFromHistory) {
                         return (
-                          <p className="num my-1 text-2xl font-extrabold text-primary">
+                          <p
+                            data-testid="settings-judging-target"
+                            className="num my-1 text-2xl font-extrabold text-primary"
+                          >
                             {currencySymbol(form.inputCurrency)}
                             {money(
                               previewTargetInInput,
@@ -780,11 +954,38 @@ export default function Settings() {
                         );
                       }
                       return (
-                        <p className="num my-1 text-3xl font-extrabold text-primary">
+                        <p
+                          data-testid="settings-judging-target"
+                          className="num my-1 text-3xl font-extrabold text-primary"
+                        >
                           {money(previewTarget, sym)}
                         </p>
                       );
                     })()}
+                    {/* Spec 015 / FR-018 — where the judging number came from. */}
+                    {targetSourceLabel(judgingSource) && (
+                      <p
+                        data-testid="settings-target-source"
+                        className="mb-1 text-[11px] font-medium text-foreground/80"
+                      >
+                        {targetSourceLabel(judgingSource)}
+                      </p>
+                    )}
+                    {/* Spec 015 / FR-019 (T050) — funnel math more than 20% away
+                        from the judging number: show both, and say which one
+                        the engine uses. */}
+                    {targetsDiverge && funnelMathTarget !== null && judgingTarget !== null && (
+                      <p
+                        data-testid="settings-target-divergence"
+                        className="mb-1 rounded bg-background/60 px-2 py-1 text-[11px] leading-relaxed"
+                      >
+                        حسب أرقام الفانل:{" "}
+                        <span className="num font-bold">{money(funnelMathTarget, sym)}</span>
+                        {" — "}لكن يحكم التطبيق بالرقم{" "}
+                        <span className="num font-bold">{money(judgingTarget, sym)}</span>
+                        ، لأنه من نتائج حسابك الفعلية.
+                      </p>
+                    )}
                     <p className="text-[11px] leading-relaxed text-muted-foreground">
                       {form.archetype === "appointment" || form.archetype === "webinar"
                         ? "أقصى ما يمكنك دفعه مقابل كل عميل محتمل مع الحفاظ على ربحك."

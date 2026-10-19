@@ -114,20 +114,20 @@ transient one is judged normally.
 
 ### Tests for User Story 2
 
-- [ ] T022 [P] [US2] Tests: one per badge group — `PAUSED`/`CAMPAIGN_PAUSED`/`ADSET_PAUSED` ⇒ "موقوف", `PENDING_REVIEW` ⇒ "قيد المراجعة", `DISAPPROVED` ⇒ "مرفوض", `WITH_ISSUES`/`PENDING_BILLING_INFO` ⇒ "به مشكلة — راجعه في مدير الإعلانات" — all `too_early`/`GATE`, in `server/engine.test.ts`
-- [ ] T023 [P] [US2] Test: `IN_PROCESS` and `PREAPPROVED` are treated as active and judged by the rules, so verdicts do not flicker after an edit, in `server/engine.test.ts`
-- [ ] T024 [P] [US2] Test: a paused non-exempt **campaign** ⇒ `too_early`/`GATE` — new capability, since `evaluateCampaign` has no status check today, per [research.md §1.3](./research.md) — in `server/engine.test.ts`
-- [ ] T025 [P] [US2] Test: a paused ad at 0% spend share ⇒ ⏳ with "موقوف", not 🔴 K5, in `server/engine.test.ts`
-- [ ] T026 [P] [US2] Test: gated rows are absent from the diagnosis panel, in `client/src/pages/DiagnosisSection.test.tsx`
-- [ ] T027 [P] [US2] Test: `ARCHIVED` and `DELETED` rows are not rendered at all, in `client/src/components/DecisionTable.test.ts` (or the nearest existing DecisionTable suite)
+- [X] T022 [P] [US2] Tests: one per badge group — `PAUSED`/`CAMPAIGN_PAUSED`/`ADSET_PAUSED` ⇒ "موقوف", `PENDING_REVIEW` ⇒ "قيد المراجعة", `DISAPPROVED` ⇒ "مرفوض", `WITH_ISSUES`/`PENDING_BILLING_INFO` ⇒ "به مشكلة — راجعه في مدير الإعلانات" — all `too_early`/`GATE`, in `server/engine.test.ts`
+- [X] T023 [P] [US2] Test: `IN_PROCESS` and `PREAPPROVED` are treated as active and judged by the rules, so verdicts do not flicker after an edit, in `server/engine.test.ts`
+- [X] T024 [P] [US2] Test: a paused non-exempt **campaign** ⇒ `too_early`/`GATE` — new capability, since `evaluateCampaign` has no status check today, per [research.md §1.3](./research.md) — in `server/engine.test.ts`
+- [X] T025 [P] [US2] Test: a paused ad at 0% spend share ⇒ ⏳ with "موقوف", not 🔴 K5, in `server/engine.test.ts`
+- [X] T026 [P] [US2] Test: gated rows are absent from the diagnosis panel, in `client/src/pages/DiagnosisSection.test.tsx`
+- [X] T027 [P] [US2] Test: `ARCHIVED` and `DELETED` rows are not rendered at all, in `client/src/components/DecisionTable.test.ts` (or the nearest existing DecisionTable suite)
 
 ### Implementation for User Story 2
 
-- [ ] T028 [US2] Add the `statusBadge` field to the row output and implement the badge mapping in `server/engine.ts`, per [data-model.md §3](./data-model.md) — display-only, never a sixth verdict
-- [ ] T029 [US2] Treat `IN_PROCESS` and `PREAPPROVED` as active inside `statusGate` in `server/engine.ts` (FR-007a)
-- [ ] T030 [US2] Exclude gated rows from the `diagRows` filter at `client/src/pages/Dashboard.tsx:583–585` — the only client surface reading no status field today
-- [ ] T031 [US2] Render `statusBadge` in `client/src/components/DecisionTable.tsx` and suppress `ARCHIVED`/`DELETED` rows
-- [ ] T032 [US2] Audit every gated row's reason and action text in `server/engine.ts` so none instructs the user to pause what is already paused (FR-010)
+- [X] T028 [US2] Add the `statusBadge` field to the row output and implement the badge mapping in `server/engine.ts`, per [data-model.md §3](./data-model.md) — display-only, never a sixth verdict
+- [X] T029 [US2] Treat `IN_PROCESS` and `PREAPPROVED` as active inside `statusGate` in `server/engine.ts` (FR-007a)
+- [X] T030 [US2] Exclude gated rows from the `diagRows` filter at `client/src/pages/Dashboard.tsx:583–585` — the only client surface reading no status field today
+- [X] T031 [US2] Render `statusBadge` in `client/src/components/DecisionTable.tsx` and suppress `ARCHIVED`/`DELETED` rows
+- [X] T032 [US2] Audit every gated row's reason and action text in `server/engine.ts` so none instructs the user to pause what is already paused (FR-010)
 
 **Checkpoint**: no paused, rejected, under-review or zero-impression object appears in
 "أين المشكلة تحديداً؟" or in today's decisions.
@@ -144,19 +144,19 @@ changes only once the exposure floor is met.
 
 ### Tests for User Story 3
 
-- [ ] T033 [P] [US3] Test: starved ad with 0 impressions ⇒ `too_early`/`K5` with "ميتا لا تعطيه فرصة ظهور كافية للحكم عليه", in `server/engine.test.ts`
-- [ ] T034 [P] [US3] Test: starved ad, 800 impressions, CTR below median, 0 results, parent missing target ⇒ 🔴 `K5` unchanged, in `server/engine.test.ts`
-- [ ] T035 [P] [US3] Test: starved ad, 300 impressions, CTR above median ⇒ ⏳ — not 🛟, in `server/engine.test.ts`
-- [ ] T036 [P] [US3] Test: ad below 10% of ad-set spend on the 3-day total but at or above 10% on one of the three days ⇒ the matrix does not fire, in `server/engine.test.ts`
-- [ ] T037 [P] [US3] Confirming test: the CPA-based rescue cannot fire without at least one counted conversion — already true because `effectiveCpa()` returns `null` at zero conversions, per [research.md §4.6](./research.md) — in `server/engine.test.ts`
-- [ ] T038 [P] [US3] Test: fewer than three usable `daily7` slices ⇒ starvation cannot be established and the matrix does not fire, in `server/engine.test.ts`
+- [X] T033 [P] [US3] Test: starved ad with 0 impressions ⇒ `too_early`/`K5` with "ميتا لا تعطيه فرصة ظهور كافية للحكم عليه", in `server/engine.test.ts`
+- [X] T034 [P] [US3] Test: starved ad, 800 impressions, CTR below median, 0 results, parent missing target ⇒ 🔴 `K5` unchanged, in `server/engine.test.ts`
+- [X] T035 [P] [US3] Test: starved ad, 300 impressions, CTR above median ⇒ ⏳ — not 🛟, in `server/engine.test.ts`
+- [X] T036 [P] [US3] Test: ad below 10% of ad-set spend on the 3-day total but at or above 10% on one of the three days ⇒ the matrix does not fire, in `server/engine.test.ts`
+- [X] T037 [P] [US3] Confirming test: the CPA-based rescue cannot fire without at least one counted conversion — already true because `effectiveCpa()` returns `null` at zero conversions, per [research.md §4.6](./research.md) — in `server/engine.test.ts`
+- [X] T038 [P] [US3] Test: fewer than three usable `daily7` slices ⇒ starvation cannot be established and the matrix does not fire, in `server/engine.test.ts`
 
 ### Implementation for User Story 3
 
-- [ ] T039 [US3] Replace the 3-day-total starvation test at `server/engine.ts:544` with a per-day test derived from `daily7` (`ad.daily7[d].spend / parent.daily7[d].spend < 10%` on each of the last three days), leaving the existing `spendSharePct` field intact for its other readers, per [contracts/starvation-and-scale.md §K2](./contracts/starvation-and-scale.md)
-- [ ] T040 [US3] Add `w3d.impressions >= 500` to the `weak` condition at `server/engine.ts:587–589` and add the below-floor ⏳ `K5` branch — the floor is on the **window total**, never per-day
-- [ ] T041 [US3] Split the rescue condition at `server/engine.ts:550–552` so the CTR half also requires `w3d.impressions >= 500`, leaving the CPA half as-is
-- [ ] T042 [US3] Make `starvedAdMatrix` in `server/engine.ts:536–616` read zero results only after the event-match gate, and stand down when `w3d.resultsUnknown` is true (FR-016)
+- [X] T039 [US3] Replace the 3-day-total starvation test at `server/engine.ts:544` with a per-day test derived from `daily7` (`ad.daily7[d].spend / parent.daily7[d].spend < 10%` on each of the last three days), leaving the existing `spendSharePct` field intact for its other readers, per [contracts/starvation-and-scale.md §K2](./contracts/starvation-and-scale.md)
+- [X] T040 [US3] Add `w3d.impressions >= 500` to the `weak` condition at `server/engine.ts:587–589` and add the below-floor ⏳ `K5` branch — the floor is on the **window total**, never per-day
+- [X] T041 [US3] Split the rescue condition at `server/engine.ts:550–552` so the CTR half also requires `w3d.impressions >= 500`, leaving the CPA half as-is
+- [X] T042 [US3] Make `starvedAdMatrix` in `server/engine.ts:536–616` read zero results only after the event-match gate, and stand down when `w3d.resultsUnknown` is true (FR-016)
 
 **Checkpoint**: no kill or rescue verdict is issued to an ad below 500 impressions.
 
@@ -172,17 +172,17 @@ diverge by more than 20%.
 
 ### Tests for User Story 4
 
-- [ ] T043 [P] [US4] Test: account with a 30-day median of 300 and funnel math of 45 ⇒ Settings shows 300 as the judging number with the baseline source line, in `client/src/pages/Settings.test.tsx`
-- [ ] T044 [P] [US4] Test: the two figures differ by more than 20% ⇒ both are shown and the page states which one the engine uses, in `client/src/pages/Settings.test.tsx`
-- [ ] T045 [P] [US4] Test: no usable history ⇒ the funnel-math figure is shown with its own source line, in `client/src/pages/Settings.test.tsx`
-- [ ] T046 [P] [US4] Test: the dashboard summary and Settings report an identical target and source for the same account, in `server/engine.test.ts`
+- [X] T043 [P] [US4] Test: account with a 30-day median of 300 and funnel math of 45 ⇒ Settings shows 300 as the judging number with the baseline source line, in `client/src/pages/Settings.test.tsx`
+- [X] T044 [P] [US4] Test: the two figures differ by more than 20% ⇒ both are shown and the page states which one the engine uses, in `client/src/pages/Settings.test.tsx`
+- [X] T045 [P] [US4] Test: no usable history ⇒ the funnel-math figure is shown with its own source line, in `client/src/pages/Settings.test.tsx`
+- [X] T046 [P] [US4] Test: the dashboard summary and Settings report an identical target and source for the same account, in `server/engine.test.ts`
 
 ### Implementation for User Story 4
 
-- [ ] T047 [US4] Return the engine's `unitTarget` and `unitTargetSource` — both already on `DerivedTargets` (`shared/qarar.ts:397–402`) — in the dashboard summary from `server/engine.ts`
-- [ ] T048 [US4] Return the same pair from the `funnel` router's read procedure at `server/routers.ts:337` so Settings receives the engine's target and source
-- [ ] T049 [US4] Display the engine's target and its Arabic source line in `client/src/pages/Settings.tsx`, replacing the baseline-less derivation at **both** call sites (lines 254 and 256) as the judging number, per [contracts/settings-target-and-archetype.md §T1](./contracts/settings-target-and-archetype.md)
-- [ ] T050 [US4] Keep the local funnel-math computation only for the >20% divergence comparison, and render both figures when it triggers, in `client/src/pages/Settings.tsx`
+- [X] T047 [US4] Return the engine's `unitTarget` and `unitTargetSource` — both already on `DerivedTargets` (`shared/qarar.ts:397–402`) — in the dashboard summary from `server/engine.ts`
+- [X] T048 [US4] Return the same pair from the `funnel` router's read procedure at `server/routers.ts:337` so Settings receives the engine's target and source
+- [X] T049 [US4] Display the engine's target and its Arabic source line in `client/src/pages/Settings.tsx`, replacing the baseline-less derivation at **both** call sites (lines 254 and 256) as the judging number, per [contracts/settings-target-and-archetype.md §T1](./contracts/settings-target-and-archetype.md)
+- [X] T050 [US4] Keep the local funnel-math computation only for the >20% divergence comparison, and render both figures when it triggers, in `client/src/pages/Settings.tsx`
 
 **Checkpoint**: every cost verdict on the dashboard is now explainable against a visible number.
 
@@ -198,18 +198,18 @@ that purchases are the counted event.
 
 ### Tests for User Story 5
 
-- [ ] T051 [P] [US5] Test: choosing the paid-event option stores `archetype = "paid_lto"` and `liveComponent = true`, in `client/src/pages/Settings.test.tsx`
-- [ ] T052 [P] [US5] Test: a stored `paid_lto` + `liveComponent: true` row re-selects the paid-event option on reload, in `client/src/pages/Settings.test.tsx`
-- [ ] T053 [P] [US5] Test: chosen type counts registrations while `purchases30 >= 3 * leads30` ⇒ the pre-save question appears; declining saves the original choice unchanged, in `client/src/pages/Settings.test.tsx`
-- [ ] T054 [P] [US5] Test: no snapshot, or either total `null` ⇒ the check is skipped silently and the save proceeds, in `client/src/pages/Settings.test.tsx`
-- [ ] T055 [P] [US5] Update the `ARABIC_LABEL.paid_lto` needle at `client/src/pages/Settings.test.tsx:466` to match the re-worded option 1 — the inserted "بسعر منخفض" breaks the existing substring match, per [research.md §4.5](./research.md)
+- [X] T051 [P] [US5] Test: choosing the paid-event option stores `archetype = "paid_lto"` and `liveComponent = true`, in `client/src/pages/Settings.test.tsx`
+- [X] T052 [P] [US5] Test: a stored `paid_lto` + `liveComponent: true` row re-selects the paid-event option on reload, in `client/src/pages/Settings.test.tsx`
+- [X] T053 [P] [US5] Test: chosen type counts registrations while `purchases30 >= 3 * leads30` ⇒ the pre-save question appears; declining saves the original choice unchanged, in `client/src/pages/Settings.test.tsx`
+- [X] T054 [P] [US5] Test: no snapshot, or either total `null` ⇒ the check is skipped silently and the save proceeds, in `client/src/pages/Settings.test.tsx`
+- [X] T055 [P] [US5] Update the `ARABIC_LABEL.paid_lto` needle at `client/src/pages/Settings.test.tsx:466` to match the re-worded option 1 — the inserted "بسعر منخفض" breaks the existing substring match, per [research.md §4.5](./research.md)
 
 ### Implementation for User Story 5
 
-- [ ] T056 [US5] Add the paid-event option and re-word option 1 to "أبيع منتجًا أو خدمة بسعر منخفض مباشرة" in the archetype select at `client/src/pages/Settings.tsx:495–517`, per [contracts/settings-target-and-archetype.md §T2](./contracts/settings-target-and-archetype.md) — presentation only, no new engine archetype
-- [ ] T057 [US5] Add the one-line "نعدّ: المشتريات" / "نعدّ: التسجيلات" counts line under every option, and emphasise "مجانية" in the free-event option, in `client/src/pages/Settings.tsx`
-- [ ] T058 [US5] Map a stored `paid_lto` + `liveComponent: true` row back to the paid-event option on load in `client/src/pages/Settings.tsx`, preserving `free_lead`'s legacy-only rendering at lines 512–514
-- [ ] T059 [US5] Implement the advisory pre-save check in `client/src/pages/Settings.tsx` reading only `baselines.purchases30` / `baselines.leads30` from the cached snapshot — no new request, never blocking or delaying the save, per [contracts/settings-target-and-archetype.md §T3](./contracts/settings-target-and-archetype.md)
+- [X] T056 [US5] Add the paid-event option and re-word option 1 to "أبيع منتجًا أو خدمة بسعر منخفض مباشرة" in the archetype select at `client/src/pages/Settings.tsx:495–517`, per [contracts/settings-target-and-archetype.md §T2](./contracts/settings-target-and-archetype.md) — presentation only, no new engine archetype
+- [X] T057 [US5] Add the one-line "نعدّ: المشتريات" / "نعدّ: التسجيلات" counts line under every option, and emphasise "مجانية" in the free-event option, in `client/src/pages/Settings.tsx`
+- [X] T058 [US5] Map a stored `paid_lto` + `liveComponent: true` row back to the paid-event option on load in `client/src/pages/Settings.tsx`, preserving `free_lead`'s legacy-only rendering at lines 512–514
+- [X] T059 [US5] Implement the advisory pre-save check in `client/src/pages/Settings.tsx` reading only `baselines.purchases30` / `baselines.leads30` from the cached snapshot — no new request, never blocking or delaying the save, per [contracts/settings-target-and-archetype.md §T3](./contracts/settings-target-and-archetype.md)
 
 **Checkpoint**: the mis-selection that caused the whole live failure is no longer reachable by
 accident.
@@ -228,17 +228,17 @@ treated as unknown.
 
 ### Tests for User Story 6
 
-- [ ] T060 [P] [US6] Test: campaign with results > 0 and no sales-value data ⇒ no "العائد 0.0x" text and no return-based rule fires, in `server/engine.test.ts`
-- [ ] T061 [P] [US6] Test: sales-value data present with a zero total ⇒ the genuine zero is used as before, in `server/engine.test.ts`
-- [ ] T062 [P] [US6] Test: results data absent and link clicks > 0 ⇒ counts unknown, ⏳ with a reason naming what is missing, zero-result kill stands down, in `server/engine.test.ts`
-- [ ] T063 [P] [US6] Test: results data absent and link clicks = 0 ⇒ genuine zero, K1 and K3 evaluate normally, in `server/engine.test.ts`
-- [ ] T064 [P] [US6] Test: results data present with no purchase or registration entry ⇒ genuine zero, K1 and K3 evaluate normally, in `server/engine.test.ts`
-- [ ] T065 [P] [US6] Verify `server/meta.test.ts:261–267` (empty-but-present `actions`) stays green unchanged — empty is not absent, per [research.md §4.3](./research.md)
+- [X] T060 [P] [US6] Test: campaign with results > 0 and no sales-value data ⇒ no "العائد 0.0x" text and no return-based rule fires, in `server/engine.test.ts`
+- [X] T061 [P] [US6] Test: sales-value data present with a zero total ⇒ the genuine zero is used as before, in `server/engine.test.ts`
+- [X] T062 [P] [US6] Test: results data absent and link clicks > 0 ⇒ counts unknown, ⏳ with a reason naming what is missing, zero-result kill stands down, in `server/engine.test.ts`
+- [X] T063 [P] [US6] Test: results data absent and link clicks = 0 ⇒ genuine zero, K1 and K3 evaluate normally, in `server/engine.test.ts`
+- [X] T064 [P] [US6] Test: results data present with no purchase or registration entry ⇒ genuine zero, K1 and K3 evaluate normally, in `server/engine.test.ts`
+- [X] T065 [P] [US6] Verify `server/meta.test.ts:261–267` (empty-but-present `actions`) stays green unchanged — empty is not absent, per [research.md §4.3](./research.md)
 
 ### Implementation for User Story 6
 
-- [ ] T066 [US6] Make every rule reading sales value or return stand down on `null`, including the W6 fallback at `server/engine.ts:1619–1624`, per [contracts/unknown-vs-zero.md §U2](./contracts/unknown-vs-zero.md)
-- [ ] T067 [US6] Make the zero-result rules stand down when `resultsUnknown` is true, and emit ⏳ with a reason naming the missing data, in `server/engine.ts`
+- [X] T066 [US6] Make every rule reading sales value or return stand down on `null`, including the W6 fallback at `server/engine.ts:1619–1624`, per [contracts/unknown-vs-zero.md §U2](./contracts/unknown-vs-zero.md)
+- [X] T067 [US6] Make the zero-result rules stand down when `resultsUnknown` is true, and emit ⏳ with a reason naming the missing data, in `server/engine.ts`
 
 **Checkpoint**: no loss verdict rests on evidence that never arrived — and K1 still fires on real
 zeros.
@@ -254,12 +254,12 @@ target; confirm no "+20%" in its action.
 
 ### Tests for User Story 7
 
-- [ ] T068 [P] [US7] Test: campaign with full-funnel return 3.2 and cost at 1.38× target ⇒ no "+20%", action reads "واصل بدون زيادة الميزانية", in `server/engine.test.ts`
-- [ ] T069 [P] [US7] Test: campaign at or below target with a healthy return ⇒ the S2 "+20%" action is unchanged, in `server/engine.test.ts`
+- [X] T068 [P] [US7] Test: campaign with full-funnel return 3.2 and cost at 1.38× target ⇒ no "+20%", action reads "واصل بدون زيادة الميزانية", in `server/engine.test.ts`
+- [X] T069 [P] [US7] Test: campaign at or below target with a healthy return ⇒ the S2 "+20%" action is unchanged, in `server/engine.test.ts`
 
 ### Implementation for User Story 7
 
-- [ ] T070 [US7] Add the cost-per-result condition to the S2 branch at `server/engine.ts:1581` (today it tests `hasFullRoas && fullRoas >= 2.0` alone, with no CPA comparison) and emit the no-increase action plus a watch verdict otherwise, per [contracts/starvation-and-scale.md §K4](./contracts/starvation-and-scale.md)
+- [X] T070 [US7] Add the cost-per-result condition to the S2 branch at `server/engine.ts:1581` (today it tests `hasFullRoas && fullRoas >= 2.0` alone, with no CPA comparison) and emit the no-increase action plus a watch verdict otherwise, per [contracts/starvation-and-scale.md §K4](./contracts/starvation-and-scale.md)
 
 **Checkpoint**: no campaign is told to spend more while losing against its own target.
 
@@ -275,18 +275,18 @@ rows, and check the bleed against the parent-most rule.
 
 ### Tests for User Story 8
 
-- [ ] T071 [P] [US8] Test: red ad inside a yellow ad set ⇒ `kill_ads = 1`, that ad set absent from `kill_adsets`, bleed = the ad's spend, in `server/summaryCounts.test.ts`
-- [ ] T072 [P] [US8] Test: red ad inside a red ad set ⇒ `kill_adsets = 1`, `kill_ads = 1`, bleed = the ad set's spend only, in `server/summaryCounts.test.ts`
-- [ ] T073 [P] [US8] Test: switching the table between campaign, ad-set and ad level changes neither counter, in `client/src/pages/Dashboard.swr.test.tsx`
-- [ ] T074 [P] [US8] Test: an account whose only red rows are gated ⇒ both counters zero and the panels empty, in `server/summaryCounts.test.ts`
-- [ ] T075 [US8] Rewrite `server/engine.test.ts:190–194` ("verdict counts add up to total rows") — the demo's two campaign rows are no longer counted, per [research.md §4.1](./research.md) item 3
-- [ ] T076 [US8] Rewrite `server/summaryCounts.test.ts:22–32`, `:34–46` and `:83–100` so their sums and manual tallies exclude campaign rows, per [research.md §4.1](./research.md) items 4–6
+- [X] T071 [P] [US8] Test: red ad inside a yellow ad set ⇒ `kill_ads = 1`, that ad set absent from `kill_adsets`, bleed = the ad's spend, in `server/summaryCounts.test.ts`
+- [X] T072 [P] [US8] Test: red ad inside a red ad set ⇒ `kill_adsets = 1`, `kill_ads = 1`, bleed = the ad set's spend only, in `server/summaryCounts.test.ts`
+- [X] T073 [P] [US8] Test: switching the table between campaign, ad-set and ad level changes neither counter, in `client/src/pages/Dashboard.swr.test.tsx`
+- [X] T074 [P] [US8] Test: an account whose only red rows are gated ⇒ both counters zero and the panels empty, in `server/summaryCounts.test.ts`
+- [X] T075 [US8] Rewrite `server/engine.test.ts:190–194` ("verdict counts add up to total rows") — the demo's two campaign rows are no longer counted, per [research.md §4.1](./research.md) item 3
+- [X] T076 [US8] Rewrite `server/summaryCounts.test.ts:22–32`, `:34–46` and `:83–100` so their sums and manual tallies exclude campaign rows, per [research.md §4.1](./research.md) items 4–6
 
 ### Implementation for User Story 8
 
-- [ ] T077 [US8] Add `kill_adsets` and `kill_ads` to `buildSummary()` at `server/engine.ts:2138–2144`, counting ad sets and ads only and reusing the existing `isActive` gate, per [contracts/summary-counters.md §S2](./contracts/summary-counters.md) — leave `counts` intact for other readers
-- [ ] T078 [US8] Replace the single `summary.counts.kill` render at `client/src/pages/Dashboard.tsx:242` with "للإيقاف: {N} مجموعة · {M} إعلان", hiding a zero part and keeping numerals left-to-right
-- [ ] T079 [US8] Verify the existing bleed loops at `server/engine.ts:2152–2183` already satisfy the parent-most rule and leave the formula unchanged, per [contracts/summary-counters.md §S4](./contracts/summary-counters.md)
+- [X] T077 [US8] Add `kill_adsets` and `kill_ads` to `buildSummary()` at `server/engine.ts:2138–2144`, counting ad sets and ads only and reusing the existing `isActive` gate, per [contracts/summary-counters.md §S2](./contracts/summary-counters.md) — leave `counts` intact for other readers
+- [X] T078 [US8] Replace the single `summary.counts.kill` render at `client/src/pages/Dashboard.tsx:242` with "للإيقاف: {N} مجموعة · {M} إعلان", hiding a zero part and keeping numerals left-to-right
+- [X] T079 [US8] Verify the existing bleed loops at `server/engine.ts:2152–2183` already satisfy the parent-most rule and leave the formula unchanged, per [contracts/summary-counters.md §S4](./contracts/summary-counters.md)
 
 **Checkpoint**: the first number a user reads is the last one they need to doubt.
 
@@ -294,18 +294,18 @@ rows, and check the bleed against the parent-most rule.
 
 ## Phase 11: Polish & Cross-Cutting Concerns
 
-- [ ] T080 [P] Change the ad-level kill action at `server/engine.ts:1684` from "أوقِف هذه المجموعة" to "أوقِف هذا الإعلان" (FR-035) — leave lines 455, 466 and 491 untouched, since those are inside `killRulesAdset` where "ad set" is the correct noun
-- [ ] T081 [P] Test: the ad-level K1 action reads "أوقِف هذا الإعلان" on an ad row — required because no demo ad reaches that branch, so the snapshot cannot carry the assertion, per [research.md §4.2](./research.md) — in `server/engine.test.ts`
-- [ ] T082 [P] Invariant test over every fixture: no row holds a `kill` verdict whose `reason_ar` claims no results while that row's `w3d.conversions > 0` (SC-009), in `server/engine.test.ts`
-- [ ] T083 [P] Copy review of every new user-facing string against Principle III (simple MSA, 6th-grade, LTR numerals): the gate reason and action in [contracts/gate-order.md §G3](./contracts/gate-order.md), the four badges in [data-model.md §3](./data-model.md), the exposure-floor reason and action and the no-increase action in [contracts/starvation-and-scale.md](./contracts/starvation-and-scale.md), the three target-source lines in [data-model.md §5](./data-model.md), the option labels, counts lines and save prompt in [contracts/settings-target-and-archetype.md §T2–T3](./contracts/settings-target-and-archetype.md), the split counter in [contracts/summary-counters.md §S3](./contracts/summary-counters.md), and the new ad-level action from T080 (FR-033)
-- [ ] T084 Run `npm run check` — zero errors — and `npm test` — green, with the count at or above the T001 baseline plus the new tests
-- [ ] T085 Final review of `server/__snapshots__/engine.test.ts.snap`: every diff accounted for in [research.md §4.2](./research.md), `T007` block byte-identical, and no `T008` entry changed
-- [ ] T086 Walk every scenario V1–V28 in [quickstart.md §3](./quickstart.md) and record the result
+- [X] T080 [P] Change the ad-level kill action at `server/engine.ts:1684` from "أوقِف هذه المجموعة" to "أوقِف هذا الإعلان" (FR-035) — leave lines 455, 466 and 491 untouched, since those are inside `killRulesAdset` where "ad set" is the correct noun
+- [X] T081 [P] Test: the ad-level K1 action reads "أوقِف هذا الإعلان" on an ad row — required because no demo ad reaches that branch, so the snapshot cannot carry the assertion, per [research.md §4.2](./research.md) — in `server/engine.test.ts`
+- [X] T082 [P] Invariant test over every fixture: no row holds a `kill` verdict whose `reason_ar` claims no results while that row's `w3d.conversions > 0` (SC-009), in `server/engine.test.ts`
+- [X] T083 [P] Copy review of every new user-facing string against Principle III (simple MSA, 6th-grade, LTR numerals): the gate reason and action in [contracts/gate-order.md §G3](./contracts/gate-order.md), the four badges in [data-model.md §3](./data-model.md), the exposure-floor reason and action and the no-increase action in [contracts/starvation-and-scale.md](./contracts/starvation-and-scale.md), the three target-source lines in [data-model.md §5](./data-model.md), the option labels, counts lines and save prompt in [contracts/settings-target-and-archetype.md §T2–T3](./contracts/settings-target-and-archetype.md), the split counter in [contracts/summary-counters.md §S3](./contracts/summary-counters.md), and the new ad-level action from T080 (FR-033)
+- [X] T084 Run `npm run check` — zero errors — and `npm test` — green, with the count at or above the T001 baseline plus the new tests
+- [X] T085 Final review of `server/__snapshots__/engine.test.ts.snap`: every diff accounted for in [research.md §4.2](./research.md), `T007` block byte-identical, and no `T008` entry changed
+- [X] T086 Walk every scenario V1–V28 in [quickstart.md §3](./quickstart.md) and record the result
 - [ ] T087 Run the live-account replay in [quickstart.md §4](./quickstart.md) for the 15–17 Oct 2026 window, both before and after switching the funnel option
-- [ ] T088 [P] Confirm no new Meta request was introduced anywhere — audit every `graphGet` call site in `server/meta.ts` against the baseline, including the save path (Principle V)
-- [ ] T089 [P] Confirm the verdict union in `shared/qarar.ts:9` is still exactly five and no rule code was added to `RuleCode` at `shared/qarar.ts:24–31` (Principles II and VI)
-- [ ] T090 [P] Write the release note covering the three user-visible behaviour changes: paused campaigns are now gated (new — they were judged before), rescues on samples below 500 impressions disappear, and the stale-snapshot caveat from [contracts/unknown-vs-zero.md §U5](./contracts/unknown-vs-zero.md)
-- [ ] T091 Update `specs/015-verdict-accuracy/research.md` §4 if any test outside the inventory needed changing, so the record matches what shipped
+- [X] T088 [P] Confirm no new Meta request was introduced anywhere — audit every `graphGet` call site in `server/meta.ts` against the baseline, including the save path (Principle V)
+- [X] T089 [P] Confirm the verdict union in `shared/qarar.ts:9` is still exactly five and no rule code was added to `RuleCode` at `shared/qarar.ts:24–31` (Principles II and VI)
+- [X] T090 [P] Write the release note covering the three user-visible behaviour changes: paused campaigns are now gated (new — they were judged before), rescues on samples below 500 impressions disappear, and the stale-snapshot caveat from [contracts/unknown-vs-zero.md §U5](./contracts/unknown-vs-zero.md)
+- [X] T091 Update `specs/015-verdict-accuracy/research.md` §4 if any test outside the inventory needed changing, so the record matches what shipped
 
 ---
 

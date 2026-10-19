@@ -436,6 +436,27 @@ Recommendation: option 1, and update the needle in the same commit.
 one counted conversion. **FR-015 therefore needs a confirming test, not an implementation change**
 — provided nothing bypasses `effectiveCpa`.
 
+### 4.7 As shipped (T091, 2026-10-19)
+
+The §4.1 inventory held. Every rewritten test was on the list (items 1–7), and nothing outside it
+needed an assertion changed. Three edits touched test files outside the inventory, all additive
+or harness-only:
+
+| File | Change | Why |
+|---|---|---|
+| `client/src/pages/Dashboard.swr.test.tsx` | the `DecisionTable` stub now owns a `level` state and three buttons (same `data-testid`); new describe blocks for the split counter and the mismatch card | T073 needs a table that can switch level. The 8 pre-existing tests were unchanged and stayed green |
+| `client/src/pages/DiagnosisSection.test.tsx` | 2 tests added | T026, additive, as §4.3 predicted |
+| `client/src/components/DecisionTable.status.test.ts` | new file | T027. There is no DecisionTable render suite, so the test targets the pure helper `dropHiddenRows` |
+
+**Snapshot (§4.2):** `server/__snapshots__/engine.test.ts.snap` shipped **byte-identical**
+(hash `c8f22dd3…` before and after). One unplanned diff appeared during T070, on `cmp_test` under
+both funnels. It was caused by an over-broad scale guard that also caught S2's kill-children
+variant, which gives no "+20%" advice. Narrowing the guard to the "+20%" variant, as §4.2 already
+assumed, removed it. `vitest -u` was never run.
+
+**Count drift:** `server/engine.test.ts` had 93 runtime tests at baseline (not 88, because
+parameterised cases are not visible to a source-line count) and 148 at ship.
+
 ## 5. Open risk register
 
 | # | Risk | Mitigation |

@@ -84,17 +84,28 @@ largest behaviour change in this feature and the one with no existing test cover
 
 ## G3. `eventMatchGate(o, archetype)` → `Fired | null`
 
-**Counted event** = `effectiveConversions(o, archetype)` (`engine.ts:266`):
-`leadConversions` for `appointment` / `webinar`, else `conversions`.
+**Counted and comparison events are both read from the split fields** —
+`w3d.leadConversions` and `w3d.purchaseConversions` — never from the blended `conversions` field
+or through `effectiveConversions()`:
 
-**Comparison event**:
+| Archetype | Counts | Counted field | Comparison field |
+|---|---|---|---|
+| `appointment`, `webinar`, `free_lead` | registrations | `w3d.leadConversions` | `w3d.purchaseConversions` |
+| `paid_lto` | purchases | `w3d.purchaseConversions` | `w3d.leadConversions` |
 
-| Archetype counts | Comparison field |
-|---|---|
-| registrations (`appointment`, `webinar`) | `w3d.purchaseConversions` |
-| purchases (`paid_lto`, `free_lead`) | `w3d.leadConversions` |
+`free_lead` counts **registrations**, matching [data-model.md §6](../data-model.md) (owner
+decision, 2026-10-19). An earlier draft of this table grouped it with purchases.
 
-Both fields already exist (`server/meta.ts:406–407`); no parser change is needed.
+**Why the split read** (owner-approved, 2026-10-19): the blended `conversions` field — which
+`effectiveConversions()` returns for `paid_lto` and `free_lead` — is filled
+purchase-first-then-lead. A purchase-counting object with 0 purchases and 12 registrations
+therefore reports `conversions = 12`, and a gate built on it could never detect the mismatch in
+that direction, though FR-002/FR-003 require it. Only the explicit pair can express "the counted
+family is zero while the other is not". `effectiveConversions()` itself is untouched, so every
+other rule keeps its spec-012 selector.
+
+Both fields already exist (`server/meta.ts:406–407`); no parser change is needed. Either field
+`undefined` (a pre-separation snapshot) ⇒ the gate returns `null`.
 
 **Returns `null`** when `counted > 0`, or when `counted === 0 && comparison === 0` — a genuine
 zero that must still reach K1 (FR-004, rulebook §4.1 "الحدثان = 0 → صفر حقيقي").

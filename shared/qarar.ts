@@ -184,6 +184,81 @@ export function isNonSalesExempt(
   return NON_SALES_OBJECTIVES.has(objective);
 }
 
+// ---------- Judging-target source labels (spec 015 / FR-018) ----------
+
+/**
+ * Spec 015 / FR-018 — the plain-Arabic line naming where the judging target
+ * came from (data-model.md §5). `null` when there is no target; the page
+ * says what is missing instead.
+ */
+export function targetSourceLabel(
+  source: DerivedTargets["unitTargetSource"]
+): string | null {
+  switch (source) {
+    case "cpl_baseline":
+      return "محسوب من متوسط حسابك في آخر 30 يومًا";
+    case "effective_cpa":
+    case "cpl_funnel_math":
+      return "محسوب من أرقام الفانل";
+    case "cpl_benchmark":
+      return "محسوب من متوسط السوق المُدخل";
+    default:
+      return null;
+  }
+}
+
+// ---------- Delivery status (spec 015 / US2) ----------
+
+/**
+ * Spec 015 / FR-007, FR-007a — effective statuses that count as "active".
+ * `IN_PROCESS` and `PREAPPROVED` are transient post-edit states on objects
+ * that are still delivering; gating them would make verdicts flicker after
+ * every edit. This is the ONE definition of "active": the engine's status
+ * gate, the summary counters and the DecisionTable status filter all read
+ * it, so the gate and the surfaces that filter on it can never disagree
+ * (contracts/gate-order.md §G2).
+ */
+const DELIVERING_STATUSES: ReadonlySet<string> = new Set([
+  "ACTIVE",
+  "IN_PROCESS",
+  "PREAPPROVED",
+]);
+
+/** Spec 015 / FR-009 — statuses whose rows are not rendered at all. */
+const HIDDEN_STATUSES: ReadonlySet<string> = new Set(["ARCHIVED", "DELETED"]);
+
+export function isDeliveringStatus(status: string | null | undefined): boolean {
+  return !!status && DELIVERING_STATUSES.has(status);
+}
+
+export function isHiddenStatus(status: string | null | undefined): boolean {
+  return !!status && HIDDEN_STATUSES.has(status);
+}
+
+/**
+ * Spec 015 / FR-008 — the display badge for a gated state (data-model.md
+ * §3). Display-only: the verdict stays ⏳ `GATE` and the badge is never a
+ * sixth verdict. `null` for delivering statuses (no badge) and for hidden
+ * ones (the row is not rendered). A status outside Meta's documented set
+ * takes the generic "check it in Ads Manager" badge rather than "موقوف",
+ * which would be untrue.
+ */
+export function statusBadgeFor(status: string | null | undefined): string | null {
+  if (isDeliveringStatus(status) || isHiddenStatus(status)) return null;
+  switch (status) {
+    case "PAUSED":
+    case "CAMPAIGN_PAUSED":
+    case "ADSET_PAUSED":
+      return "موقوف";
+    case "PENDING_REVIEW":
+      return "قيد المراجعة";
+    case "DISAPPROVED":
+      return "مرفوض";
+    default:
+      return "به مشكلة — راجعه في مدير الإعلانات";
+  }
+}
+
 // ---------- Metric shapes ----------
 
 export interface WindowMetrics {
@@ -617,6 +692,14 @@ export interface EngineRow {
   promotion_eligible: boolean;
   promotion_note: string | null;
   learning_phase: boolean;
+  /**
+   * Spec 015 / FR-008 — display badge naming a gated object's real state
+   * ("موقوف" / "قيد المراجعة" / "مرفوض" / "به مشكلة — راجعه في مدير
+   * الإعلانات"), from `statusBadgeFor`. `null` when the object is
+   * delivering. Display-only — never a verdict. The engine always sets it;
+   * optional only so hand-built test rows need not.
+   */
+  statusBadge?: string | null;
 }
 
 export interface TopAction {
@@ -674,6 +757,23 @@ export interface AccountSummary {
    * rows are still gated; only the account-level card is withheld.
    */
   settings_mismatch: boolean;
+  /**
+   * Spec 015 / FR-030a — N in "للإيقاف: {N} مجموعة · {M} إعلان": ad-set
+   * rows with verdict `kill` that pass the status gate. Campaigns are never
+   * counted (FR-030); gated objects never are (FR-030c).
+   */
+  kill_adsets: number;
+  /** Spec 015 / FR-030a — M: ad rows with verdict `kill` that pass the status gate. */
+  kill_ads: number;
+  /**
+   * Spec 015 / FR-017, FR-020 — the exact target figure every cost verdict
+   * on this run was judged against, and where it came from. The same pair
+   * `funnel.get` returns to Settings as `judging`, both produced by
+   * `judgingTargets()` in server/engine.ts, so the two screens cannot
+   * disagree.
+   */
+  unit_target: number | null;
+  unit_target_source: DerivedTargets["unitTargetSource"];
 }
 
 export interface EngineResult {
