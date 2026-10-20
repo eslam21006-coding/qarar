@@ -700,6 +700,25 @@ export interface EngineRow {
    * optional only so hand-built test rows need not.
    */
   statusBadge?: string | null;
+  /**
+   * Spec 016 / FR-006 — full-funnel return on campaign rows (counted results
+   * × full buyer value ÷ spend). Display data only: no rule reads it. `null`
+   * on ad sets and ads, and when it cannot be computed. Optional only so
+   * hand-built test rows need not set it; the engine always does.
+   */
+  full_roas_3d?: number | null;
+  /**
+   * Spec 016 / FR-008, FR-009 — where the ±20% budget buttons go. `null` =
+   * no buttons; `disabled` = shown but disabled (a CBO campaign whose ad
+   * sets are not all 🟢). The engine always sets it.
+   */
+  budget_control?: "enabled" | "disabled" | null;
+  /**
+   * Spec 016 / FR-004 — on a campaign whose verdict is derived from its ad
+   * sets, the ad set its rule code came from; `null` everywhere else. Names
+   * the source in the rule tooltip ("من مجموعة {name}: …").
+   */
+  derived_from_adset?: { id: string; name: string } | null;
 }
 
 export interface TopAction {
@@ -715,6 +734,8 @@ export interface TopAction {
   action_ar: string;
   impact_ar: string;
   impactValue: number;
+  /** Spec 016 / Q2 — copied from the row, for the rule tooltip. */
+  derived_from_adset?: { id: string; name: string } | null;
 }
 
 export interface Cadence {
@@ -805,6 +826,71 @@ export function median(values: number[]): number | null {
   const mid = Math.floor(v.length / 2);
   return v.length % 2 === 0 ? (v[mid - 1] + v[mid]) / 2 : v[mid];
 }
+
+/** The funnel archetype (rulebook §2.1 input 1). */
+export type FunnelArchetype = FunnelInputs["archetype"];
+
+/**
+ * Spec 016 / FR-012 — the single counting rule for a window's results,
+ * shared by the engine and the table (rulebook principle 9). It keeps the
+ * engine's historical mapping exactly: `appointment` / `webinar` count
+ * captured leads; `paid_lto` / `free_lead` count the legacy `conversions`
+ * field. `null` means the count is unknown — Meta sent no count
+ * (`resultsUnknown`) or the counted field was never captured (a
+ * pre-separation snapshot) — and must never be read as 0 (principle 10).
+ */
+export function countedResults(
+  w: Pick<WindowMetrics, "conversions" | "leadConversions" | "resultsUnknown">,
+  archetype: FunnelArchetype
+): number | null {
+  if (w.resultsUnknown) return null;
+  const v =
+    archetype === "appointment" || archetype === "webinar"
+      ? w.leadConversions
+      : w.conversions;
+  return v === undefined ? null : v;
+}
+
+/**
+ * Spec 016 / R4 — the result family this archetype does NOT count, with the
+ * event-match gate's mapping (`paid_lto` counts sales, so its other family
+ * is leads; every other archetype counts registrations, so its other family
+ * is purchases). `undefined` = not captured.
+ */
+export function otherFamilyResults(
+  w: Pick<WindowMetrics, "leadConversions" | "purchaseConversions">,
+  archetype: FunnelArchetype
+): number | undefined {
+  return archetype === "paid_lto" ? w.leadConversions : w.purchaseConversions;
+}
+
+/**
+ * Spec 016 / FR-005, FR-003a — Arabic number–noun agreement for engine
+ * copy, with the same rules as `client/src/lib/killCountLabel.ts`:
+ * 1 → `one`, 2 → `two`, 3–10 → `few`, 11+ → `many`, 0 → null (the caller
+ * omits the part). `{n}` in a form is replaced by the number, so a form may
+ * carry a whole phrase (verb agreement included).
+ */
+export function arabicCount(
+  n: number,
+  forms: { one: string; two: string; few: string; many: string }
+): string | null {
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const form = n === 1 ? forms.one : n === 2 ? forms.two : n <= 10 ? forms.few : forms.many;
+  return form.replace("{n}", String(n));
+}
+
+/**
+ * Spec 016 / FR-004 — verdict severity, most severe first. Used to pick the
+ * ad set a derived campaign takes its rule code from.
+ */
+export const VERDICT_SEVERITY: Record<Verdict, number> = {
+  kill: 0,
+  watch: 1,
+  rescue: 2,
+  continue: 3,
+  too_early: 4,
+};
 
 /** Attribution model change date (March 2026) */
 export const ATTRIBUTION_CHANGE_DATE = "2026-03-01";

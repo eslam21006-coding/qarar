@@ -36,8 +36,11 @@ import {
   RungId,
   RungState,
   TopAction,
+  VERDICT_SEVERITY,
   Verdict,
+  arabicCount,
   convertCurrency,
+  countedResults,
   isDeliveringStatus,
   isNonSalesExempt,
   median,
@@ -120,6 +123,12 @@ interface Fired {
   promotionEligible?: boolean;
   promotionNote?: string | null;
   ctaUrl?: string;
+  /**
+   * Spec 016 / R1 — set on a campaign verdict derived from its ad sets
+   * (FR-003). `derivedFrom` is the ad set whose rule code it carries.
+   */
+  derived?: boolean;
+  derivedFrom?: { id: string; name: string } | null;
 }
 
 /**
@@ -295,10 +304,21 @@ function effectiveConversions(
   o: NormalizedObject,
   archetype: FunnelInputs["archetype"]
 ): number | undefined {
-  if (archetype === "appointment" || archetype === "webinar") {
-    return o.w3d.leadConversions;
-  }
-  return o.w3d.conversions;
+  // Spec 016 / FR-012 — read through the shared selector so the engine and
+  // the table count with one rule. Its `null` on an unknown window is mapped
+  // back to the legacy field here: every caller of this function gates
+  // `resultsUnknown` itself, and SC-004 requires this swap to move nothing.
+  const counted = countedResults(o.w3d, archetype);
+  if (counted !== null) return counted;
+  return o.w3d.resultsUnknown ? legacyCountedField(o.w3d, archetype) : undefined;
+}
+
+/** The field `countedResults` reads, without its unknown-window check. */
+function legacyCountedField(
+  w: { conversions: number; leadConversions?: number },
+  archetype: FunnelInputs["archetype"]
+): number | undefined {
+  return archetype === "appointment" || archetype === "webinar" ? w.leadConversions : w.conversions;
 }
 
 /**
@@ -1758,13 +1778,16 @@ function evaluateNonSales(
 }
 
 // ============================================================
-// Campaign-level evaluation (5.0: judged by العائد الكلي على الإنفاق)
+// Campaign-level evaluation (rulebook 5.0: the campaign is a summary —
+// its verdict is derived from its ad sets; constitution Principle I)
 // ============================================================
 
 function evaluateCampaign(
   o: NormalizedObject,
   t: JudgeableTargets,
   childRows: EngineRow[],
+  adRows: EngineRow[],
+  isActive: (id: string) => boolean,
   htoUnderperforming: boolean,
   archetype: FunnelInputs["archetype"],
   nsThreshold: number
@@ -1797,36 +1820,14 @@ function evaluateCampaign(
   const eventMatch = eventMatchGate(o, archetype);
   if (eventMatch) return eventMatch;
 
-  // Spec 015 / FR-028 (T066/T067) — data-gate position for a campaign,
-  // which never calls `gateVerdict`. Every rule below (S2, W6 and its
-  // "0.0x" fallback, K1) reads the result count — S2/W6's "return" is
-  // count × the funnel's buyer value — so none may run on an unknown count.
-  if (o.w3d.resultsUnknown) return RESULTS_UNKNOWN_FIRED;
+  // Spec 016 / FR-001 — the 015 results-unknown exit and the spend-below-
+  // target exit are no longer campaign exits. They remain preconditions of
+  // W5, the one rule left that reads campaign-level counts; the derivation
+  // below covers both cases (an unknown or under-spent campaign has no ad
+  // set past its gates, so it derives ⏳). Owner sign-off 2026-10-20.
   const { spend } = o.w3d;
-  // T025 / T026 — campaign-level conversion count follows the archetype
-  // selector. `paid_lto` / `free_lead` keep the legacy field (SC-025);
-  // the new archetypes read `leadConversions`. A missing lead count on a
-  // pre-separation snapshot falls through to `0` only at the
-  // zero-result guard (FR-034, FR-035) — the engine above already
-  // rejected that object at the pre-separation gate (T026) so we never
-  // reach evaluateCampaign with an undefined count for the new archetypes.
   const conversions = effectiveConversions(o, archetype) ?? 0;
-  if (spend < t.unitTarget) {
-    return {
-      verdict: "too_early",
-      rule: "GATE",
-      reason: "في آخر 3 أيام: صرف الحملة أقل من تكلفة عميل واحد — لا يمكن الحكم عليها بعد",
-      action: "اترك البيانات تتجمع",
-    };
-  }
-  // FR-015b — when `fullBuyerValue` is null we cannot compute full-ROAS;
-  // skip every branch that depends on it (S2, W6, the W6 fallback).
-  const hasFullRoas = t.fullBuyerValue !== null;
-  const fullRoas =
-    hasFullRoas && spend > 0
-      ? (conversions * (t.fullBuyerValue as number)) / spend
-      : 0;
-  const killChildren = childRows.filter(r => r.verdict === "kill").length;
+  const w5Measurable = !o.w3d.resultsUnknown && spend >= t.unitTarget;
 
   // W5 — funnel-level signal (user-reported): LTO ليدات/مبيعات جيدة لكن
   // لا حضور/مبيعات HTO. Meta's API can't see post-conversion data, so this
@@ -1836,6 +1837,7 @@ function evaluateCampaign(
   // not on the legacy cost-per-purchase figure that `o.w3d.cpa` carries.
   const campaignCpa = effectiveCpa(o, archetype);
   if (
+    w5Measurable &&
     htoUnderperforming &&
     conversions > 0 &&
     campaignCpa !== null &&
@@ -1850,85 +1852,171 @@ function evaluateCampaign(
     };
   }
 
-  // Spec 015 / FR-029 (T070) — the S2 "+20%" scale action also requires the
-  // campaign's cost per result at or below its target. It used to test the
-  // full-funnel return alone, so campaigns at 1.38× and 1.26× their target
-  // were told to raise the budget. Above target, the verdict follows the
-  // watch rules (spec Assumptions; contracts/starvation-and-scale.md §K4):
-  // up to 1.5× is the W1 band; beyond that, with the return still at or
-  // above the safety floor, W6 "كمّل بحذر". Either way, no "+20%".
-  // Interim until feature 016 derives campaign verdicts from ad sets.
-  //
-  // Scoped to the "+20%" variant only (`killChildren === 0`). The other S2
-  // variant tells the user to act on the red rows inside and gives no scale
-  // advice, so FR-029 / SC-007 do not touch it (research.md §4.2 analysed
-  // `cmp_test` on exactly this basis).
-  if (
-    hasFullRoas &&
-    fullRoas >= 2.0 &&
-    killChildren === 0 &&
-    campaignCpa !== null &&
-    campaignCpa > t.unitTarget
-  ) {
-    if (campaignCpa <= 1.5 * t.unitTarget) {
-      return {
-        verdict: "watch",
-        rule: "W1",
-        reason: `في آخر 3 أيام: الحملة رابحة عند حساب قيمة العميل الكاملة (${fullRoas.toFixed(1)}x)، لكن تكلفة العميل ${money(campaignCpa)} أعلى من هدفك ${money(t.unitTarget)}`,
-        action: "واصل بدون زيادة الميزانية",
-      };
-    }
-    return {
-      verdict: "watch",
-      rule: "W6",
-      reason: `في آخر 3 أيام: تكلفة العميل ${money(campaignCpa)} أعلى بكثير من هدفك ${money(t.unitTarget)}، والعائد الكلي على الإنفاق ${fullRoas.toFixed(1)}x — كمّل بحذر — الحكم النهائي للفانل`,
-      action: "واصل بدون زيادة الميزانية",
-    };
-  }
-  if (hasFullRoas && fullRoas >= 2.0) {
-    return {
-      verdict: "continue",
-      rule: "S2",
-      reason: `في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع ${fullRoas.toFixed(1)}x عند حساب قيمة العميل الكاملة (${money(t.fullBuyerValue as number)})${killChildren ? ` — مع ${killChildren} إعلان/مجموعة تحتاج إيقافًا بالداخل` : ""}`,
-      action: killChildren
-        ? "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك"
-        : "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة",
-    };
-  }
-  if (hasFullRoas && fullRoas >= 1.0) {
-    return {
-      verdict: "watch",
-      rule: "W6",
-      reason: `في آخر 3 أيام: الحملة تغطي تكلفتها بالكاد (العائد الكلي على الإنفاق ${fullRoas.toFixed(1)}x) — فوق التعادل لكن الربح قليل`,
-      action: "راقبها وأوقِف الإعلانات الحمراء بالداخل أولًا",
-    };
-  }
-  if (conversions === 0 && spend >= 2 * t.unitTarget) {
-    return {
-      verdict: "kill",
-      rule: "K1",
-      reason: `في آخر 3 أيام: الحملة صرفت ${money(spend)} (ضعف هدفك) بدون أي نتيجة`,
-      action: "أوقِف الحملة — لا تبيع أصلًا",
-    };
-  }
-  if (!hasFullRoas) {
-    // No full-buyer value to evaluate profitability against — we cannot
-    // say "campaign is losing" or "campaign is winning". Fall through to
-    // a neutral continue. The per-object kills/watch inside the campaign
-    // are already surfaced via killChildren + childRows.
-    return {
-      verdict: "continue",
-      rule: "S2",
-      reason: "في آخر 3 أيام: الحملة صرفت ما يكفي من البيانات للحكم على الإعلانات بالداخل — راجعها",
-      action: "تابع أداء الإعلانات داخل الحملة — قرار الربح الإجمالي يعتمد على إعدادات الفانل",
-    };
-  }
+  // Spec 016 / FR-003, FR-007 — every campaign rule after W5 (the 015 W1/W6
+  // scale guard, S2, W6, K1, the no-full-ROAS fallback) is removed. The
+  // verdict comes from the ad sets.
+  const d = deriveCampaignVerdict(childRows, adRows, isActive);
   return {
-    verdict: "watch",
-    rule: "W6",
-    reason: `في آخر 3 أيام: الحملة تخسر حاليًا — العائد الكلي على الإنفاق ${fullRoas.toFixed(1)}x فقط`,
-    action: "أوقِف الإعلانات الحمراء بالداخل وراجع عرضك وصفحتك قبل أي ميزانية إضافية",
+    verdict: d.verdict,
+    rule: d.rule,
+    reason: d.reason,
+    action: d.action,
+    derived: true,
+    derivedFrom: d.derivedFrom,
   };
+}
+
+/** Spec 016 / FR-003, FR-004, FR-005 — the derived campaign verdict. */
+export interface CampaignDerivation {
+  verdict: Verdict;
+  rule: RuleCode;
+  reason: string;
+  action: string;
+  derivedFrom: { id: string; name: string } | null;
+}
+
+const ADSET_COUNT_FORMS = {
+  one: "مجموعة واحدة",
+  two: "مجموعتان",
+  few: "{n} مجموعات",
+  many: "{n} مجموعة",
+};
+
+const RESCUE_COUNT_FORMS = {
+  one: "فيها إعلان واحد يستحق الإنقاذ",
+  two: "فيها إعلانان يستحقان الإنقاذ",
+  few: "فيها {n} إعلانات تستحق الإنقاذ",
+  many: "فيها {n} إعلانًا يستحق الإنقاذ",
+};
+
+/**
+ * Spec 016 / R1 — derive a campaign's verdict from its ad sets
+ * (contracts/campaign-derivation.md C2–C4). `adsetRows` are the campaign's
+ * evaluated ad-set rows; only those that pass the status gate
+ * (`isActive`) form the population. `adRows` are the campaign's ad rows,
+ * read only to count rescue-worthy ads (FR-003a).
+ */
+export function deriveCampaignVerdict(
+  adsetRows: EngineRow[],
+  adRows: EngineRow[],
+  isActive: (id: string) => boolean
+): CampaignDerivation {
+  const pop = adsetRows.filter(r => r.level === "adset" && isActive(r.id));
+  const judged = pop.filter(r => r.verdict !== "too_early");
+  const withVerdict = (v: Verdict) => pop.filter(r => r.verdict === v);
+  const green = withVerdict("continue");
+  const red = withVerdict("kill");
+  const yellow = withVerdict("watch");
+  const waiting = withVerdict("too_early");
+  const names = (xs: EngineRow[]) => xs.map(r => `«${r.name}»`).join("، ");
+
+  let verdict: Verdict;
+  let action: string;
+  if (green.length > 0) {
+    // A campaign holding a 🟢 ad set is never told to stop (Principle I).
+    verdict = red.length > 0 || yellow.length > 0 ? "watch" : "continue";
+    action = red.length > 0 ? `أوقِف ${names(red)} وأبقِ ${names(green)}` : `أبقِ ${names(green)}`;
+  } else if (judged.length > 0 && judged.every(r => r.verdict === "kill")) {
+    verdict = "kill";
+    action = "أوقِف الحملة — كل مجموعاتها تخسر";
+  } else if (judged.length === 0) {
+    verdict = "too_early";
+    action = "اترك البيانات تتجمع";
+  } else {
+    verdict = "watch";
+    action = [...red, ...yellow].map(r => `«${r.name}»: ${r.action_ar}`).join(" · ");
+  }
+
+  // FR-004 / D-R1 — the rule code comes from the highest-spend ad set whose
+  // verdict equals the derived one; with none (🟢 + 🔴, no 🟡), from the
+  // most severe ad set. Ties → highest spend, then row order.
+  const mostSevere = (xs: EngineRow[]): EngineRow | undefined =>
+    xs.reduce<EngineRow | undefined>((best, r) => {
+      if (!best) return r;
+      const d = VERDICT_SEVERITY[r.verdict] - VERDICT_SEVERITY[best.verdict];
+      if (d < 0) return r;
+      if (d === 0 && r.spend_3d > best.spend_3d) return r;
+      return best;
+    }, undefined);
+  const matching = withVerdict(verdict);
+  const source = mostSevere(matching.length > 0 ? matching : pop);
+
+  // FR-003a — count of rescue-worthy ads, never a name, never the color.
+  const popIds = new Set(pop.map(r => r.id));
+  const rescues = adRows.filter(
+    a =>
+      a.level === "ad" &&
+      a.verdict === "rescue" &&
+      isActive(a.id) &&
+      a.parentId !== null &&
+      popIds.has(a.parentId)
+  ).length;
+  const rescueText = arabicCount(rescues, RESCUE_COUNT_FORMS);
+  if (rescueText) action = `${action} — ${rescueText}`;
+
+  // FR-005 — counts per color, label-then-count, so only the noun agrees.
+  const parts: [string, number][] = [
+    ["ناجحة", green.length],
+    ["خاسرة", red.length],
+    ["تحت المراقبة", yellow.length],
+    ["لم يُحكم عليها بعد", waiting.length],
+  ];
+  const reason =
+    pop.length === 0
+      ? "لا توجد مجموعة نشطة داخل هذه الحملة"
+      : `مجموعات هذه الحملة — ${parts
+          .filter(([, n]) => n > 0)
+          .map(([label, n]) => `${label}: ${arabicCount(n, ADSET_COUNT_FORMS)}`)
+          .join(" · ")}`;
+
+  return {
+    verdict,
+    rule: source ? source.rule : "GATE",
+    reason,
+    action,
+    derivedFrom: source ? { id: source.id, name: source.name } : null,
+  };
+}
+
+/**
+ * Spec 016 / FR-020a (C7a) — a derived campaign displays no findings, but
+ * its combined-numbers diagnosis still feeds the account funnel card,
+ * under the same condition as any row (🔴/🟡, not exempt) and with the
+ * derived verdict and rule.
+ */
+export function campaignCardEntry(
+  fired: { verdict: Verdict; rule: RuleCode },
+  exempt: boolean,
+  runDiagnosis: () => Finding[]
+): { rule: RuleCode; findings: Finding[] } | null {
+  if (exempt || (fired.verdict !== "kill" && fired.verdict !== "watch")) return null;
+  return { rule: fired.rule, findings: runDiagnosis() };
+}
+
+/**
+ * Spec 016 / FR-008, FR-009 (contracts/campaign-derivation.md C6) — set
+ * `budget_control` on every row. ABO: buttons on ad sets only. CBO:
+ * buttons on the campaign only, enabled when every active ad set inside
+ * is 🟢.
+ */
+export function assignBudgetControls(rows: EngineRow[], isActive: (id: string) => boolean): void {
+  const campaigns = new Map(rows.filter(r => r.level === "campaign").map(r => [r.id, r]));
+  for (const r of rows) {
+    if (r.level === "campaign") {
+      if (r.daily_budget === null) {
+        r.budget_control = null;
+        continue;
+      }
+      const pop = rows.filter(x => x.level === "adset" && x.campaignId === r.id && isActive(x.id));
+      r.budget_control = pop.length > 0 && pop.every(x => x.verdict === "continue") ? "enabled" : "disabled";
+    } else if (r.level === "adset") {
+      const parent = r.campaignId !== null ? campaigns.get(r.campaignId) : undefined;
+      const insideCbo = parent !== undefined && parent.daily_budget !== null;
+      r.budget_control = !insideCbo && r.daily_budget !== null ? "enabled" : null;
+    } else {
+      r.budget_control = null;
+    }
+  }
 }
 
 // ============================================================
@@ -2215,7 +2303,17 @@ export function runEngine(
         o.w3d.conversionValue > 0
           ? round2(o.w3d.conversionValue / o.w3d.spend)
           : null,
+      full_roas_3d: o.level === "campaign" ? fullRoas3d(o, judgeable, funnel.archetype) : null,
+      // Spec 016 — set by the post-pass below.
+      budget_control: null,
+      derived_from_adset: fired.derivedFrom ?? null,
     };
+  };
+
+  // Spec 016 — the status-gate predicate (same as `statusGate`), by id.
+  const isActiveId = (id: string): boolean => {
+    const o = byId.get(id);
+    return o !== undefined && isDeliveringStatus(o.effectiveStatus ?? o.status);
   };
 
   // Evaluate ads first (needed for nothing), then adsets, then campaigns (need children)
@@ -2248,17 +2346,29 @@ export function runEngine(
     rows.push(toRow(s, fired, findings));
   }
 
+  // Spec 016 / FR-020a — combined-numbers diagnoses of derived campaigns,
+  // which feed the funnel card but are never displayed on the row.
+  const cardEntries: { rule: RuleCode; findings: Finding[] }[] = [];
   for (const c of campaigns) {
     const childRows = rows.filter(r => r.campaignId === c.id && r.level === "adset");
+    const adRows = rows.filter(r => r.campaignId === c.id && r.level === "ad");
     // Spec 014 / T034 — `diagnose()` receives the account-level funnel
     // flag as its own argument (see the C4 guard). The previous
     // hand-built `Fired` that re-attached `ctaUrl` here was a no-op:
     // `evaluateCampaign` already sets `ctaUrl` on every W5 `Fired`, so
     // it carried no information the guard could read (self-review F2).
-    const fired = evaluateCampaign(c, judgeable, childRows, !!funnel.htoUnderperforming, funnel.archetype, nsThreshold);
+    const fired = evaluateCampaign(
+      c, judgeable, childRows, adRows, isActiveId,
+      !!funnel.htoUnderperforming, funnel.archetype, nsThreshold
+    );
     let findings: Finding[] = [];
     const exempt = isNonSalesExempt(c.objective ?? null);
-    if (!exempt && (fired.verdict === "kill" || fired.verdict === "watch")) {
+    if (fired.derived) {
+      const entry = campaignCardEntry(fired, exempt, () =>
+        diagnose(c, baselines, funnel.archetype, fired, !!funnel.htoUnderperforming)
+      );
+      if (entry) cardEntries.push(entry);
+    } else if (!exempt && (fired.verdict === "kill" || fired.verdict === "watch")) {
       // Spec 014 / T035 / C4.5 — diagnose() now produces the single
       // correct FUNNEL_CONFIRMED line for a guarded W5. The old
       // post-hoc step-6 patch/append block is removed.
@@ -2273,8 +2383,25 @@ export function runEngine(
   // `o.objective ?? null` read, so no per-row backfill is required here.
   // The shape of the output (`EngineRow.objective`) is unchanged.
 
-  const summary = buildSummary(rows, snapshot, targets, funnel.archetype);
+  assignBudgetControls(rows, isActiveId);
+
+  const summary = buildSummary(rows, snapshot, targets, funnel.archetype, cardEntries);
   return { rows, summary, targets, currencySymbol: _currency };
+}
+
+/**
+ * Spec 016 / FR-006 (C5) — full-funnel return for a campaign row: counted
+ * results × full buyer value ÷ spend. `null` when the buyer value is not
+ * set, spend is 0, or the count is unknown.
+ */
+function fullRoas3d(
+  o: NormalizedObject,
+  t: { fullBuyerValue: number | null },
+  archetype: FunnelInputs["archetype"]
+): number | null {
+  const counted = countedResults(o.w3d, archetype);
+  if (t.fullBuyerValue === null || o.w3d.spend <= 0 || counted === null) return null;
+  return round2((counted * t.fullBuyerValue) / o.w3d.spend);
 }
 
 /**
@@ -2339,11 +2466,73 @@ function buildNoTargetResult(
         o.w3d.conversionValue > 0
           ? round2(o.w3d.conversionValue / o.w3d.spend)
           : null,
+      full_roas_3d: null,
+      budget_control: null,
+      derived_from_adset: null,
     };
   };
   const rows = snapshot.objects.map(toRow);
+  // Spec 016 / FR-008, FR-009 — the same button placement as a judged run.
+  assignBudgetControls(rows, id => {
+    const o = snapshot.objects.find(x => x.id === id);
+    return o !== undefined && isDeliveringStatus(o.effectiveStatus ?? o.status);
+  });
   const summary = buildSummary(rows, snapshot, targets, archetype);
   return { rows, summary, targets, currencySymbol: _currency };
+}
+
+/**
+ * Spec 014 / contract §C6.1, §C6.1a — the account-level funnel card.
+ * Spec 016 / FR-020a, FR-021a part 1 — its inputs are every row's findings
+ * plus `cardEntries`, the combined-numbers diagnoses of campaigns whose
+ * verdict is derived from their ad sets (rows of those campaigns carry no
+ * findings). Each entry is judged with its own rule, so a derived ad-fault
+ * code (e.g. K1) cannot raise the card.
+ */
+export function accountFunnelCta(
+  rows: { rule: RuleCode; findings: Finding[] }[],
+  cardEntries: { rule: RuleCode; findings: Finding[] }[]
+): { reason_ar: string; ctaUrl: string } | null {
+  /**
+   * C6.1 condition A — the two outcomes that constitute *measured*
+   * funnel evidence. Selection is on `Finding.outcome`, never on
+   * Arabic copy (FR-015).
+   */
+  const qualifyingOutcome = (outcome: DiagnosisOutcome): boolean =>
+    outcome === "RUNG_CONVERSION" || outcome === "FUNNEL_CONFIRMED";
+  /**
+   * C6.1a — an entry that cannot fund the card, on either of two grounds:
+   *
+   *   1. one of its rung-1..4 findings is an ad-side break, or
+   *   2. its fired rule is classified `ad-fault`.
+   *
+   * Condition 2 is not redundant. When rungs 1-4 were all unevaluable
+   * they produced no findings, so condition 1 has nothing to test
+   * against — and the card would otherwise claim the funnel is at fault
+   * on the strength of a row where the engine is naming the ad.
+   */
+  const adBlameExcluded = (e: { rule: RuleCode; findings: Finding[] }): boolean => {
+    if (RULE_FAULT[e.rule] === "ad-fault") return true;
+    return e.findings.some(f =>
+      f.outcome === "RUNG_CPM" ||
+      f.outcome === "RUNG_HOOK" ||
+      f.outcome === "RUNG_MISMATCH" ||
+      f.outcome === "RUNG_ARRIVAL"
+    );
+  };
+  const qualifies = [...rows, ...cardEntries].some(
+    e => !adBlameExcluded(e) && e.findings.some(f => qualifyingOutcome(f.outcome))
+  );
+  return qualifies
+    ? {
+        // Spec 014 / C6.4 — card copy carries no ad-health claim
+        // (operationally, none of `AD_HEALTH_CLAIMS`). States the
+        // measured funnel leak and routes to the call.
+        reason_ar:
+          "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+        ctaUrl: DISCOVERY_CALL_URL,
+      }
+    : null;
 }
 
 function computeCadence(snapshot: AccountSnapshotPayload): AccountSummary["cadence"] {
@@ -2410,13 +2599,14 @@ function weeklyConversions(
  * so `d.leadConversions` is the lead-based counterpart.
  */
 function effectiveDailyConversions(
-  d: { conversions: number; leadConversions?: number },
+  d: { conversions: number; leadConversions?: number; resultsUnknown?: boolean },
   archetype: FunnelInputs["archetype"]
 ): number | undefined {
-  if (archetype === "appointment" || archetype === "webinar") {
-    return d.leadConversions;
-  }
-  return d.conversions;
+  // Spec 016 / FR-012 — same shared selector and legacy mapping as
+  // `effectiveConversions`.
+  const counted = countedResults(d, archetype);
+  if (counted !== null) return counted;
+  return d.resultsUnknown ? legacyCountedField(d, archetype) : undefined;
 }
 
 /**
@@ -2477,7 +2667,8 @@ function buildSummary(
   rows: EngineRow[],
   snapshot: AccountSnapshotPayload,
   targets: DerivedTargets,
-  archetype: FunnelInputs["archetype"]
+  archetype: FunnelInputs["archetype"],
+  cardEntries: { rule: RuleCode; findings: Finding[] }[] = []
 ): AccountSummary {
   // Spec 013 / US1 — the three live-state elements (counts, bleed,
   // top_3_actions) describe only the LIVE account. `EngineRow` has no
@@ -2578,6 +2769,7 @@ function buildSummary(
       action_ar: r.action_ar,
       impact_ar: `يوفّر لك حوالي ${money(impact)} كل يوم`,
       impactValue: impact,
+      derived_from_adset: r.derived_from_adset ?? null,
     });
   }
   const rescueRows = rows.filter(r => r.verdict === "rescue" && isActive(r));
@@ -2595,6 +2787,7 @@ function buildSummary(
       action_ar: r.action_ar,
       impact_ar: `إعلان ممتاز (ضغط ${r.ctr_link}%) لا يأخذ فرصته في المصروف`,
       impactValue: r.ctr_link,
+      derived_from_adset: r.derived_from_adset ?? null,
     });
   }
   // Scale-ready rows are inherently produced by the sales rulebook and
@@ -2616,6 +2809,7 @@ function buildSummary(
       action_ar: r.action_ar,
       impact_ar: `إعلان ناجح مُثبَت جاهز للتوسيع`,
       impactValue: r.spend_3d,
+      derived_from_adset: r.derived_from_adset ?? null,
     });
   }
   const top3 = actions.slice(0, 3).map((a, i) => ({ ...a, rank: i + 1 }));
@@ -2658,46 +2852,9 @@ function buildSummary(
 
   // Spec 014 / contract §C6.1, §C6.1a — account-level funnel card.
 
-  /**
-   * C6.1 condition A — the two outcomes that constitute *measured*
-   * funnel evidence. Selection is on `Finding.outcome`, never on
-   * Arabic copy (FR-015).
-   */
-  const qualifyingOutcome = (outcome: DiagnosisOutcome): boolean =>
-    outcome === "RUNG_CONVERSION" || outcome === "FUNNEL_CONFIRMED";
-  /**
-   * C6.1a — a row that cannot fund the card, on either of two grounds:
-   *
-   *   1. one of its rung-1..4 findings is an ad-side break, or
-   *   2. its fired rule is classified `ad-fault`.
-   *
-   * Condition 2 is not redundant. When rungs 1-4 were all unevaluable
-   * they produced no findings, so condition 1 has nothing to test
-   * against — and the card would otherwise claim the funnel is at fault
-   * on the strength of a row where the engine is naming the ad.
-   */
-  const adBlameExcluded = (row: EngineRow): boolean => {
-    if (RULE_FAULT[row.rule] === "ad-fault") return true;
-    return row.findings.some(f =>
-      f.outcome === "RUNG_CPM" ||
-      f.outcome === "RUNG_HOOK" ||
-      f.outcome === "RUNG_MISMATCH" ||
-      f.outcome === "RUNG_ARRIVAL"
-    );
-  };
-  const accountRowQualifies = rows.some(
-    r => !adBlameExcluded(r) && r.findings.some(f => qualifyingOutcome(f.outcome))
-  );
-  const account_funnel_cta = accountRowQualifies
-    ? {
-        // Spec 014 / C6.4 — card copy carries no ad-health claim
-        // (operationally, none of `AD_HEALTH_CLAIMS`). States the
-        // measured funnel leak and routes to the call.
-        reason_ar:
-          "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
-        ctaUrl: DISCOVERY_CALL_URL,
-      }
-    : null;
+  // Spec 016 / FR-020a — derived campaigns feed the card through
+  // `cardEntries` (their combined diagnosis), not through their rows.
+  const account_funnel_cta = accountFunnelCta(rows, cardEntries);
 
   return {
     total_spend_3d,

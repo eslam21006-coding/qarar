@@ -6,6 +6,7 @@ import * as db from "./db";
 import { buildDemoSnapshot, DEMO_FUNNEL } from "./demo";
 import { runEngine, type EngineResult } from "./engine";
 import { diffKillSet, type NotificationDraft } from "./dailyRefresh";
+import { FIXTURES016 } from "./fixtures016";
 import type { TrpcContext } from "./_core/context";
 import type { AccountSnapshotPayload } from "../shared/qarar";
 
@@ -176,5 +177,29 @@ describe("diffKillSet — US11 / T045 (pure function)", () => {
     if (draftB) {
       expect(draftB.userId).toBe("u-2");
     }
+  });
+});
+
+// Spec 016 / T011 (FR-011) — a campaign that becomes 🔴 by derivation from
+// its ad sets is notified like any newly killed object.
+describe("diffKillSet — derived campaign kill (spec 016 / FR-011)", () => {
+  it("a campaign that turns 🔴 because every judged ad set is 🔴 is reported as newly killed", () => {
+    const oldResult = runEngine(buildDemoSnapshot(), DEMO_FUNNEL);
+    expect(oldResult.rows.find(r => r.id === "cmp_test")!.verdict).not.toBe("kill");
+
+    const fx = FIXTURES016.find(f => f.name === "split-family/paid_lto/hto-off")!;
+    const newResult = runEngine(fx.build(), fx.funnel);
+    const camp = newResult.rows.find(r => r.id === "cmp_test")!;
+    expect(camp.verdict).toBe("kill");
+
+    const draft = diffKillSet({
+      userId: "u-1",
+      adAccountId: 1,
+      old: oldResult,
+      new: newResult,
+      bleedDaily: newResult.summary.bleed_daily,
+    });
+    expect(draft).not.toBeNull();
+    expect(draft!.content).toContain(camp.name);
   });
 });
