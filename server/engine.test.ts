@@ -1738,6 +1738,8 @@ describe("T033-T038 — starvation floor (spec 015 / US3)", () => {
     /** per-day ad spend against parent spend of 60/61/58 */
     adDaily?: number[];
     adDailyCount?: number;
+    /** Spec 016 / T042 — run with another funnel (e.g. a lower target). */
+    funnel?: FunnelInputs;
   }) {
     const snap = buildDemoSnapshot();
     const ad = snap.objects.find(o => o.id === "ad_rescue")!;
@@ -1767,7 +1769,7 @@ describe("T033-T038 — starvation floor (spec 015 / US3)", () => {
     if (opts.parentMissingTarget) {
       parent.w3d = { ...parent.w3d, conversions: 1, leadConversions: 1, purchaseConversions: 1, cpa: parent.w3d.spend };
     }
-    const row = runEngine(snap, DEMO_FUNNEL as FunnelInputs).rows.find(r => r.id === "ad_rescue")!;
+    const row = runEngine(snap, opts.funnel ?? (DEMO_FUNNEL as FunnelInputs)).rows.find(r => r.id === "ad_rescue")!;
     return row;
   }
 
@@ -1811,14 +1813,51 @@ describe("T033-T038 — starvation floor (spec 015 / US3)", () => {
     expect(row.rule).not.toBe("K5");
   });
 
-  it("T037 — the CPA rescue needs ≥ 1 counted conversion; with one it fires even under the floor", () => {
-    // 0 conversions: effectiveCpa() is null, so no CPA rescue; CTR half is floored.
+  // Spec 016 / FR-025–FR-027 (US5, T042) — the cost half of the rescue now
+  // needs ≥ 2 counted results. Before 016 this test asserted that a single
+  // conversion at $12 ≤ $43 rescued an ad under the floor; one sale is not
+  // evidence of a "رابح مخنوق", so that case now waits (deliberate update).
+  it("T037 — the CPA rescue needs ≥ 2 counted results; with one, below the floor, the ad waits", () => {
+    // 0 conversions: no CPA rescue; CTR half is floored.
     const none = starved({ impressions: 300, ctrLink: 1.0, conversions: 0 });
     expect(none.verdict).not.toBe("rescue");
-    // 1 conversion at $12 ≤ $43 target: the CPA half rescues, floor does not apply to it.
+    // 1 conversion at $12 ≤ $43 target, under the floor → ⏳ K5 (FR-026).
     const one = starved({ impressions: 300, ctrLink: 1.0, conversions: 1 });
-    expect(one.verdict).toBe("rescue");
-    expect(one.rule).toBe("K5");
+    expect([one.verdict, one.rule]).toEqual(["too_early", "K5"]);
+    expect(one.reason_ar).toBe("نتيجة واحدة لا تكفي للحكم — اتركه يجمع بيانات");
+    expect(one.action_ar).toBe("راجعه بعد أن يحقق نتيجة ثانية");
+  });
+
+  it("T037b — 2 counted results at CPA ≤ target, under the floor → 🛟 K5 (FR-025)", () => {
+    const two = starved({ impressions: 300, ctrLink: 1.0, conversions: 2 });
+    expect([two.verdict, two.rule]).toEqual(["rescue", "K5"]);
+  });
+
+  it("T037c — the CTR half at ≥ 500 impressions still rescues with one result", () => {
+    const row = starved({ impressions: 1100, ctrLink: 3.4, conversions: 1 });
+    expect([row.verdict, row.rule]).toEqual(["rescue", "K5"]);
+  });
+
+  it("T037d — 1 counted result with CPA above target is not the new branch (matrix as before)", () => {
+    // Target $10 (AOV 10): 1 result on $12 spend is CPA $12 > $10.
+    const funnel = { ...(DEMO_FUNNEL as FunnelInputs), aov: 10 };
+    const row = starved({ impressions: 300, ctrLink: 1.0, conversions: 1, funnel });
+    expect([row.verdict, row.rule]).toEqual(["too_early", "K5"]);
+    expect(row.reason_ar).toBe(FLOOR_REASON);
+  });
+
+  it("T037e — sweep: no 🛟 via the cost path with fewer than 2 counted results (SC-006)", async () => {
+    const { FIXTURES016 } = await import("./fixtures016");
+    for (const fx of FIXTURES016) {
+      const snap = fx.build();
+      const r = runEngine(snap, fx.funnel);
+      const median = snap.baselines.ctrLinkMedian90 ?? 1.0;
+      for (const row of r.rows) {
+        if (row.verdict !== "rescue" || (row.conversions_3d ?? 0) >= 2) continue;
+        // only the CTR half may rescue it
+        expect(row.impressions_3d >= 500 && row.ctr_link > median, `${fx.name} ${row.id}`).toBe(true);
+      }
+    }
   });
 
   it("T038 — fewer than three usable daily7 slices ⇒ the matrix does not fire", () => {

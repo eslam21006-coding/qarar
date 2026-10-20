@@ -907,3 +907,70 @@ Error: Database connection failed
 
  ELIFECYCLE  Test failed. See above for more details.
 ```
+
+
+## Phase 7 — User Story 5 (one sale is not a rescue)
+
+### T042 — Tests ✅
+
+In `server/engine.test.ts` (T033–T038 describe):
+- **T037 rewritten deliberately**: 1 result, CPA ≤ target, under the floor → ⏳ K5 with the reason
+  "نتيجة واحدة لا تكفي للحكم — اتركه يجمع بيانات" and the action "راجعه بعد أن يحقق نتيجة ثانية".
+  Before 016 it asserted 🛟.
+- New T037b: 2 results → 🛟 K5.
+- New T037c: the CTR half (1,100 impressions, CTR 3.4) still rescues with 1 result.
+- New T037d: 1 result with CPA above target (target $10 via AOV 10) gives the old floor reason, not
+  the new branch.
+- New T037e: SC-006 sweep over the 12 fixtures — no 🛟 with < 2 results unless the CTR half fired.
+- `starved()` gains an optional `funnel`.
+
+The rewritten T037 failed before T043; the others pass both before and after (they pin behaviour
+that must not move).
+
+### T043 — `starvedAdMatrix` ✅
+
+- The CPA half now requires `adCounted >= 2`.
+- New ⏳ K5 branch before the `!exposed` branch, for exactly 1 counted result in target, with the
+  owner's copy.
+- The other branches are unchanged.
+
+### US5 gate ✅
+
+- `pnpm run check`: clean.
+- `pnpm test`: **903 passed**, 37 skipped; only `auth-flow.e2e.test.ts` fails, as expected.
+- **No snapshot or baseline change**: the demo `ad_rescue` is rescued by the CTR half, as research
+  §1.3 predicted.
+- Funnel card vs main: 0 differences.
+
+Raw `pnpm run check`:
+
+```text
+> qarar@1.0.0 check D:\Qarar worktrees\Qarar-016-judgment-model
+> tsc --noEmit
+
+```
+
+Raw `pnpm test` (closing block):
+
+```text
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+Error: Database connection failed
+ ❯ server/auth-flow.e2e.test.ts:22:13
+     20|     db = await getDb();
+     21|     if (!db) {
+     22|       throw new Error("Database connection failed");
+       |             ^
+     23|     }
+     24|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 59 passed | 2 skipped (62)
+      Tests  903 passed | 37 skipped (940)
+   Start at  18:47:13
+   Duration  13.79s (transform 7.86s, setup 100.38s, collect 52.97s, tests 19.65s, environment 25.54s, prepare 29.66s)
+
+ ELIFECYCLE  Test failed. See above for more details.
+```

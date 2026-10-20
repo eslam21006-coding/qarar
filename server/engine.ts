@@ -810,11 +810,13 @@ function starvedAdMatrix(
   const adCpa = effectiveCpa(ad, archetype);
   // Spec 015 / FR-014, FR-015 — the two rescue halves are split. A CTR
   // above the median on a few hundred impressions is noise, so the CTR half
-  // needs the exposure floor. The CPA half already needs ≥ 1 counted result:
-  // `effectiveCpa` is null at zero conversions (research.md §4.6).
+  // needs the exposure floor. Spec 016 / FR-025 — the CPA half needs at
+  // least 2 counted results: one sale is not evidence of a "رابح مخنوق".
+  const adCounted = effectiveConversions(ad, archetype) ?? 0;
+  const cpaInTarget = adCpa !== null && adCpa <= t.unitTarget;
   const highEfficiency =
     (exposed && ad.w3d.ctrLink > ctrMedian) ||
-    (adCpa !== null && adCpa <= t.unitTarget);
+    (adCounted >= 2 && cpaInTarget);
 
   // Any ad-set state + high efficiency on its small spend → rescue 🛟
   if (highEfficiency) {
@@ -823,6 +825,17 @@ function starvedAdMatrix(
       rule: "K5",
       reason: `تمنحه ميتا ${ad.spendSharePct.toFixed(1)}% فقط من ميزانية المجموعة لكنه ممتاز في القليل الذي يصرفه — ناجح مخنوق`,
       action: "انسخه لمجموعة جديدة وحده ليأخذ فرصته (مع الحفاظ على تفاعلاته)، ثم أوقِف الأصل بعد استقرار النسخة",
+    };
+  }
+
+  // Spec 016 / FR-026 — exactly one counted result in target, below the
+  // floor: promising but unproven, so it waits for a second result.
+  if (!exposed && adCounted === 1 && cpaInTarget) {
+    return {
+      verdict: "too_early",
+      rule: "K5",
+      reason: "نتيجة واحدة لا تكفي للحكم — اتركه يجمع بيانات",
+      action: "راجعه بعد أن يحقق نتيجة ثانية",
     };
   }
 

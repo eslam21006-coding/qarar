@@ -174,8 +174,8 @@ results.
 
 **Independent Test**: The FR-027 pair (T042).
 
-- [ ] T042 [US5] In `server/engine.test.ts`, rewrite T037 (`:1805–1813`) deliberately — 300 impressions, 1 counted result, CPA ≤ target → `too_early` / K5 / reason "نتيجة واحدة لا تكفي للحكم — اتركه يجمع بيانات" / action "راجعه بعد أن يحقق نتيجة ثانية" — and add: same with 2 results → `rescue` / K5; 1 counted result with CPA **above** target → not the new branch (⏳ K5 "ميتا لا تعطيه فرصة ظهور كافية للحكم عليه", as today); CTR half at ≥ 500 impressions with 1 result still rescues; a sweep over demo × 4 archetypes asserting zero `rescue` rows reached via the cost path with < 2 counted results (SC-006). Note the change in the implementation report
-- [ ] T043 [US5] Change `starvedAdMatrix` (`server/engine.ts:757–868`) per [contracts/circuit-breaker-and-k5.md §B2](./contracts/circuit-breaker-and-k5.md): cost half requires `counted >= 2`; new ⏳ K5 branch placed before the existing `!exposed` branch, action "راجعه بعد أن يحقق نتيجة ثانية"; then `DATABASE_URL= pnpm test` green with no snapshot change
+- [X] T042 [US5] In `server/engine.test.ts`, rewrite T037 (`:1805–1813`) deliberately — 300 impressions, 1 counted result, CPA ≤ target → `too_early` / K5 / reason "نتيجة واحدة لا تكفي للحكم — اتركه يجمع بيانات" / action "راجعه بعد أن يحقق نتيجة ثانية" — and add: same with 2 results → `rescue` / K5; 1 counted result with CPA **above** target → not the new branch (⏳ K5 "ميتا لا تعطيه فرصة ظهور كافية للحكم عليه", as today); CTR half at ≥ 500 impressions with 1 result still rescues; a sweep over demo × 4 archetypes asserting zero `rescue` rows reached via the cost path with < 2 counted results (SC-006). Note the change in the implementation report
+- [X] T043 [US5] Change `starvedAdMatrix` (`server/engine.ts:757–868`) per [contracts/circuit-breaker-and-k5.md §B2](./contracts/circuit-breaker-and-k5.md): cost half requires `counted >= 2`; new ⏳ K5 branch placed before the existing `!exposed` branch, action "راجعه بعد أن يحقق نتيجة ثانية"; then `DATABASE_URL= pnpm test` green with no snapshot change
 
 **Checkpoint**: US5 complete.
 
