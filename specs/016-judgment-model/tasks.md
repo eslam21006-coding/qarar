@@ -197,13 +197,13 @@ results.
 
 ## Phase 9: Polish & Cross-Cutting Concerns
 
-- [ ] T047 Review every string in [contracts/copy.md §L3](./contracts/copy.md) as rendered in the app (simple MSA, agreement through `arabicCount`, LTR numerals, no rule code in primary copy — FR-030, FR-032); record the review in `specs/016-judgment-model/implementation-report.md`
-- [ ] T048 Verify FR-031/FR-032: the `Verdict` union in `shared/qarar.ts` (`:9`) and `RuleCode` are unchanged (`git diff main -- shared/qarar.ts` shows no edit to either)
-- [ ] T049 Verify FR-034: `git diff main --stat -- drizzle/` empty and no new Meta Graph call (`git diff main -- server/meta.ts` empty)
-- [ ] T050 Final gates: `pnpm run check` clean; `DATABASE_URL= pnpm test` green; snapshot diff limited to the four T021 rows; `git diff main --stat` shows no whole-file churn on the CRLF files
-- [ ] T051 Walk [quickstart.md](./quickstart.md) S-R1-1 … S-R6-1 on the demo account in the running app and record pass/fail per scenario in the implementation report
-- [ ] T052 Re-run `scripts/funnel-card-report.ts` after all stories, diff against `specs/016-judgment-model/funnel-card-main.json`, and bring the "Funnel card changes" table up to date — every difference justified, or stop and report (FR-021a part 2)
-- [ ] T053 Add the brief §4 live-account checklist (four items from quickstart "Live account") to the implementation report as "post-merge acceptance — owner", unticked
+- [X] T047 Review every string in [contracts/copy.md §L3](./contracts/copy.md) as rendered in the app (simple MSA, agreement through `arabicCount`, LTR numerals, no rule code in primary copy — FR-030, FR-032); record the review in `specs/016-judgment-model/implementation-report.md`
+- [X] T048 Verify FR-031/FR-032: the `Verdict` union in `shared/qarar.ts` (`:9`) and `RuleCode` are unchanged (`git diff main -- shared/qarar.ts` shows no edit to either)
+- [X] T049 Verify FR-034: `git diff main --stat -- drizzle/` empty and no new Meta Graph call (`git diff main -- server/meta.ts` empty)
+- [X] T050 Final gates: `pnpm run check` clean; `DATABASE_URL= pnpm test` green; snapshot diff limited to the four T021 rows; `git diff main --stat` shows no whole-file churn on the CRLF files
+- [ ] T051 Walk [quickstart.md](./quickstart.md) S-R1-1 … S-R6-1 on the demo account in the running app and record pass/fail per scenario in the implementation report — **DEFERRED TO OWNER (post-merge)**: the worktree has no database by design and the dashboard needs a signed-in, subscribed user; scenarios folded into the T053 checklist
+- [X] T052 Re-run `scripts/funnel-card-report.ts` after all stories, diff against `specs/016-judgment-model/funnel-card-main.json`, and bring the "Funnel card changes" table up to date — every difference justified, or stop and report (FR-021a part 2)
+- [X] T053 Add the brief §4 live-account checklist (four items from quickstart "Live account") to the implementation report as "post-merge acceptance — owner", unticked
 
 ---
 

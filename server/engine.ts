@@ -602,7 +602,7 @@ function circuitBreaker(
       verdict: "kill",
       rule: "CB2",
       reason: `اليوم: صرف ${money(o.today.spend)} (أكثر من ضعفين ونصف هدفك ${money(target)}) بدون أي نتيجة`,
-      action: "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى",
+      action: "أوقِفها الآن — وراجعها بنفسك قبل تشغيلها مرة أخرى",
     };
   }
   if (o.today.spend >= 1.5 * target) {
@@ -610,7 +610,7 @@ function circuitBreaker(
       verdict: "watch",
       rule: "CB1",
       reason: `اليوم: صرف ${money(o.today.spend)} (أكثر من هدفك بكثير) بدون أي نتيجة`,
-      action: "راجعه غدًا صباحًا قبل أن يصرف من جديد",
+      action: "راجعها غدًا صباحًا قبل أن تصرف من جديد",
     };
   }
   return null;
@@ -1250,7 +1250,7 @@ function continueRules(
           verdict: "continue",
           rule: "S3",
           reason: `في آخر 3 أيام: رابح بفارق كبير — تكلفة العميل ${money(cpa)} أقل بوضوح من هدفك (${money(target)}) وباستقرار`,
-          action: "انسخه لجمهور جديد مع الحفاظ على تفاعلاته — أفضل من رفع الميزانية كثيرًا",
+          action: "انسخها لجمهور جديد مع الحفاظ على تفاعلاتها — أفضل من رفع الميزانية كثيرًا",
         };
       }
       return {

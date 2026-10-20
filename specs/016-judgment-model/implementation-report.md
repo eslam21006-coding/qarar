@@ -165,6 +165,10 @@ text is filled when T021 confirms each row.
 | T008 snapshot · paid_lto `ad_cb` | continue / S2 / "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)" / action "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام" | watch / W1 / "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $43 — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ($129)" / action "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى $129 والتكلفة ما زالت فوق $65 فأوقِفه" | FR-036 / T041b — was 🟢 with cpa_3d $116 > target | ✅ updated |
 | T008 snapshot · free_lead `ad_cb` | continue / S2 / "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)" / action "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام" | watch / W1 / "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $39 — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ($117)" / action "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى $117 والتكلفة ما زالت فوق $59 فأوقِفه" | FR-036 / T041b — was 🟢 with cpa_3d $116 > target | ✅ updated |
 | Scenario 13 baseline · paid_lto `ad_cb` | continue / S2 / "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)" / action "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام" | watch / W1 / "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $43 — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ($129)" / action "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى $129 والتكلفة ما زالت فوق $65 فأوقِفه" | FR-036 / T041b — was 🟢 with cpa_3d $116 > target | ✅ updated |
+| T008 snapshot · paid_lto `as_cb` | kill / CB2 / (reason unchanged) / action "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى" | kill / CB2 / (reason unchanged) / action "أوقِفها الآن — وراجعها بنفسك قبل تشغيلها مرة أخرى" | T047 / FR-030 copy agreement (CB2 is ad-set-only → feminine); verdict and rule unchanged | ✅ updated |
+| T008 snapshot · free_lead `as_cb` | kill / CB2 / (reason unchanged) / action "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى" | kill / CB2 / (reason unchanged) / action "أوقِفها الآن — وراجعها بنفسك قبل تشغيلها مرة أخرى" | T047 / FR-030 copy agreement (CB2 is ad-set-only → feminine); verdict and rule unchanged | ✅ updated |
+| T008 snapshot · free_lead `cmp_test` | (T021 row above) action quoting "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى" | watch / W3 / (reason unchanged) / action "«Stage A — جمهور اهتمام: ريادة أعمال»: أوقِف هذه المجموعة · «Stage B — جمهور Lookalike 1%»: أوقِفها الآن — وراجعها بنفسك قبل تشغيلها مرة أخرى · «Stage A — بروود + Advantage»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا — فيها إعلان واحد يستحق الإنقاذ" | T047 / FR-030 copy agreement — the derived action quotes `as_cb`'s CB2 action; verdict, rule and reason unchanged | ✅ updated |
+| Scenario 13 baseline · paid_lto `as_cb` | kill / CB2 / action "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى" | kill / CB2 / action "أوقِفها الآن — وراجعها بنفسك قبل تشغيلها مرة أخرى" | T047 / FR-030 copy agreement; verdict and rule unchanged | ✅ updated |
 
 Campaign verdicts in the other fixtures (not snapshot-locked; checked by the report script):
 
@@ -1039,6 +1043,168 @@ Error: Database connection failed
       Tests  906 passed | 37 skipped (943)
    Start at  18:48:41
    Duration  14.63s (transform 8.85s, setup 107.11s, collect 58.18s, tests 21.32s, environment 25.85s, prepare 32.88s)
+
+ ELIFECYCLE  Test failed. See above for more details.
+```
+
+
+## Phase 9 — Polish
+
+### T047 — Copy review (FR-030, FR-032) ✅
+
+**Owner fix — CB1/CB2 are ad-set-only, so their actions use the feminine pronoun:**
+- CB2: "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى" → **"أوقِفها الآن — وراجعها بنفسك قبل
+  تشغيلها مرة أخرى"**.
+- CB1: "راجعه غدًا صباحًا قبل أن يصرف من جديد" → **"راجعها غدًا صباحًا قبل أن تصرف من جديد"**.
+
+**Other ad-set-only actions checked**: K1 / K2 / K6 ("أوقِف هذه المجموعة"), K7 ("أوقِفها …"), the
+learning-phase S2, and S3. One more needed the same fix:
+- **S3** (it fires only when `o.level === "adset"`): "انسخه لجمهور جديد مع الحفاظ على تفاعلاته —
+  أفضل من رفع الميزانية كثيرًا" → **"انسخها لجمهور جديد مع الحفاظ على تفاعلاتها — أفضل من رفع
+  الميزانية كثيرًا"**. No fixture row reaches S3, so no snapshot moves from it.
+
+**Snapshot and baseline effect** (rows in "Snapshot changes", justification "T047 / FR-030 copy
+agreement"; verdict, rule and reason untouched):
+- `action_ar` of `as_cb` in both exports;
+- free_lead `cmp_test`, whose derived action quotes `as_cb`'s action;
+- the Scenario 13 baseline row `as_cb`.
+
+Before `-u`, the diff showed exactly 3 `action_ar` changes and nothing else.
+
+**Review of every new 016 string** (copy.md L3, as rendered):
+- **Agreement**:
+  - counts go through `arabicCount` (ad sets, rescue-worthy ads);
+  - ad-set copy is feminine (FR-036 ad-set action, CB1/CB2, S3);
+  - ad copy is masculine (FR-036 ad action, K5 "نتيجة واحدة…" / "راجعه بعد…");
+  - "من إحدى مجموعاتها" is feminine for the campaign.
+- **Numerals**:
+  - money via `money()` (Western digits, e.g. "$129");
+  - the full-ROAS line wraps the number in `.num`;
+  - the 3d CPA header uses "3", and headers carry the `num` class;
+  - the banner uses "3".
+- **No rule code in primary copy**: codes appear only in the faded tooltip line.
+
+**Noted, not changed** (out of the owner's T047 scope): the shared W rules (W1 / W2 / W3 / W6),
+used for both ads and ad sets, keep their masculine pronouns ("راقبه يومين أو ثلاثة بدون أي
+تعديل"). A derived campaign's "otherwise" action quotes them for ad sets, e.g. demo `cmp_scale`.
+Fixing them needs level-aware copy, which is a follow-up.
+
+### T048 — Verdict set and rule codes (FR-031/FR-032) ✅
+
+`git diff main -- shared/qarar.ts` has no hunk in `Verdict` (`:9`) or `RuleCode` (`:24`). Its hunks
+are only the `EngineRow` / `TopAction` / `EngineResult` fields and the new helpers.
+
+### T049 — No Meta call, no migration (FR-034) ✅
+
+`git diff main --stat -- drizzle/ server/meta.ts` is empty. No changed file adds a Graph request.
+
+### T050 — Final gates ✅
+
+- `pnpm run check`: clean.
+- `pnpm test`: **906 passed**, 37 skipped; only `auth-flow.e2e.test.ts` fails, as expected (empty
+  `DATABASE_URL`).
+- **Snapshot scope vs main**: 8 of 36 rows differ, all allowed:
+  - T021: paid_lto/free_lead `cmp_test`, `cmp_scale`;
+  - T041b: paid_lto/free_lead `ad_cb`;
+  - T047: paid_lto/free_lead `as_cb`, action only.
+- **Scenario 13 baseline vs main**: `cmp_test`, `cmp_scale` (T021 / decision 3), `ad_cb`
+  (T041b), `as_cb` (T047, action only). Nothing else.
+- **No line-ending churn**: `git diff main --numstat` shows `server/engine.ts` +455/−185 of 3,010
+  lines, `server/engine.test.ts` +204/−42 of 2,334, `shared/qarar.ts` +97/−1 of 1,156, and
+  `DecisionTable.tsx` +105/−51 of 1,552. All are partial, with no whole-file rewrite.
+
+### T051 — Demo walkthrough in the running app — ⏸ DEFERRED TO OWNER (post-merge)
+
+The worktree has no database on purpose (`.env` has no `DATABASE_URL`, per the owner's rule), and
+the dashboard route is an `activeProcedure` (a signed-in user with an active subscription), so the
+app cannot be driven here. Its scenarios are folded into the T053 checklist. Their logic is covered
+by tests: T009/T010 (S-R1-*), T023–T027 (S-R2-*), T037 (S-R3-*), T040/T041a (S-R4-*), T042
+(S-R5-*), T044 (S-R6-*).
+
+### T052 — Final funnel-card change log ✅
+
+`scripts/funnel-card-report.ts` vs `funnel-card-main.json`: **0 differences on all 12 fixtures**.
+"Funnel card changes" stays at "no change". Final campaign verdicts:
+- demo `cmp_test`: CB2 (paid_lto, appointment, webinar) / W3 (free_lead);
+- `cmp_scale`: W1;
+- split-family `cmp_test`: W1;
+- every hto-on fixture: W5.
+
+### T053 — Post-merge acceptance — owner
+
+Live account (brief §4), unticked:
+
+- [ ] No campaign shows 🔴 while it contains a 🟢 ad set; ES-WW / MO-CBO actions name ad sets, not
+  "أوقف الحملة".
+- [ ] Switch the table 3d → 7d → 30d: never results > 0 with an empty cost; 3d numbers equal the
+  verdict's numbers.
+- [ ] Column headers are Arabic; the banner says "بدون اليوم".
+- [ ] No 🛟 on an ad with a single sale.
+
+Folded in from T051 (demo account, in the running app):
+
+- [ ] S-R1-1 paid_lto `cmp_test`: 🟡, action "أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B
+  — جمهور Lookalike 1%» وأبقِ «Stage A — بروود + Advantage» — فيها إعلان واحد يستحق الإنقاذ".
+- [ ] S-R1-2 / 2a: the rule chip on `cmp_test` reads "من مجموعة Stage B — جمهور Lookalike 1%: خطر
+  اليوم — أوقِفه فورًا"; `cmp_scale` is 🟡 W1.
+- [ ] S-R1-2b: a derived 🔴 campaign in today's decisions shows "من مجموعة …" in its badge and its
+  "قاعدة: …" line.
+- [ ] S-R1-2c: the history dialog of a campaign now 🟡 CB2 shows "من إحدى مجموعاتها: …" only on
+  that entry.
+- [ ] S-R1-5: ABO `cmp_test` shows no campaign ±20%, and its ad sets do; CBO `cmp_scale` shows
+  disabled ±20% with "زد الميزانية فقط عندما تكون كل المجموعات بالداخل ناجحة", and its ad sets
+  show none.
+- [ ] Campaign rows show "العائد الكلي للفانل: {x}x" with its tooltip.
+- [ ] S-R2-1/2/4: a ⏳ row with results shows its cost uncolored; an unknown count shows `؟` with
+  "لم يصل عدد النتائج من ميتا"; the footer ROAS with an unknown value shows `—` with its tooltip.
+- [ ] S-R6-1: Arabic headers, with the abbreviation on hover; switching to 7d shows the banner
+  "الحكم محسوب دائمًا على آخر 3 أيام كاملة (بدون اليوم)، ولا يتأثر بالفترة المختارة."
+- [ ] `ad_cb` (demo) is 🟡 W1, "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $43 — …".
+
+---
+
+## Run 3 summary
+
+- **Done**: T023–T050, T041a–T041c, T052, T053 (checklist written; ticking it is the owner's).
+- **Deferred**: T051, to the owner post-merge (no database in the worktree by design).
+- **Commits (local, not pushed)**:
+  - `593abb4` US2–US4 (T023–T041c);
+  - `a7e0c39` US5;
+  - `03353e8` US6;
+  - the Polish commit after this entry.
+- **Constitution v1.1.2 Principle I**: ad and ad-set order is unchanged. The R3 guard is a
+  post-check after `diagnose()`. The FR-036 guard sits after every K and W rule and before S1–S4.
+  Campaigns run gates 1–4 → W5 → derivation.
+
+Raw `pnpm run check`:
+
+```text
+> qarar@1.0.0 check D:\Qarar worktrees\Qarar-016-judgment-model
+> tsc --noEmit
+
+```
+
+Raw `pnpm test` (closing block):
+
+```text
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+Error: Database connection failed
+ ❯ server/auth-flow.e2e.test.ts:22:13
+     20|     db = await getDb();
+     21|     if (!db) {
+     22|       throw new Error("Database connection failed");
+       |             ^
+     23|     }
+     24|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 60 passed | 2 skipped (63)
+      Tests  906 passed | 37 skipped (943)
+   Start at  18:50:58
+   Duration  15.04s (transform 9.29s, setup 107.13s, collect 58.36s, tests 21.49s, environment 27.39s, prepare 33.86s)
 
  ELIFECYCLE  Test failed. See above for more details.
 ```

@@ -185,7 +185,7 @@ exports[`T008 — runEngine verdict/rule/reason/action regression lock > free_le
       "verdict": "watch",
     },
     {
-      "action_ar": "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى",
+      "action_ar": "أوقِفها الآن — وراجعها بنفسك قبل تشغيلها مرة أخرى",
       "id": "as_cb",
       "level": "adset",
       "reason_ar": "اليوم: صرف $110 (أكثر من ضعفين ونصف هدفك $39) بدون أي نتيجة",
@@ -217,7 +217,7 @@ exports[`T008 — runEngine verdict/rule/reason/action regression lock > free_le
       "verdict": "watch",
     },
     {
-      "action_ar": "«Stage A — جمهور اهتمام: ريادة أعمال»: أوقِف هذه المجموعة · «Stage B — جمهور Lookalike 1%»: أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى · «Stage A — بروود + Advantage»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا — فيها إعلان واحد يستحق الإنقاذ",
+      "action_ar": "«Stage A — جمهور اهتمام: ريادة أعمال»: أوقِف هذه المجموعة · «Stage B — جمهور Lookalike 1%»: أوقِفها الآن — وراجعها بنفسك قبل تشغيلها مرة أخرى · «Stage A — بروود + Advantage»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا — فيها إعلان واحد يستحق الإنقاذ",
       "id": "cmp_test",
       "level": "campaign",
       "reason_ar": "مجموعات هذه الحملة — خاسرة: مجموعتان · تحت المراقبة: مجموعة واحدة · لم يُحكم عليها بعد: مجموعة واحدة",
@@ -337,7 +337,7 @@ exports[`T008 — runEngine verdict/rule/reason/action regression lock > paid_lt
       "verdict": "continue",
     },
     {
-      "action_ar": "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى",
+      "action_ar": "أوقِفها الآن — وراجعها بنفسك قبل تشغيلها مرة أخرى",
       "id": "as_cb",
       "level": "adset",
       "reason_ar": "اليوم: صرف $110 (أكثر من ضعفين ونصف هدفك $43) بدون أي نتيجة",
