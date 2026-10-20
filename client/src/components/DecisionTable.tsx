@@ -30,7 +30,7 @@ import { Input } from "@/components/ui/input";
 import { VerdictBadge } from "@/components/Verdict";
 import { VerdictHistoryDialog } from "@/components/VerdictHistoryDialog";
 import { cpaColorClass, ctrColorClass, money, num, pct } from "@/lib/format";
-import { cpaCell } from "@/lib/cellFormat";
+import { cpaCell, budgetControlView } from "@/lib/cellFormat";
 import { applyFilters, FILTER_FIELDS, type FilterAgg, type FilterField, type FilterJoin, type FilterOp, type FilterRule } from "@/lib/filters";
 import { aggregateTotals } from "@/lib/aggregate";
 import { presetRangeBounds } from "@/lib/dateWindow";
@@ -1274,7 +1274,11 @@ export function DecisionTable({
                       </td>
                     ))}
                     <td className="px-2 py-2.5 text-center">
-                      <VerdictBadge verdict={r.verdict} rule={r.rule} />
+                      <VerdictBadge
+                        verdict={r.verdict}
+                        rule={r.rule}
+                        fromAdsetName={r.derived_from_adset?.name}
+                      />
                       {/* Spec 015 / FR-008 — names the real gated state.
                           Display-only beside the ⏳ verdict, never a verdict. */}
                       {r.statusBadge && (
@@ -1290,6 +1294,15 @@ export function DecisionTable({
                       </p>
                       {r.promotion_note && (
                         <p className="mt-0.5 text-[11px] text-v-continue">{r.promotion_note}</p>
+                      )}
+                      {/* Spec 016 / FR-006 — campaign full-funnel return: display data only. */}
+                      {r.level === "campaign" && r.full_roas_3d != null && (
+                        <p
+                          className="mt-0.5 text-[11px] text-muted-foreground"
+                          title="قيمة المشتري الكاملة ÷ تكلفة النتيجة — معلومة فقط ولا تغيّر الحكم"
+                        >
+                          العائد الكلي للفانل: <span className="num">{r.full_roas_3d.toFixed(2)}x</span>
+                        </p>
                       )}
                     </td>
                     <td className="px-2 py-2.5 text-center">
@@ -1310,13 +1323,14 @@ export function DecisionTable({
                           {paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
                           {paused ? "تشغيل" : "إيقاف"}
                         </Button>
-                        {r.daily_budget !== null && (
-                          <div className="flex w-full gap-1">
+                        {budgetControlView(r).show && (
+                          <div className="flex w-full gap-1" title={budgetControlView(r).title}>
                             <Button
                               variant="outline"
                               size="sm"
                               className="h-6 flex-1 px-1 text-[10px] font-bold text-primary"
                               title="زيادة 20%"
+                              disabled={budgetControlView(r).disabled}
                               onClick={e => {
                                 e.stopPropagation();
                                 setBudgetRow({ row: r, direction: 1 });
@@ -1329,6 +1343,7 @@ export function DecisionTable({
                               size="sm"
                               className="h-6 flex-1 px-1 text-[10px] font-bold text-amber-700"
                               title="خفض 20%"
+                              disabled={budgetControlView(r).disabled}
                               onClick={e => {
                                 e.stopPropagation();
                                 setBudgetRow({ row: r, direction: -1 });

@@ -148,6 +148,12 @@ describe("runEngine — demo snapshot verdicts (hand-computed)", () => {
 
   it("kill/watch rows always carry at least one finding with a primary; continue rows don't need one", () => {
     for (const r of result.rows) {
+      // Spec 016 / FR-020a — a campaign whose verdict is derived from its
+      // ad sets displays no findings of its own (owner-approved exception).
+      if (r.level === "campaign" && r.derived_from_adset) {
+        expect(r.findings, `derived campaign ${r.id}`).toEqual([]);
+        continue;
+      }
       if (r.verdict === "kill" || r.verdict === "watch") {
         expect(r.findings.length, `findings missing for ${r.id}`).toBeGreaterThanOrEqual(1);
         expect(r.findings.some(f => f.primary), `no primary finding for ${r.id}`).toBe(true);
@@ -215,10 +221,13 @@ describe("W5 — funnel-level HTO signal", () => {
     expect(r.rule).toBe("W5");
   });
 
-  it("without the flag the same campaign is judged by full-funnel ROAS", () => {
+  it("without the flag the same campaign is derived from its ad sets (spec 016 / FR-003, FR-007)", () => {
+    // Spec 016 / FR-007 — campaign full-funnel ROAS no longer judges a
+    // campaign; without W5 its verdict is derived from its ad sets.
     const result = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs);
     const r = result.rows.find(x => x.id === "cmp_scale")!;
     expect(r.rule).not.toBe("W5");
+    expect(r.derived_from_adset?.id).toBe("as_w1");
   });
 });
 
@@ -1912,9 +1921,10 @@ describe("T060-T064 — unknown is not zero (spec 015 / US6)", () => {
     for (const r of result.rows) {
       expect(r.roas_3d, r.id).toBeNull();
       expect(`${r.reason_ar} ${r.action_ar}`, r.id).not.toMatch(/0\.0x/);
-      // No rule reads Meta's sales value: the campaign "return" (S2/W6) is
-      // counts × the funnel's configured buyer value. So an unknown value
-      // changes no verdict, which proves no return rule fires on it.
+      // No rule reads Meta's sales value (spec 016 / FR-007: campaign
+      // verdicts are derived from ad sets; the full-funnel return is
+      // display data, counts × the funnel's configured buyer value). So an
+      // unknown value changes no verdict.
       const b = base.rows.find(x => x.id === r.id)!;
       expect([r.verdict, r.rule, r.reason_ar], r.id).toEqual([b.verdict, b.rule, b.reason_ar]);
     }
@@ -1962,11 +1972,19 @@ describe("T060-T064 — unknown is not zero (spec 015 / US6)", () => {
     expect(row.reason_ar).toContain(UNKNOWN_REASON);
   });
 
-  it("T062 — campaign level: unknown counts ⇒ ⏳, no K1 and no W6 '0.0x'", () => {
+  it("T062 — campaign level: own count unknown, ad sets known ⇒ derived from the ad sets, no K1 and no '0.0x'", () => {
+    // Spec 016 / FR-001 (owner decision 2026-10-20) — the campaign-level
+    // results-unknown exit is gone. Only cmp_scale's own 3-day count is
+    // unknown here; its ad sets' counts are known, so the campaign (a
+    // summary of its ad sets) derives from them: 🟡 W1 from as_w1. Before
+    // 016 this asserted ⏳ with the unknown-count reason.
     const { snap } = withParsed("cmp_scale", { linkClicks: 800 });
     const row = rowOf(snap, "cmp_scale");
-    expect(row.verdict).toBe("too_early");
-    expect(row.reason_ar).toContain(UNKNOWN_REASON);
+    expect(row.verdict).toBe("watch");
+    expect(row.rule).toBe("W1");
+    expect(row.derived_from_adset?.id).toBe("as_w1");
+    expect(row.rule).not.toBe("K1");
+    expect(row.reason_ar).not.toContain(UNKNOWN_REASON);
     expect(row.reason_ar).not.toMatch(/0\.0x/);
   });
 
@@ -2028,37 +2046,30 @@ describe("T068-T069 — scale guard (spec 015 / US7)", () => {
     return result.rows.find(r => r.id === "cmp_scale")!;
   }
 
-  it("T068 — full return 3.2 with cost at 1.38× target ⇒ no +20%, 'واصل بدون زيادة الميزانية', watch (W1 band)", () => {
-    // $712 / 12 = $59.33 = 1.38 × $43; 12 × $190 / $712 = 3.20x
-    const row = campaign(712, 12);
-    expect(row.action_ar).toBe("واصل بدون زيادة الميزانية");
-    expect(row.action_ar).not.toMatch(/20%/);
-    expect(row.verdict).toBe("watch");
-    expect(row.rule).toBe("W1");
-    expect(row.reason_ar).toContain("3.2x");
+  // Spec 016 / FR-007 — the campaign W1/W6/S2 scale guard is removed. The
+  // campaign's own cost and return no longer decide anything: its verdict
+  // is derived from its ad sets, and "+20%" lives in the budget buttons,
+  // enabled on a CBO campaign only when every active ad set is 🟢
+  // (FR-009). Before 016 these asserted the campaign-level W1 / W6 / S2.
+  it("T068 — campaign cost 1.38× or 1.63× target no longer decides: derived 🟡 W1, no +20%, buttons disabled", () => {
+    // $712 / 12 = $59.33 = 1.38 × $43; $700 / 10 = $70 = 1.63 × $43
+    for (const row of [campaign(712, 12), campaign(700, 10)]) {
+      expect(row.verdict).toBe("watch");
+      expect(row.rule).toBe("W1");
+      expect(row.derived_from_adset?.id).toBe("as_w1");
+      expect(row.action_ar).not.toMatch(/20%/);
+      expect(row.budget_control).toBe("disabled");
+    }
   });
 
-  it("T068 — cost above 1.5× target with a return still ≥ 2 ⇒ W6 'كمّل بحذر', no +20%", () => {
-    // $700 / 10 = $70 = 1.63 × $43; 10 × $190 / $700 = 2.71x
-    const row = campaign(700, 10);
-    expect(row.action_ar).toBe("واصل بدون زيادة الميزانية");
-    expect(row.verdict).toBe("watch");
-    expect(row.rule).toBe("W6");
-    expect(row.reason_ar).toContain("كمّل بحذر — الحكم النهائي للفانل");
-  });
-
-  it("T069 — at or below target with a healthy return ⇒ the S2 +20% action is unchanged", () => {
-    const S2_ACTION = "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة";
-    // below target: $516 / 12 = $43.00 exactly at target
+  it("T069 — at target with a healthy return: still derived, no campaign action carries +20%", () => {
     const at = campaign(516, 12);
-    expect([at.verdict, at.rule]).toEqual(["continue", "S2"]);
-    // demo cmp_scale with the demo funnel: CPA ≈ $37 < $43
-    const demo = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs).rows.find(
-      r => r.id === "cmp_scale"
-    )!;
-    expect(demo.rule).toBe("S2");
-    expect(demo.action_ar).toBe(S2_ACTION);
-    // and no campaign anywhere in the demo gets +20% above its target
+    expect([at.verdict, at.rule]).toEqual(["watch", "W1"]);
+    const demo = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs);
+    for (const c of demo.rows.filter(r => r.level === "campaign")) {
+      expect(c.action_ar, c.id).not.toMatch(/20%/);
+    }
+    expect(demo.rows.find(r => r.id === "cmp_scale")!.budget_control).toBe("disabled");
   });
 });
 

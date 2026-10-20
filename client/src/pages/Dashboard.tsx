@@ -5,9 +5,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { VerdictBadge } from "@/components/Verdict";
-import { RULES, targetSourceLabel } from "@shared/qarar";
+import { targetSourceLabel } from "@shared/qarar";
 import { money, pct, timeAgoAr } from "@/lib/format";
 import { killCountPart, type KillCountPart } from "@/lib/killCountLabel";
+import { ruleTitleText } from "@/lib/cellFormat";
 import { trpc } from "@/lib/trpc";
 import type { EngineRow, Finding, TopAction } from "@shared/qarar";
 import {
@@ -618,7 +619,11 @@ function TodayActions({
                         <span className="num rounded bg-white/10 px-1.5 text-[10px] font-bold">
                           #{a.rank}
                         </span>
-                        <VerdictBadge verdict={a.verdict} rule={a.rule} />
+                        <VerdictBadge
+                          verdict={a.verdict}
+                          rule={a.rule}
+                          fromAdsetName={a.derived_from_adset?.name}
+                        />
                         <span className={`truncate text-sm font-bold ${done ? "line-through" : ""}`}>
                           {a.objectName}
                         </span>
@@ -633,7 +638,7 @@ function TodayActions({
                   <div className="space-y-1 text-start">
                     <div className="num text-xs font-semibold">{a.impact_ar}</div>
                     <div className="text-[10px] text-muted-foreground">
-                      قاعدة: {RULES[a.rule]?.titleAr ?? a.rule}
+                      قاعدة: {ruleTitleText(a.rule, a.derived_from_adset?.name)}
                     </div>
                   </div>
                 </TooltipContent>

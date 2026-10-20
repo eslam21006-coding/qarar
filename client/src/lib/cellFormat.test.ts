@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cpaCell } from "./cellFormat";
+import { budgetControlView, cpaCell, historyRuleTitle, ruleTitleText } from "./cellFormat";
 
 describe("T058: cpaCell formatter — too_early vs kill+zero-results", () => {
   it("too_early row renders a neutral dash (no color)", () => {
@@ -155,5 +155,52 @@ describe("cpaCell — null target handling (spec 012 / SC-022)", () => {
     });
     expect(out.value).toBe("—");
     expect(out.className).toMatch(/text-v-kill/);
+  });
+});
+
+// Spec 016 / T019 — budget-button placement (FR-008, FR-009), the derived
+// rule title (FR-004, C2a) and the history prefix (FR-004a, C2b).
+describe("budgetControlView — spec 016 C6", () => {
+  it("null → no buttons", () => {
+    expect(budgetControlView({ budget_control: null })).toEqual({ show: false, disabled: false });
+  });
+  it("enabled → buttons, active", () => {
+    expect(budgetControlView({ budget_control: "enabled" })).toEqual({ show: true, disabled: false });
+  });
+  it("disabled → buttons, disabled, with the tooltip", () => {
+    expect(budgetControlView({ budget_control: "disabled" })).toEqual({
+      show: true,
+      disabled: true,
+      title: "زد الميزانية فقط عندما تكون كل المجموعات بالداخل ناجحة",
+    });
+  });
+});
+
+describe("ruleTitleText — spec 016 C2a", () => {
+  it("no ad-set name → the bare rule title", () => {
+    expect(ruleTitleText("CB2")).toBe("خطر اليوم — أوقِفه فورًا");
+  });
+  it("with the source ad set → prefixed", () => {
+    expect(ruleTitleText("CB2", "Stage B — جمهور Lookalike 1%")).toBe(
+      "من مجموعة Stage B — جمهور Lookalike 1%: خطر اليوم — أوقِفه فورًا"
+    );
+  });
+});
+
+describe("historyRuleTitle — spec 016 C2b (FR-004a)", () => {
+  it("old-style entry (campaign, kill, K1) → no prefix", () => {
+    expect(historyRuleTitle({ level: "campaign", verdict: "kill", rule: "K1" })).toBe("أوقِفه — لا يوجد أي نتائج");
+  });
+  it("derived entry (campaign, watch, CB2) → prefixed", () => {
+    expect(historyRuleTitle({ level: "campaign", verdict: "watch", rule: "CB2" })).toBe(
+      "من إحدى مجموعاتها: خطر اليوم — أوقِفه فورًا"
+    );
+  });
+  it("ad set / watch / K1 → no prefix", () => {
+    expect(historyRuleTitle({ level: "adset", verdict: "watch", rule: "K1" })).toBe("أوقِفه — لا يوجد أي نتائج");
+  });
+  it("campaign / watch / W1 → no prefix", () => {
+    const t = historyRuleTitle({ level: "campaign", verdict: "watch", rule: "W1" });
+    expect(t.startsWith("من إحدى")).toBe(false);
   });
 });

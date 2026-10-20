@@ -67,10 +67,17 @@ describe("deriveCampaignVerdict — C2 order (FR-003)", () => {
     const d = deriveCampaignVerdict([adset("a", "continue", "S1"), adset("b", "watch", "W1")], [], allActive);
     expect(d.verdict).toBe("watch");
   });
-  it("every judged child 🔴 (⏳ children are not judged) → 🔴", () => {
-    const d = deriveCampaignVerdict([adset("a", "kill", "K1"), adset("b", "too_early", "GATE")], [], allActive);
+  it("every active child 🔴 → 🔴", () => {
+    const d = deriveCampaignVerdict([adset("a", "kill", "K1"), adset("b", "kill", "CB2")], [], allActive);
     expect(d.verdict).toBe("kill");
     expect(d.action).toBe("أوقِف الحملة — كل مجموعاتها تخسر");
+  });
+  it("🔴 + ⏳ → 🟡 naming only the red set, never 'أوقِف الحملة' (owner decision 2026-10-20)", () => {
+    const d = deriveCampaignVerdict([adset("a", "kill", "K1"), adset("b", "too_early", "GATE")], [], allActive);
+    expect(d.verdict).toBe("watch");
+    expect(d.rule).toBe("K1");
+    expect(d.derivedFrom?.id).toBe("a");
+    expect(d.action).toBe("أوقِف «مجموعة a»");
   });
   it("every child ⏳ → ⏳ with the wait action", () => {
     const d = deriveCampaignVerdict([adset("a", "too_early", "GATE")], [], allActive);
@@ -258,9 +265,19 @@ describe("runEngine — demo campaigns are derived (FR-001–FR-007)", () => {
     for (const id of ["as_w1", "as_w3"]) expect(get(paid, id).budget_control).toBeNull();
     for (const x of paid.rows.filter(x => x.level === "ad")) expect(x.budget_control).toBeNull();
   });
-  it("(Q2) a derived 🔴 campaign's top action names its source ad set", () => {
+  it("split-family cmp_test (🔴 + ⏳ ad sets) → 🟡 CB2 from as_cb, stopping only the red ones", () => {
     const fx = FIXTURES016.find(f => f.name === "split-family/paid_lto/hto-off")!;
-    const r = runEngine(fx.build(), fx.funnel);
+    const c = get(runEngine(fx.build(), fx.funnel), "cmp_test");
+    expect(c.verdict).toBe("watch");
+    expect(c.rule).toBe("CB2");
+    expect(c.derived_from_adset?.id).toBe("as_cb");
+    expect(c.action_ar).toBe("أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B — جمهور Lookalike 1%»");
+  });
+  it("(Q2) a derived 🔴 campaign's top action names its source ad set", () => {
+    // Pause the 🟢 and ⏳ ad sets so every active ad set of cmp_test is 🔴.
+    const snap = buildDemoSnapshot();
+    for (const o of snap.objects) if (o.id === "as_good" || o.id === "as_gate") o.effectiveStatus = "PAUSED";
+    const r = runEngine(snap, DEMO_FUNNEL as FunnelInputs);
     const c = get(r, "cmp_test");
     expect(c.verdict).toBe("kill");
     expect(c.derived_from_adset?.id).toBe("as_cb");
@@ -314,11 +331,22 @@ describe("funnel card — coverage (FR-021a part 1, C7a)", () => {
   it("a derived campaign whose derived rule is K1 does not raise it (ad-fault)", () => {
     expect(accountFunnelCta([], [{ rule: "K1", findings: [conv] }])).toBeNull();
   });
-  it("derived 🟢 and ⏳ campaigns are not diagnosed", () => {
+  it("derived 🟢 and ⏳ campaigns, and exempt ones, are not diagnosed", () => {
     const run = () => [conv];
-    expect(campaignCardEntry({ verdict: "continue", rule: "S1" }, false, run)).toBeNull();
-    expect(campaignCardEntry({ verdict: "too_early", rule: "GATE" }, false, run)).toBeNull();
-    expect(campaignCardEntry({ verdict: "watch", rule: "W1" }, true, run)).toBeNull();
-    expect(campaignCardEntry({ verdict: "watch", rule: "W1" }, false, run)).toEqual({ rule: "W1", findings: [conv] });
+    expect(campaignCardEntry({ verdict: "continue", rule: "S1" }, false, 5, run)).toBeNull();
+    expect(campaignCardEntry({ verdict: "too_early", rule: "GATE" }, false, 5, run)).toBeNull();
+    expect(campaignCardEntry({ verdict: "watch", rule: "W1" }, true, 5, run)).toBeNull();
+    expect(campaignCardEntry({ verdict: "watch", rule: "W1" }, false, 5, run)).toEqual({ rule: "W1", findings: [conv] });
+  });
+  it("exclusion (a): a derived CB1/CB2 campaign does not feed the card (today-only codes)", () => {
+    const run = () => [conv];
+    expect(campaignCardEntry({ verdict: "watch", rule: "CB2" }, false, 5, run)).toBeNull();
+    expect(campaignCardEntry({ verdict: "kill", rule: "CB2" }, false, 5, run)).toBeNull();
+    expect(campaignCardEntry({ verdict: "watch", rule: "CB1" }, false, 5, run)).toBeNull();
+  });
+  it("exclusion (b): combined 3-day counted results of 0 or unknown do not feed the card", () => {
+    const run = () => [conv];
+    expect(campaignCardEntry({ verdict: "watch", rule: "W1" }, false, 0, run)).toBeNull();
+    expect(campaignCardEntry({ verdict: "watch", rule: "W1" }, false, null, run)).toBeNull();
   });
 });

@@ -16,7 +16,7 @@
  * always renders an em dash, never "∞" and never "0".
  */
 import { cpaColorClass, money } from "./format";
-import type { Verdict } from "@shared/qarar";
+import { RULES, type EngineRow, type RuleCode, type Verdict } from "@shared/qarar";
 
 export interface CpaCellInput {
   verdict: Verdict;
@@ -58,4 +58,52 @@ export function cpaCell(input: CpaCellInput): CpaCellOutput {
     value: money(cpa, currency),
     className: `font-bold ${cpaColorClass(cpa, target)}`,
   };
+}
+
+/**
+ * Spec 016 / FR-008, FR-009 (contracts/campaign-derivation.md C6) — how the
+ * ±20% budget buttons render for a row, from the engine's `budget_control`.
+ */
+export function budgetControlView(
+  row: Pick<EngineRow, "budget_control">
+): { show: boolean; disabled: boolean; title?: string } {
+  const bc = row.budget_control ?? null;
+  if (bc === null) return { show: false, disabled: false };
+  if (bc === "disabled") {
+    return {
+      show: true,
+      disabled: true,
+      title: "زد الميزانية فقط عندما تكون كل المجموعات بالداخل ناجحة",
+    };
+  }
+  return { show: true, disabled: false };
+}
+
+/**
+ * Spec 016 / FR-004 (C2a) — a rule's title. On a campaign derived from its
+ * ad sets it names the ad set the code came from.
+ */
+export function ruleTitleText(rule: RuleCode, fromAdsetName?: string | null): string {
+  const title = RULES[rule]?.titleAr ?? rule;
+  return fromAdsetName ? `من مجموعة ${fromAdsetName}: ${title}` : title;
+}
+
+/** Kill-family codes — a 🟡 campaign entry with one of these is 016-derived. */
+const KILL_FAMILY: ReadonlySet<RuleCode> = new Set<RuleCode>(["K1", "K2", "K3", "K4", "K6", "K7", "CB2"]);
+
+/**
+ * Spec 016 / FR-004a (C2b) — a verdict-history entry's rule title. Only a
+ * 016-derived 🟡 campaign can be logged as watch with a kill-family code,
+ * so only that entry gets the prefix; history stores no ad-set name.
+ */
+export function historyRuleTitle(entry: {
+  level: "campaign" | "adset" | "ad";
+  verdict: Verdict;
+  rule: RuleCode;
+}): string {
+  const title = RULES[entry.rule]?.titleAr ?? entry.rule;
+  if (entry.level === "campaign" && entry.verdict === "watch" && KILL_FAMILY.has(entry.rule)) {
+    return `من إحدى مجموعاتها: ${title}`;
+  }
+  return title;
 }

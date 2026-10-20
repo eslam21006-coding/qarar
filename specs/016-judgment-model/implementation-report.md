@@ -156,10 +156,12 @@ text is filled when T021 confirms each row.
 
 | Object id | Old verdict / rule / reason | New verdict / rule / reason | Justifying FR / task | Status |
 |---|---|---|---|---|
-| paid_lto `cmp_test` | continue / S2 / "…يرجع 2.6x…" | watch / CB2 (from `as_cb`, D-R1 fallback: 🟢 + 🔴, no 🟡) | FR-003, FR-004, FR-007 / T013 | expected |
-| paid_lto `cmp_scale` | continue / S2 / "…4.0x…" | watch / W1 (from `as_w1`) | FR-003, FR-004, FR-007 / T013 | expected |
-| free_lead `cmp_test` | continue / S2 / "…يرجع 2.6x…" | watch / W3 (from `as_good`, the matching 🟡 child) | FR-003, FR-004, FR-007 / T013 | expected |
-| free_lead `cmp_scale` | continue / S2 / "…4.0x…" | watch / W1 (from `as_w1`) | FR-003, FR-004, FR-007 / T013 | expected |
+| T008 snapshot · paid_lto `cmp_test` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 2.6x عند حساب قيمة العميل الكاملة ($148) — مع 2 إعلان/مجموعة تحتاج إيقافًا بالداخل" / action "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك" | watch / CB2 (from as_cb) / "مجموعات هذه الحملة — ناجحة: مجموعة واحدة · خاسرة: مجموعتان · لم يُحكم عليها بعد: مجموعة واحدة" / action "أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B — جمهور Lookalike 1%» وأبقِ «Stage A — بروود + Advantage» — فيها إعلان واحد يستحق الإنقاذ" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 | ✅ confirmed (matches expected) |
+| T008 snapshot · paid_lto `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبه يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 | ✅ confirmed (matches expected) |
+| T008 snapshot · free_lead `cmp_test` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 2.6x عند حساب قيمة العميل الكاملة ($148) — مع 2 إعلان/مجموعة تحتاج إيقافًا بالداخل" / action "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك" | watch / W3 (from as_good) / "مجموعات هذه الحملة — خاسرة: مجموعتان · تحت المراقبة: مجموعة واحدة · لم يُحكم عليها بعد: مجموعة واحدة" / action "«Stage A — جمهور اهتمام: ريادة أعمال»: أوقِف هذه المجموعة · «Stage B — جمهور Lookalike 1%»: أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى · «Stage A — بروود + Advantage»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا — فيها إعلان واحد يستحق الإنقاذ" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 | ✅ confirmed (matches expected) |
+| T008 snapshot · free_lead `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبه يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 | ✅ confirmed (matches expected) |
+| Scenario 13 baseline (`specs/014-diagnosis-evidence-fallbacks/verdict-baseline.json`) · paid_lto `cmp_test` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 2.6x عند حساب قيمة العميل الكاملة ($148) — مع 2 إعلان/مجموعة تحتاج إيقافًا بالداخل" / action "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك" | watch / CB2 (from as_cb) / "مجموعات هذه الحملة — ناجحة: مجموعة واحدة · خاسرة: مجموعتان · لم يُحكم عليها بعد: مجموعة واحدة" / action "أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B — جمهور Lookalike 1%» وأبقِ «Stage A — بروود + Advantage» — فيها إعلان واحد يستحق الإنقاذ" | FR-003, FR-004, FR-007 / T016 — owner-approved (decision 3) | ✅ updated, same values as the snapshot |
+| Scenario 13 baseline (`specs/014-diagnosis-evidence-fallbacks/verdict-baseline.json`) · paid_lto `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبه يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004, FR-007 / T016 — owner-approved (decision 3) | ✅ updated, same values as the snapshot |
 
 Campaign verdicts in the other fixtures (not snapshot-locked; checked by the report script):
 
@@ -168,7 +170,7 @@ Campaign verdicts in the other fixtures (not snapshot-locked; checked by the rep
 | demo appointment / webinar, hto off | `cmp_test` | continue / S2 | watch / CB2 (from `as_cb`, fallback) |
 | demo appointment / webinar, hto off | `cmp_scale` | continue / S2 | watch / W1 (from `as_w1`) |
 | unknown-count, hto off | `cmp_test` / `cmp_scale` | continue / S2 | watch / CB2 (`as_cb`, fallback) / watch / W1 (`as_w1`) |
-| split-family, hto off | `cmp_test` | continue / S2 | **kill / CB2** (from `as_cb`: as_good is ⏳ by the event-match gate, so every judged ad set is 🔴) |
+| split-family, hto off | `cmp_test` | continue / S2 | watch / CB2 (from `as_cb`, fallback). Updated after the owner's derivation refinement: as_good and as_gate are ⏳, so 🔴 + ⏳ → 🟡 "أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B — جمهور Lookalike 1%»" (was predicted 🔴 under the earlier rule) |
 | split-family, hto off | `cmp_scale` | continue / S2 | watch / W1 (from `as_w1`) |
 | every fixture, hto on | both | watch / W5 | watch / W5 (own step, kept) |
 
@@ -176,7 +178,8 @@ Campaign verdicts in the other fixtures (not snapshot-locked; checked by the rep
 
 | Fixture | main output | new output | Justification | Status |
 |---|---|---|---|---|
-| all 12 fixtures | card on | card on (predicted) | No difference expected. Ad and ad-set rows already raise the card on every fixture; derived campaigns add a qualifying entry only in demo free_lead hto off (`cmp_scale`, W1, RUNG_CONVERSION), which was already on | expected: no change |
+| all 12 fixtures | card on | card on | No difference. Ad and ad-set rows already raise the card on every fixture. After T022 the report script shows `account_funnel_cta` identical to main on all 12, and every campaign verdict/rule equal to its expected row | ✅ confirmed: no change |
+| `engine.diagnosis.test.ts` Scenario 8b (not in the fixture set) | card off | card off | Briefly on at the first stop (derived CB2 with 0 combined results). Owner decision 1 excludes derived CB1/CB2 and zero/unknown combined counts from the card; the test passes unchanged | ✅ no change |
 
 ### T009 — `server/engine.campaignDerivation.test.ts`: derivation unit tests ✅
 
@@ -337,3 +340,145 @@ Raw `pnpm test` (failing tests, then the closing summary):
    from them (🟡 W1 here), or keep a campaign ⏳ when its own count is unknown.
 3. **Scenario 13 baseline** (`specs/014-diagnosis-evidence-fallbacks/verdict-baseline.json`):
    allowed to update alongside the snapshot (same two rows, same justification)?
+
+
+---
+
+## ▶ Resumed after the owner's decisions (2026-10-20)
+
+### Decisions applied
+
+1. **Scenario 8b card — rejected.** A derived campaign's combined diagnosis feeds the card only
+   when its derived rule is not CB1/CB2 **and** its combined 3-day counted results are > 0 (0 or
+   unknown → no entry). Applied in spec FR-020a and Clarifications, contract C7a and C8, research
+   D7a, and `campaignCardEntry` (new `combinedCounted` argument, passed
+   `countedResults(c.w3d, archetype)`). Tests: one per exclusion (CB1/CB2; 0 and unknown counts).
+   Scenario 8b now **passes unchanged**.
+2. **T062 — accepted.** A campaign whose own count is unknown but whose ad sets are known derives
+   from them. Research §4.1 updated; T062 rewritten with that justification (🟡 W1 from `as_w1`).
+3. **Scenario 13 baseline — approved.** `verdict-baseline.json` updated for exactly `cmp_test` and
+   `cmp_scale` (git diff: 8 lines changed, 8 removed). The campaign exception in "kill/watch rows
+   always carry at least one finding" is added (FR-020a).
+4. **Derivation refinement.** A campaign is 🔴 only when **every** active ad set is 🔴. With 🔴 +
+   ⏳ it is 🟡 with "أوقِف [🔴 ad sets]" (the 🟢 case still adds "وأبقِ …"). Applied in spec
+   FR-003 table, scenario 3a, Edge Cases, Clarifications; contract C2/C3/C8; research D3; tasks.
+   In `deriveCampaignVerdict`, order 2 is now `pop.every(kill)` and order 4 without 🟡 is
+   "أوقِف {names}". Tests: 🔴 + ⏳ → 🟡 "أوقِف «…»" with the 🔴 child's code; all 🔴 → 🔴. The
+   split-family expected row is now watch / CB2 from `as_cb`. T011 and the Q2 top-action test now
+   build their all-🔴 campaign by pausing `as_good` and `as_gate` in the demo, because split-family
+   no longer gives 🔴.
+
+### T016 — Existing tests updated deliberately ✅
+
+Each changed test carries a comment citing the FR:
+
+| Test | Change |
+|---|---|
+| `engine.test.ts:149` "kill/watch rows always carry at least one finding" | Derived campaigns are expected to display `findings: []` (FR-020a, owner-approved) |
+| `engine.test.ts:218` "without the flag the same campaign is judged by full-funnel ROAS" | Renamed to "…is derived from its ad sets"; also asserts `derived_from_adset = as_w1` (FR-003, FR-007) |
+| `engine.test.ts` T060 (sales value) | Comment only: campaign S2/W6 no longer exist; assertions unchanged and green |
+| `engine.test.ts` T062 campaign unknown counts | Now 🟡 W1 from `as_w1`, not K1, no unknown-count reason, no "0.0x" (decision 2) |
+| `engine.test.ts` T068 ×2, T069 | Rewritten: the campaign's own cost/return no longer decide; derived 🟡 W1, no "+20%" in any campaign action, CBO `cmp_scale` buttons `disabled` (FR-007, FR-009) |
+| `nonSalesContainment.test.ts:68` | The non-exempt campaign `cmp_ns` displays `[]`; the "diagnose() was called" proof moves to its ad set `as_ns` (FR-020a) |
+| `engine.diagnosis.test.ts` Scenario 13 baseline JSON | Two rows updated (decision 3) |
+
+### T017 — Budget buttons from `budget_control` ✅
+
+`DecisionTable.tsx` renders ±20% only when `budgetControlView(r).show`; `disabled` disables both
+buttons and puts the tooltip "زد الميزانية فقط عندما تكون كل المجموعات بالداخل ناجحة" on the wrapper.
+`budgetControlView` is in `client/src/lib/cellFormat.ts`.
+
+### T018 — Full-funnel ROAS line, derived rule titles, history prefix ✅
+
+- Campaign rows show a faded "العائد الكلي للفانل: {x}x" line, with the numeral in `.num` and the
+  C5 tooltip.
+- `ruleTitleText(rule, fromAdsetName?)` (cellFormat):
+  - `VerdictBadge` / `RuleChip` take an optional `fromAdsetName`.
+  - The table row badge passes `r.derived_from_adset?.name`.
+  - The top-action badge and its "قاعدة: …" line in `Dashboard.tsx` use `a.derived_from_adset`.
+- `historyRuleTitle(entry)` (cellFormat) is used at `VerdictHistoryDialog.tsx`. It adds "من إحدى
+  مجموعاتها: " only for campaign + watch + {K1, K2, K3, K4, K6, K7, CB2}.
+- The `RULES` imports in `Dashboard.tsx` and `VerdictHistoryDialog.tsx` became unused and were
+  removed.
+
+### T019 — Client tests ✅
+
+`cellFormat.test.ts`:
+- `budgetControlView` for null / enabled / disabled;
+- `ruleTitleText` bare and prefixed (CB2);
+- `historyRuleTitle`: campaign/kill/K1 gets no prefix; campaign/watch/CB2 gets "من إحدى مجموعاتها:
+  خطر اليوم — أوقِفه فورًا"; ad set/watch/K1 and campaign/watch/W1 get no prefix.
+
+21/21 pass.
+
+### T020 — Snapshot scope ✅
+
+Before `-u`, the regression-lock diff touched only the four campaign rows (`"level": "campaign"`
+on every changed object; no ad or ad-set row).
+
+### T021 — Snapshot updated ✅
+
+`pnpm exec vitest run server/engine.test.ts -u` → "Snapshots 2 updated". `git diff --stat` on the
+snapshot: 16 lines changed, 16 removed — four fields × four campaign rows. Rows and justifications
+are in "Snapshot changes" above.
+
+### T022 — US1 gate ✅
+
+- `pnpm run check`: clean.
+- `pnpm test`: **802 passed**, 37 skipped. The only failure is the expected
+  `auth-flow.e2e.test.ts` (empty `DATABASE_URL`). This includes the FR-010 counter test
+  (`engine.test.ts:191`) and the T010 card-coverage tests.
+- Funnel-card report vs `funnel-card-main.json`: identical on all 12 fixtures (see "Funnel card
+  changes").
+- Engine order matches constitution v1.1.2 Principle I: ads → ad sets (unchanged order) →
+  campaigns (status → NS → pre-separation → event-match → W5 → derivation from the evaluated ad
+  sets).
+
+Raw `pnpm run check`:
+
+```text
+> qarar@1.0.0 check D:\Qarar worktrees\Qarar-016-judgment-model
+> tsc --noEmit
+
+```
+
+Raw `pnpm test` (closing block):
+
+```text
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+Error: Database connection failed
+ ❯ server/auth-flow.e2e.test.ts:22:13
+     20|     db = await getDb();
+     21|     if (!db) {
+     22|       throw new Error("Database connection failed");
+       |             ^
+     23|     }
+     24|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 56 passed | 2 skipped (59)
+      Tests  802 passed | 37 skipped (839)
+   Start at  17:40:43
+   Duration  21.59s (transform 11.19s, setup 122.76s, collect 77.93s, tests 29.48s, environment 43.75s, prepare 37.10s)
+
+ ELIFECYCLE  Test failed. See above for more details.
+```
+
+### Notes for later phases (not fixed here)
+
+- **Inherited child wording inside a campaign action**: the "otherwise" list repeats each ad set's
+  own action. In demo free_lead `cmp_test`, the CB2 ad set's existing action reads "أوقِفه الآن —
+  وراجعه بنفسك…", with a masculine pronoun for an ad set (مجموعة). That is pre-existing CB2 copy,
+  now visible on the campaign row. T047 (FR-030 copy review) should cover it.
+- **Status of the US1 stop items**: all three decisions are applied, and nothing is left open from
+  the first stop.
+
+## End of this run — US1 complete
+
+- **Done**: T001–T022.
+- **Not started (out of scope for this run)**: US2 (T023–T036), US3 (T037–T039), US4 (T040–T041),
+  US5 (T042–T043), US6 (T044–T046), Polish (T047–T053).
+- Nothing is committed.

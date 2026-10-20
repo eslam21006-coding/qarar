@@ -38,16 +38,19 @@ the status gate (`isDeliveringStatus(effectiveStatus ?? status)`), read **after*
 | Order | Condition | verdict |
 |---|---|---|
 | 1 | some p ∈ P is `continue` | `continue` if none of P is `kill`/`watch`, else `watch` |
-| 2 | J ≠ ∅ and every j ∈ J is `kill` | `kill` |
+| 2 | P ≠ ∅ and **every** p ∈ P is `kill` | `kill` |
 | 3 | J = ∅ (incl. P = ∅) | `too_early` |
-| 4 | otherwise | `watch` |
+| 4 | otherwise (incl. 🔴 + ⏳ only) | `watch` |
+
+Order 2 requires every **active** ad set to be 🔴: with 🔴 + ⏳ the campaign is 🟡, because
+stopping it would also stop ad sets that have not had their chance (owner decision 2026-10-20).
 
 **Rule code (FR-004, owner decision D-R1)**: let V be the derived verdict and rank
 `kill 0, watch 1, rescue 2, continue 3, too_early 4`.
 
 1. M = members of P whose verdict is V. If M ≠ ∅, the source is the member of M with the highest
    `spend_3d` (then first in row order).
-2. Otherwise (only a 🟡 from 🟢 + 🔴, no 🟡 child), the source is the member of P with the lowest
+2. Otherwise (only a 🟡 from 🟢 + 🔴 or from 🔴 + ⏳, no 🟡 child), the source is the member of P with the lowest
    rank, ties → highest `spend_3d`, then first in row order.
 3. `rule` = source's `rule`; `derived_from_adset = { id, name }` of the source. P = ∅ → `GATE` and
    `derived_from_adset = null`.
@@ -94,7 +97,8 @@ change.
 | order 1, no 🔴 | `أبقِ {names(🟢)}` |
 | order 2 | `أوقِف الحملة — كل مجموعاتها تخسر` |
 | order 3 | `اترك البيانات تتجمع` |
-| order 4 | each 🔴 then 🟡 member of P as `«name»: {its action_ar}`, joined by " · " |
+| order 4, P has no 🟡 (🔴 + ⏳ only) | `أوقِف {names(🔴)}` |
+| order 4, P has 🟡 | each 🔴 then 🟡 member of P as `«name»: {its action_ar}`, joined by " · " |
 
 **Rescue count (FR-003a)**: R = ads with verdict `rescue`, `campaignId === c.id`, the ad itself
 passes the status gate, and its parent ad set ∈ P. If |R| > 0, append `" — " + text(|R|)`:
@@ -144,9 +148,12 @@ unchanged.
 
 ## C7a. Funnel card input for derived campaigns (FR-020a)
 
-For a derived campaign whose derived verdict is `kill` or `watch` (and not exempt), `runEngine`
-calls `diagnose(c, baselines, archetype, derivedFired, htoUnderperforming)` on the campaign's
-combined numbers. The row keeps `findings: []`. `{ rule: derivedFired.rule, findings }` is passed to
+For a derived campaign whose derived verdict is `kill` or `watch`, that is not exempt, whose
+derived rule is **not CB1/CB2**, and whose combined 3-day counted results
+(`countedResults(c.w3d, archetype)`) are **> 0**, `runEngine` calls `diagnose(c, baselines,
+archetype, derivedFired, htoUnderperforming)` on the campaign's combined numbers (owner decision
+2026-10-20: today-only codes say nothing about 3-day funnel evidence; zero-result combined evidence
+is K1 territory, ad-fault as on main; unknown is not > 0). The row keeps `findings: []`. `{ rule: derivedFired.rule, findings }` is passed to
 `buildSummary` in an internal list (not on `EngineRow`, not sent to the client), and the card
 predicate (`adBlameExcluded`, `qualifyingOutcome`) reads it **in place of** the derived campaign row.
 Because `derivedFired.rule` is the code chosen under C2 (D-R1), `RULE_FAULT` gives it that child's class:
@@ -154,7 +161,8 @@ a derived K1 is ad-fault and cannot raise the card. Ad, ad-set and own-step camp
 card from their row as today.
 
 **Card coverage (FR-021a part 1)**: `account_funnel_cta !== null` ⇔ some entry among {ad-set rows,
-ad rows, W5 campaign rows, derived campaigns' card entries} has a `RUNG_CONVERSION` or
+ad rows, W5 campaign rows, derived campaigns' card entries (only those passing the two exclusions
+above)} has a `RUNG_CONVERSION` or
 `FUNNEL_CONFIRMED` finding and is not `adBlameExcluded`.
 
 **Change log (FR-021a part 2)**: every fixture is run against `main@a855599` and this branch; each
@@ -173,6 +181,8 @@ fixture whose `account_funnel_cta` differs gets a row in "Funnel card changes" (
 1. Each C2 order with a hand-built campaign; order 1 never yields `kill`.
 2. Tie-break by spend; P = ∅ → ⏳ GATE with the empty-population reason and
    `derived_from_adset: null`.
+2-red. A campaign whose active ad sets are all 🔴 is 🔴 "أوقِف الحملة — كل مجموعاتها تخسر";
+   🔴 + ⏳ is 🟡 "أوقِف «{red}»" with the 🔴 child's code.
 2a. (D-R1 a) A 🟡 campaign with a 🟡 W3 child and a more severe 🔴 K1 child (no 🟢) carries W3 from
    the 🟡 child, not K1.
 2b. (D-R1 b) A campaign with a 🟢 child and a 🔴 CB2 child (no 🟡) is 🟡 with rule CB2,
@@ -191,7 +201,9 @@ fixture whose `account_funnel_cta` differs gets a row in "Funnel card changes" (
 6. Derived 🔴 campaign: row `findings` is `[]` (FR-021a).
 7. Card coverage (C7a, FR-021a part 1): one hand-built case per source — ad set, ad, W5 campaign,
    derived campaign — that raises the card alone; a derived campaign whose derived rule is K1 does
-   not raise it; derived 🟢/⏳ campaigns are not diagnosed.
+   not raise it; derived 🟢/⏳ campaigns are not diagnosed; a derived CB1/CB2 campaign and a
+   derived campaign with 0 (or unknown) combined counted results do not feed the card; Scenario 8b
+   (`engine.diagnosis.test.ts`) passes unchanged.
 8. Card change log (C7a, FR-021a part 2): main vs branch over every fixture, with and without
    `htoUnderperforming`; differences recorded with justification.
 9. `budget_control` for all five C6 rows, plus CBO with one ⏳ child → `disabled`.

@@ -168,11 +168,12 @@ same on main and on this branch.
   {kill, watch, continue}.
 - **Resolution order** (first match wins):
   1. any 🟢 → 🟢 if no 🔴/🟡 among the population, else 🟡;
-  2. judged non-empty and every judged is 🔴 → 🔴;
+  2. population non-empty and **every** active ad set 🔴 → 🔴 (🔴 + ⏳ → 🟡 "أوقِف [🔴]", owner
+     decision 2026-10-20);
   3. judged empty (incl. an empty population) → ⏳;
   4. otherwise → 🟡.
 - **Rule code** (FR-004, owner decision D-R1): the highest-spend member of P whose verdict equals
-  the derived verdict; if none (🟢 + 🔴, no 🟡), the most severe member (rank kill 0 > watch 1 >
+  the derived verdict; if none (🟢 + 🔴 or 🔴 + ⏳, no 🟡), the most severe member (rank kill 0 > watch 1 >
   rescue 2 > continue 3 > too_early 4, ties → highest `spend_3d`). The row carries
   `derived_from_adset` and the rule title reads "من مجموعة {name}: {title}" on every derived
   campaign (Q3) and on every surface — table row and top actions (Q2). Empty population → `GATE`,
@@ -240,6 +241,9 @@ needs agreement and no adjective has to agree with a number.
 - **Rationale**: combined numbers can reach a funnel-fault rung that no single ad set reaches
   (Principle VII). Using the derived rule keeps one source of truth — the old campaign rules are
   deleted outright.
+- **Exclusions** (owner decision 2026-10-20, after Scenario 8b): no card entry when the derived
+  rule is CB1/CB2 (today-only) or the campaign's combined 3-day counted results are not > 0
+  (zero-result evidence is K1 territory, ad-fault as on main).
 - **Consequence**: the card may differ from `main@a855599` where a campaign's old rule and its
   derived rule disagree on whether it is diagnosed (kill/watch) or ad-fault. Example: demo
   `cmp_test` was S2 🟢 (not diagnosed) and becomes 🟡 CB2 (diagnosed, CB2 is "neither"). Each
@@ -335,7 +339,9 @@ not labels, so it is unaffected.
 | `engine.test.ts:218` "without the flag the same campaign is judged by full-funnel ROAS" | Campaign is now derived, not full-ROAS-judged |
 | `engine.test.ts:2003–2066` T068/T069 (campaign W1/W6/S2 scale guard) | Rules removed (FR-007); rewrite as derivation + budget-control tests |
 | `engine.test.ts:1903` T060 comment / assertions referencing campaign S2/W6 | Re-read against derivation |
-| `engine.test.ts:1965` T062 campaign unknown counts | Still ⏳, now via derivation — re-assert mechanism |
+| `engine.test.ts:1965` T062 campaign unknown counts | **Outcome changes** (owner decision 2026-10-20): only the campaign's own 3-day count is unknown and its ad sets are known, so it derives from them (🟡 W1 from `as_w1`) instead of ⏳ — the results-unknown campaign exit is gone (FR-001) and the campaign is a summary of its ad sets |
+| `engine.diagnosis.test.ts:801` Scenario 13 (`specs/014-diagnosis-evidence-fallbacks/verdict-baseline.json`) | Second regression lock on demo paid_lto, missed in pass 1; same two campaign rows as the snapshot, updated with the same justification (owner-approved) |
+| `engine.test.ts:149` "kill/watch rows always carry at least one finding" | Derived campaigns display no findings (FR-020a); campaign exception added (owner-approved) |
 | `engine.test.ts:1805–1813` T037 | R5: 1 result → ⏳ K5 |
 | `engine.test.ts:1151–1180` T008 snapshot | 4 campaign rows change (§4.2) |
 | `nonSalesContainment.test.ts:68` | `cmp_ns` derived → no displayed findings (D7); its combined diagnosis still feeds the card (D7a) |

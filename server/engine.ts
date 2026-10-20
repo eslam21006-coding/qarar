@@ -1916,7 +1916,10 @@ export function deriveCampaignVerdict(
     // A campaign holding a 🟢 ad set is never told to stop (Principle I).
     verdict = red.length > 0 || yellow.length > 0 ? "watch" : "continue";
     action = red.length > 0 ? `أوقِف ${names(red)} وأبقِ ${names(green)}` : `أبقِ ${names(green)}`;
-  } else if (judged.length > 0 && judged.every(r => r.verdict === "kill")) {
+  } else if (pop.length > 0 && pop.every(r => r.verdict === "kill")) {
+    // Only when EVERY active ad set is 🔴 (owner decision 2026-10-20):
+    // with 🔴 + ⏳, stopping the campaign would also stop ad sets that
+    // have not had their chance.
     verdict = "kill";
     action = "أوقِف الحملة — كل مجموعاتها تخسر";
   } else if (judged.length === 0) {
@@ -1924,12 +1927,15 @@ export function deriveCampaignVerdict(
     action = "اترك البيانات تتجمع";
   } else {
     verdict = "watch";
-    action = [...red, ...yellow].map(r => `«${r.name}»: ${r.action_ar}`).join(" · ");
+    action =
+      yellow.length === 0
+        ? `أوقِف ${names(red)}`
+        : [...red, ...yellow].map(r => `«${r.name}»: ${r.action_ar}`).join(" · ");
   }
 
   // FR-004 / D-R1 — the rule code comes from the highest-spend ad set whose
-  // verdict equals the derived one; with none (🟢 + 🔴, no 🟡), from the
-  // most severe ad set. Ties → highest spend, then row order.
+  // verdict equals the derived one; with none (🟢 + 🔴 or 🔴 + ⏳, no 🟡),
+  // from the most severe ad set. Ties → highest spend, then row order.
   const mostSevere = (xs: EngineRow[]): EngineRow | undefined =>
     xs.reduce<EngineRow | undefined>((best, r) => {
       if (!best) return r;
@@ -1982,14 +1988,21 @@ export function deriveCampaignVerdict(
  * Spec 016 / FR-020a (C7a) — a derived campaign displays no findings, but
  * its combined-numbers diagnosis still feeds the account funnel card,
  * under the same condition as any row (🔴/🟡, not exempt) and with the
- * derived verdict and rule.
+ * derived verdict and rule — except (owner decision 2026-10-20):
+ *   - a derived CB1/CB2: today-only codes say nothing about 3-day funnel
+ *     evidence;
+ *   - combined 3-day counted results not > 0 (0 or unknown): zero-result
+ *     evidence is K1 territory, which is ad-fault — as on main.
  */
 export function campaignCardEntry(
   fired: { verdict: Verdict; rule: RuleCode },
   exempt: boolean,
+  combinedCounted: number | null,
   runDiagnosis: () => Finding[]
 ): { rule: RuleCode; findings: Finding[] } | null {
   if (exempt || (fired.verdict !== "kill" && fired.verdict !== "watch")) return null;
+  if (fired.rule === "CB1" || fired.rule === "CB2") return null;
+  if (combinedCounted === null || combinedCounted <= 0) return null;
   return { rule: fired.rule, findings: runDiagnosis() };
 }
 
@@ -2364,7 +2377,7 @@ export function runEngine(
     let findings: Finding[] = [];
     const exempt = isNonSalesExempt(c.objective ?? null);
     if (fired.derived) {
-      const entry = campaignCardEntry(fired, exempt, () =>
+      const entry = campaignCardEntry(fired, exempt, countedResults(c.w3d, funnel.archetype), () =>
         diagnose(c, baselines, funnel.archetype, fired, !!funnel.htoUnderperforming)
       );
       if (entry) cardEntries.push(entry);

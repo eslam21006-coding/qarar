@@ -83,7 +83,7 @@ verdict excludes today.
   in FR-021a.)
 - Q: Which child gives a derived campaign its rule code? → A: **The most severe child ad set whose
   verdict equals the derived verdict** (ties → highest spend) (owner decision D-R1). If no child has
-  that verdict — a 🟡 derived from 🟢 + 🔴 children — use the most severe child's code, and the
+  that verdict — a 🟡 derived from 🟢 + 🔴, or from 🔴 + ⏳, children — use the most severe child's code, and the
   campaign's rule tooltip reads "من مجموعة {ad set name}: {rule title}", so a 🟡 row never shows a
   bare stop title such as "خطر اليوم — أوقِفه فورًا". The funnel card's fault class follows the code
   actually chosen. The derived row names its source ad set for the tooltip.
@@ -97,6 +97,19 @@ verdict excludes today.
   watch **and** its rule is a kill-family code (K1, K2, K3, K4, K6, K7, CB2) (owner decision Q1). Pre-016
   campaign logic never produced watch with a kill-family rule, so only 016-derived 🟡 entries
   match, old entries are never relabelled, and no database change is needed.
+- Q: A campaign whose only judged ad set is 🔴 CB2 (today-only) and whose combined 3-day numbers
+  show 0 results now raises the funnel card (test Scenario 8b), where main's K1 kept it off.
+  Accept? → A: **No** (owner decision 2026-10-20, implementation stop 1). A derived campaign's
+  combined diagnosis feeds the card only when its derived rule code is **not CB1/CB2** (today-only
+  codes say nothing about 3-day funnel evidence) **and** its combined 3-day counted results are
+  **> 0** (zero-result combined evidence is K1 territory, which is ad-fault — as on main).
+- Q: A campaign whose own 3-day count is unknown while its ad sets' counts are known — ⏳, or
+  derived? → A: **Derived from its ad sets** (owner decision, implementation stop 2). The
+  campaign is only a summary; its ad sets' known verdicts decide.
+- Q: Some active ad sets 🔴 and the rest ⏳ — stop the campaign? → A: **No** (owner decision,
+  derivation refinement). A campaign is 🔴 only when **every** active ad set is 🔴. 🔴 + ⏳ makes it
+  🟡 with "أوقِف [names of the 🔴 ad sets]": stopping the whole campaign would also stop ad sets
+  that have not had their chance. All ⏳ stays ⏳.
 - Q: What action goes with the new one-result ⏳ K5? → A: Reason "نتيجة واحدة لا تكفي للحكم —
   اتركه يجمع بيانات", action "راجعه بعد أن يحقق نتيجة ثانية".
 
@@ -125,8 +138,10 @@ campaign row shows 🟡, its action names the two 🔴 ad sets to stop and the �
    name]", and it is never 🔴.
 2. **Given** an active campaign whose ad sets are all 🟢 or ⏳, with at least one 🟢, **When** the
    dashboard loads, **Then** the campaign is 🟢.
-3. **Given** an active campaign whose judged ad sets are all 🔴, **When** the dashboard loads,
+3. **Given** an active campaign whose active ad sets are **all** 🔴, **When** the dashboard loads,
    **Then** the campaign is 🔴 with the action "أوقِف الحملة — كل مجموعاتها تخسر".
+3a. **Given** an active campaign with one 🔴 ad set and one ⏳ ad set, **When** the dashboard
+   loads, **Then** the campaign is 🟡 with the action "أوقِف «{the 🔴 ad set}»" — not "أوقِف الحملة".
 4. **Given** an active campaign whose active ad sets are all ⏳, **When** the dashboard loads,
    **Then** the campaign is ⏳ with the action "اترك البيانات تتجمع".
 5. **Given** an active campaign with 🟡 ad sets and no 🟢 ad set, **When** the dashboard loads,
@@ -298,8 +313,9 @@ abbreviations appear only in tooltips, and the banner text matches exactly.
 - **Campaign with no active ad sets** (all paused or archived): the campaign's own status gate
   handles a paused campaign; an active campaign with no active child ad sets has nothing past its
   gates and is ⏳.
-- **Only 🔴 and ⏳ children**: the ⏳ children are not judged, so "all judged children 🔴" holds
-  and the campaign is 🔴 (rulebook §5.0: "كل المجموعات المحكوم عليها 🔴").
+- **Only 🔴 and ⏳ children**: the campaign is 🟡, not 🔴, with "أوقِف [the 🔴 ad sets]"; the ⏳ ad
+  sets have not had their chance, so the campaign is not stopped (owner decision 2026-10-20,
+  refining rulebook §5.0's "كل المجموعات المحكوم عليها 🔴").
 - **🟢 children plus 🟡 children, no 🔴**: the campaign is 🟡; there is no ad set to stop, so the
   action carries no "أوقِف" part.
 - **🛟 ads inside the campaign**: their count is appended to the campaign's action (FR-003a); the
@@ -339,8 +355,9 @@ clause)
   | Child ad sets | Campaign verdict | Campaign action |
   |---|---|---|
   | ≥ 1 🟢 | never 🔴. 🟢 if none are 🔴/🟡, else 🟡 | "أوقِف [names of 🔴 ad sets] وأبقِ [names of 🟢 ad sets]" |
-  | all judged children 🔴 | 🔴 | "أوقِف الحملة — كل مجموعاتها تخسر" |
+  | every active child 🔴 | 🔴 | "أوقِف الحملة — كل مجموعاتها تخسر" |
   | none past their gates | ⏳ | "اترك البيانات تتجمع" |
+  | 🔴 + ⏳ only (no 🟢, no 🟡) | 🟡 | "أوقِف [names of 🔴 ad sets]" |
   | otherwise | 🟡 | list what to do inside |
   | any 🛟 ad inside its active ad sets | append the count of rescue-worthy ads (FR-003a); never changes the derived color |
 
@@ -358,7 +375,7 @@ clause)
   | 11+ | "فيها {n} إعلانًا يستحق الإنقاذ" |
 
   The count MUST NOT change the campaign's derived color or rule code.
-- **FR-004**: The derived verdict's rule code MUST be the rule of the most severe child ad set **whose verdict equals the derived verdict** (ties → highest spend); if no child has that verdict (only possible for a 🟡 derived from 🟢 + 🔴 children), the rule of the most severe child. Severity is ranked
+- **FR-004**: The derived verdict's rule code MUST be the rule of the most severe child ad set **whose verdict equals the derived verdict** (ties → highest spend); if no child has that verdict (only possible for a 🟡 derived from 🟢 + 🔴 or from 🔴 + ⏳ children), the rule of the most severe child. Severity is ranked
   kill > watch > rescue > continue > too_early. The derived row MUST name the ad set its code came
   from, and every derived campaign's rule title — on every derived campaign, whether or not its
   source ad set's verdict matches, and on every surface that shows it (the decision-table row and
@@ -419,8 +436,12 @@ clause)
   findings of its own (its row's findings are empty), and its derived verdict MUST never be demoted
   by the guard. Its combined-numbers diagnosis MUST still be computed — under the same condition
   as any row (verdict 🔴 or 🟡, not exempt) — with the campaign's **derived** verdict and **derived**
-  rule code, and MUST feed the account-level funnel card. The fault class follows the code actually
-  chosen under FR-004, so a derived ad-fault rule (e.g. K1) cannot raise the card. A
+  rule code, and MUST feed the account-level funnel card **only when** (a) the derived rule code is
+  not CB1 or CB2 (today-only codes say nothing about 3-day funnel evidence) **and** (b) the
+  campaign's combined 3-day counted results are greater than 0 (zero-result combined evidence is
+  K1 territory, which is ad-fault — as on main); an unknown count is not > 0. The fault class
+  follows the code actually chosen under FR-004, so a derived ad-fault rule (e.g. K1) cannot raise
+  the card either. A
   campaign whose verdict comes from its own campaign-level step — status gate, non-sales
   exemption, pre-separation guard, event-match gate, or W5 — MUST keep its diagnosis as today,
   including W5's discovery-call link.
