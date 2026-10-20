@@ -41,6 +41,7 @@ import {
   arabicCount,
   convertCurrency,
   countedResults,
+  otherFamilyResults,
   isDeliveringStatus,
   isNonSalesExempt,
   median,
@@ -580,12 +581,22 @@ function gateVerdict(o: NormalizedObject, target: number): Fired | null {
 // Circuit breaker (5.3) — today's data, overrides gates
 // ============================================================
 
-function circuitBreaker(o: NormalizedObject, target: number): Fired | null {
+function circuitBreaker(
+  o: NormalizedObject,
+  target: number,
+  archetype: FunnelInputs["archetype"]
+): Fired | null {
   if (o.level !== "adset") return null;
-  // Spec 015 / FR-028 (T067) — CB1/CB2 read today's result count as zero;
-  // an unknown count is not a zero, so the breaker stands down.
-  if (o.today.resultsUnknown) return null;
-  if (o.today.conversions > 0) return null;
+  // Spec 016 / FR-022 — today's results are counted with the funnel's rule
+  // (the shared `countedResults`). Spec 015 / FR-028 (T067) — an unknown
+  // count is not a zero, so the breaker stands down.
+  const counted = countedResults(o.today, archetype);
+  if (counted === null) return null;
+  if (counted > 0) return null;
+  // Spec 016 / FR-023 — counted 0 but the other family recorded results
+  // today: the funnel setting, not the ad set, is in question (the 3-day
+  // event-match gate already warns), so the breaker stands down.
+  if ((otherFamilyResults(o.today, archetype) ?? 0) > 0) return null;
   if (o.today.spend >= 2.5 * target) {
     return {
       verdict: "kill",
@@ -1108,6 +1119,48 @@ function watchRules(
   }
 
   return null;
+}
+
+// ============================================================
+// Above-target guard before S1–S4 (spec 016 / FR-036, rulebook 2.2.1 W1)
+// ============================================================
+
+/**
+ * Spec 016 / FR-036 (owner decision 2026-10-20) — a row that gets past every
+ * K and W rule with counted 3-day results and a cost above its target must
+ * not read 🟢. A cost between 1.5× and 3× target with spend under 3× target
+ * matched no rule (K2 needs spend ≥ 3× target; W1 stopped at 1.5×), so it
+ * fell through to S2. It now takes W1 — no new rule code, and K2 and every
+ * other rule keep their order. 1×–1.5× keeps the existing W1 copy.
+ */
+function aboveTargetGuard(
+  o: NormalizedObject,
+  t: JudgeableTargets,
+  archetype: FunnelInputs["archetype"]
+): Fired | null {
+  const target = t.unitTarget;
+  const conversions = effectiveConversions(o, archetype) ?? 0;
+  const cpa = effectiveCpa(o, archetype);
+  if (conversions <= 0 || cpa === null || cpa <= target) return null;
+  if (cpa <= 1.5 * target) {
+    return {
+      verdict: "watch",
+      rule: "W1",
+      reason: `في آخر 3 أيام: تكلفة العميل ${money(cpa)} أعلى من هدفك (${money(target)}) بقليل — ليست كارثة`,
+      action: "راقبه يومين أو ثلاثة بدون أي تعديل",
+    };
+  }
+  const stopAt = money(3 * target);
+  const costLimit = money(1.5 * target);
+  return {
+    verdict: "watch",
+    rule: "W1",
+    reason: `في آخر 3 أيام: تكلفة النتيجة ${money(cpa)} والهدف ${money(target)} — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف (${stopAt})`,
+    action:
+      o.level === "adset"
+        ? `لا تزد الميزانية. راقبها يومين أو ثلاثة — إن وصل صرفها إلى ${stopAt} والتكلفة ما زالت فوق ${costLimit} فأوقِفها`
+        : `لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى ${stopAt} والتكلفة ما زالت فوق ${costLimit} فأوقِفه`,
+  };
 }
 
 // ============================================================
@@ -1985,6 +2038,31 @@ export function deriveCampaignVerdict(
 }
 
 /**
+ * Spec 016 / FR-020 (contracts/consistency-guard.md) — rulebook §5.5 rule 2:
+ * a 🔴 whose own diagnosis says the data is insufficient becomes ⏳, unless
+ * its rule was built to fire without a full sample (K3, CB1, CB2). Only 🔴
+ * is touched (owner decision Q1: B): the diagnosis ladder has its own
+ * thresholds, independent of the verdict's data gates. Runs on ad and
+ * ad-set rows only, after `diagnose()`; findings stay on the row.
+ */
+export function applyConsistencyGuard<F extends { verdict: Verdict; rule: RuleCode; reason: string; action: string }>(
+  fired: F,
+  findings: Finding[]
+): F {
+  if (fired.verdict !== "kill") return fired;
+  if (fired.rule === "K3" || fired.rule === "CB1" || fired.rule === "CB2") return fired;
+  const insufficient = findings.find(f => f.outcome === "INSUFFICIENT_DATA");
+  if (!insufficient) return fired;
+  return {
+    ...fired,
+    verdict: "too_early",
+    rule: "GATE",
+    reason: insufficient.text_ar,
+    action: "اترك البيانات تتجمع",
+  };
+}
+
+/**
  * Spec 016 / FR-020a (C7a) — a derived campaign displays no findings, but
  * its combined-numbers diagnosis still feeds the account funnel card,
  * under the same condition as any row (🔴/🟡, not exempt) and with the
@@ -2125,6 +2203,10 @@ function evaluateAd(
   const watch = watchRules(ad, t, archetype, baselines);
   if (watch) return watch;
 
+  // Spec 016 / FR-036 — no 🟢 above target (immediately before S1–S4).
+  const aboveTarget = aboveTargetGuard(ad, t, archetype);
+  if (aboveTarget) return aboveTarget;
+
   // 8. Continue/Scale
   return continueRules(ad, t, archetype, baselines);
 }
@@ -2164,7 +2246,7 @@ function evaluateAdset(
 
   // STEP 7. Circuit breaker BEFORE the data gates — "يتجاوز كل البوابات"
   // (constitution v1.1.2 Principle I, rulebook §5.3 / §5.5 row 4).
-  const cb = circuitBreaker(o, t.unitTarget);
+  const cb = circuitBreaker(o, t.unitTarget, archetype);
   if (cb) return cb;
 
   // STEP 8. Data gates
@@ -2178,6 +2260,10 @@ function evaluateAdset(
   // STEP 12. Watch (decay and fatigue, steps 10–11, are ad level)
   const watch = watchRules(o, t, archetype, baselines);
   if (watch) return watch;
+
+  // Spec 016 / FR-036 — no 🟢 above target (immediately before S1–S4).
+  const aboveTarget = aboveTargetGuard(o, t, archetype);
+  if (aboveTarget) return aboveTarget;
 
   // STEP 13. Continue
   return continueRules(o, t, archetype, baselines);
@@ -2269,8 +2355,9 @@ export function runEngine(
     // engine judged on (per FR-031, FR-035). For appointment / webinar
     // that is the lead-based number; the legacy `o.w3d.conversions` /
     // `o.w3d.cpa` are NOT the judgement unit for those archetypes.
-    const rowConv = effectiveConversions(o, funnel.archetype);
-    const rowCpa = effectiveCpa(o, funnel.archetype);
+    // Spec 016 / FR-012 — the shared count; `null` on an unknown window.
+    const rowConv = countedResults(o.w3d, funnel.archetype);
+    const rowCpa = rowConv === null ? null : effectiveCpa(o, funnel.archetype);
     return {
       id: o.id,
       name: o.name,
@@ -2286,11 +2373,9 @@ export function runEngine(
       cpa_3d: rowCpa !== null ? round2(rowCpa) : null,
       ctr_link: round2(o.w3d.ctrLink),
       ctr_all: round2(o.w3d.ctrAll),
-      // Pre-separation snapshots: `rowConv === undefined` for appointment /
-      // webinar; render as `0` in the row but mark it conceptually as
-      // "not yet measurable" via the verdict (the pre-separation gate
-      // returns too_early for these rows).
-      conversions_3d: rowConv ?? 0,
+      // Spec 016 / FR-015 — unknown (Meta sent no count, or a
+      // pre-separation snapshot) stays `null`, never 0.
+      conversions_3d: rowConv,
       frequency_3d: round2(o.w3d.frequency),
       spend_share_pct: o.spendSharePct !== null ? round2(o.spendSharePct) : null,
       age_days: Math.round(o.ageDays * 10) / 10,
@@ -2346,7 +2431,7 @@ export function runEngine(
       !exempt && (fired.verdict === "kill" || fired.verdict === "watch")
         ? diagnose(ad, baselines, funnel.archetype, fired, !!funnel.htoUnderperforming)
         : [];
-    rows.push(toRow(ad, fired, findings));
+    rows.push(toRow(ad, applyConsistencyGuard(fired, findings), findings));
   }
 
   for (const s of adsets) {
@@ -2356,7 +2441,9 @@ export function runEngine(
       !exempt && (fired.verdict === "kill" || fired.verdict === "watch")
         ? diagnose(s, baselines, funnel.archetype, fired, !!funnel.htoUnderperforming)
         : [];
-    rows.push(toRow(s, fired, findings));
+    // Spec 016 / FR-020 — guarded before the campaign loop, so the
+    // derivation reads the guarded ad-set verdicts.
+    rows.push(toRow(s, applyConsistencyGuard(fired, findings), findings));
   }
 
   // Spec 016 / FR-020a — combined-numbers diagnoses of derived campaigns,
@@ -2399,7 +2486,7 @@ export function runEngine(
   assignBudgetControls(rows, isActiveId);
 
   const summary = buildSummary(rows, snapshot, targets, funnel.archetype, cardEntries);
-  return { rows, summary, targets, currencySymbol: _currency };
+  return { rows, summary, targets, currencySymbol: _currency, archetype: funnel.archetype };
 }
 
 /**
@@ -2441,8 +2528,8 @@ function buildNoTargetResult(
     // `undefined` for appointment / webinar with a pre-separation
     // snapshot (T026) — the engine below the gate never sees those
     // rows, so this branch is unreachable for them.
-    const rowConv = effectiveConversions(o, archetype);
-    const rowCpa = effectiveCpa(o, archetype);
+    const rowConv = countedResults(o.w3d, archetype);
+    const rowCpa = rowConv === null ? null : effectiveCpa(o, archetype);
     return {
       id: o.id,
       name: o.name,
@@ -2458,7 +2545,7 @@ function buildNoTargetResult(
       cpa_3d: rowCpa !== null ? round2(rowCpa) : null,
       ctr_link: round2(o.w3d.ctrLink),
       ctr_all: round2(o.w3d.ctrAll),
-      conversions_3d: rowConv ?? 0,
+      conversions_3d: rowConv,
       frequency_3d: round2(o.w3d.frequency),
       spend_share_pct: o.spendSharePct !== null ? round2(o.spendSharePct) : null,
       age_days: Math.round(o.ageDays * 10) / 10,
@@ -2491,7 +2578,7 @@ function buildNoTargetResult(
     return o !== undefined && isDeliveringStatus(o.effectiveStatus ?? o.status);
   });
   const summary = buildSummary(rows, snapshot, targets, archetype);
-  return { rows, summary, targets, currencySymbol: _currency };
+  return { rows, summary, targets, currencySymbol: _currency, archetype };
 }
 
 /**

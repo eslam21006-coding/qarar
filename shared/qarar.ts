@@ -678,7 +678,12 @@ export interface EngineRow {
   cpa_3d: number | null;
   ctr_link: number;
   ctr_all: number;
-  conversions_3d: number;
+  /**
+   * Spec 016 / FR-012, FR-015 — counted results in the 3-day window, from
+   * the shared `countedResults`. `null` = Meta sent no count (unknown,
+   * never 0).
+   */
+  conversions_3d: number | null;
   frequency_3d: number;
   spend_share_pct: number | null;
   /** 3-day ROAS = conversionValue / spend. null when either is 0. */
@@ -803,6 +808,11 @@ export interface EngineResult {
   targets: DerivedTargets;
   /** Display symbol for the account's currency (e.g. "AED" → "د.إ"). */
   currencySymbol: string;
+  /**
+   * Spec 016 / FR-012 — the funnel archetype the run counted with, so the
+   * table counts results with the same rule (`countedResults`).
+   */
+  archetype: FunnelArchetype;
 }
 
 /**

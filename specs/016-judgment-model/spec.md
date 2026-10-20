@@ -110,6 +110,11 @@ verdict excludes today.
   derivation refinement). A campaign is 🔴 only when **every** active ad set is 🔴. 🔴 + ⏳ makes it
   🟡 with "أوقِف [names of the 🔴 ad sets]": stopping the whole campaign would also stop ad sets
   that have not had their chance. All ⏳ stays ⏳.
+- Q: R4 lets a split-family ad set fall through to 🟢 S2 at 2.7× its target (no rule covers a cost
+  above 1.5× target while spend is under 3× target). Fix now? → A: **Yes, as a guard, with no new
+  rule code** (owner decision 2026-10-20, US4 stop). Any ad set or ad that reaches the S1–S4 step
+  with counted 3-day results > 0 and a 3-day cost above its target becomes 🟡 W1 (FR-036). K2 and
+  the order of every other rule are untouched.
 - Q: What action goes with the new one-result ⏳ K5? → A: Reason "نتيجة واحدة لا تكفي للحكم —
   اتركه يجمع بيانات", action "راجعه بعد أن يحقق نتيجة ثانية".
 
@@ -260,6 +265,9 @@ and equally, a lead funnel must not be saved by purchases it does not count.
    the circuit breaker runs, **Then** CB2 fires.
 3. **Given** an ad set whose result count for today is unknown, **When** the circuit breaker
    runs, **Then** it stands down (unchanged behaviour).
+4. **Given** an ad set with 3-day spend 2.7× its target and a 3-day cost per result 2.7× its target,
+   that no K or W rule catches, **When** it reaches the continue/scale step, **Then** it is 🟡 W1
+   with the reason "في آخر 3 أيام: تكلفة النتيجة {cpa} والهدف {target} — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ({3×target})" and the action "لا تزد الميزانية. راقبها يومين أو ثلاثة — إن وصل صرفها إلى {3×target} والتكلفة ما زالت فوق {1.5×target} فأوقِفها" (ad wording: "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى {3×target} والتكلفة ما زالت فوق {1.5×target} فأوقِفه"), never 🟢 (FR-036).
 
 ---
 
@@ -500,6 +508,14 @@ clause)
 - **FR-034**: This feature MUST add no new Meta Graph calls and no database migrations.
 - **FR-035**: Every snapshot change MUST carry a justification row; no snapshot is regenerated
   without one. Expected sources: campaign rows (R1), and possibly R3 and R5.
+- **FR-036** (owner decision 2026-10-20, US4 stop): An ad set or ad that reaches the S1–S4 step —
+  after every K and W rule — with counted 3-day results > 0 and a 3-day cost per result above its
+  target MUST become 🟡 W1 instead of 🟢. No new rule code; K2 (spend ≥ 3× target) and the order
+  of every other rule stay as they are, so only rows that would have been 🟢 can move. Cost 1×–1.5×
+  target: the existing W1 reason and action, unchanged. Cost above 1.5× target: reason
+  "في آخر 3 أيام: تكلفة النتيجة {cpa} والهدف {target} — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ({3×target})"; action for an ad set "لا تزد الميزانية. راقبها يومين أو ثلاثة — إن وصل صرفها إلى {3×target} والتكلفة ما زالت فوق {1.5×target} فأوقِفها"; for an ad "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى {3×target} والتكلفة ما زالت فوق {1.5×target} فأوقِفه". Money in the
+  existing format, numerals left-to-right. Rulebook v2.2.1 widens W1 to "CPA فوق الهدف ولم تكتمل
+  شروط K2 (صرف ≥ 3× الهدف)".
 
 ### Key Entities
 

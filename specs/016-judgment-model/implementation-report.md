@@ -162,6 +162,9 @@ text is filled when T021 confirms each row.
 | T008 snapshot · free_lead `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبه يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 | ✅ confirmed (matches expected) |
 | Scenario 13 baseline (`specs/014-diagnosis-evidence-fallbacks/verdict-baseline.json`) · paid_lto `cmp_test` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 2.6x عند حساب قيمة العميل الكاملة ($148) — مع 2 إعلان/مجموعة تحتاج إيقافًا بالداخل" / action "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك" | watch / CB2 (from as_cb) / "مجموعات هذه الحملة — ناجحة: مجموعة واحدة · خاسرة: مجموعتان · لم يُحكم عليها بعد: مجموعة واحدة" / action "أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B — جمهور Lookalike 1%» وأبقِ «Stage A — بروود + Advantage» — فيها إعلان واحد يستحق الإنقاذ" | FR-003, FR-004, FR-007 / T016 — owner-approved (decision 3) | ✅ updated, same values as the snapshot |
 | Scenario 13 baseline (`specs/014-diagnosis-evidence-fallbacks/verdict-baseline.json`) · paid_lto `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبه يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004, FR-007 / T016 — owner-approved (decision 3) | ✅ updated, same values as the snapshot |
+| T008 snapshot · paid_lto `ad_cb` | continue / S2 / "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)" / action "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام" | watch / W1 / "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $43 — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ($129)" / action "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى $129 والتكلفة ما زالت فوق $65 فأوقِفه" | FR-036 / T041b — was 🟢 with cpa_3d $116 > target | ✅ updated |
+| T008 snapshot · free_lead `ad_cb` | continue / S2 / "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)" / action "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام" | watch / W1 / "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $39 — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ($117)" / action "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى $117 والتكلفة ما زالت فوق $59 فأوقِفه" | FR-036 / T041b — was 🟢 with cpa_3d $116 > target | ✅ updated |
+| Scenario 13 baseline · paid_lto `ad_cb` | continue / S2 / "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)" / action "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام" | watch / W1 / "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $43 — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ($129)" / action "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى $129 والتكلفة ما زالت فوق $65 فأوقِفه" | FR-036 / T041b — was 🟢 with cpa_3d $116 > target | ✅ updated |
 
 Campaign verdicts in the other fixtures (not snapshot-locked; checked by the report script):
 
@@ -170,7 +173,8 @@ Campaign verdicts in the other fixtures (not snapshot-locked; checked by the rep
 | demo appointment / webinar, hto off | `cmp_test` | continue / S2 | watch / CB2 (from `as_cb`, fallback) |
 | demo appointment / webinar, hto off | `cmp_scale` | continue / S2 | watch / W1 (from `as_w1`) |
 | unknown-count, hto off | `cmp_test` / `cmp_scale` | continue / S2 | watch / CB2 (`as_cb`, fallback) / watch / W1 (`as_w1`) |
-| split-family, hto off | `cmp_test` | continue / S2 | watch / CB2 (from `as_cb`, fallback). Updated after the owner's derivation refinement: as_good and as_gate are ⏳, so 🔴 + ⏳ → 🟡 "أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B — جمهور Lookalike 1%»" (was predicted 🔴 under the earlier rule) |
+| split-family, hto off | `as_cb` | 🔴 kill / CB2 | **watch / W1** (FR-036 >1.5× copy). R4: today has 5 leads / 0 purchases, so CB2 stands down (FR-023); the 3-day cost is 2.7× target, so the guard applies. Final value after the owner's US4 decisions |
+| split-family, hto off | `cmp_test` | continue / S2 | **watch / W1 from `as_cb`** (D-R1: the matching 🟡 child); action "«Stage A — جمهور اهتمام: ريادة أعمال»: أوقِف هذه المجموعة · «Stage B — جمهور Lookalike 1%»: لا تزد الميزانية. راقبها …", no "أبقِ". Final value after R4 + FR-036 (was watch / CB2 after US1) |
 | split-family, hto off | `cmp_scale` | continue / S2 | watch / W1 (from `as_w1`) |
 | every fixture, hto on | both | watch / W5 | watch / W5 (own step, kept) |
 
@@ -482,3 +486,424 @@ Error: Database connection failed
 - **Not started (out of scope for this run)**: US2 (T023–T036), US3 (T037–T039), US4 (T040–T041),
   US5 (T042–T043), US6 (T044–T046), Polish (T047–T053).
 - Nothing is committed.
+
+
+---
+
+# Run 3 — US2 → Polish (2026-10-20)
+
+Base: `d150722` (US1 committed by the owner). Same rules as before.
+
+## Phase 4 — User Story 2 (one source for results and cost)
+
+The tests were written in the same pass as the code, in each task's file. All the new assertions
+cover behaviour that did not exist before (`؟`, nullable totals, archetype counting, the 3d window),
+so none of them could have passed against the old code.
+
+### T023 — `cellFormat.test.ts` ✅
+
+- `cpaCell`: unknown count → `؟` with the tooltip "لم يصل عدد النتائج من ميتا"; ⏳ and pre-gate
+  rows with results > 0 → the cost, uncolored; 0 results → `—` for every verdict.
+- `resultsCell`: a number, 0, and unknown → `؟` with the tooltip.
+- The existing zero-result assertions are kept.
+
+### T024 — `aggregate.test.ts` ✅
+
+- The fixture gains `conversionValue: 0`, which the type requires.
+- New cases:
+  - any unknown count → footer results and CPA are `null`;
+  - any unknown sales value → `conversionValue` is `null`, `roasUnknown` is set, ROAS is `null`;
+  - all values known → ROAS is computed;
+  - loading (`null`) aggregates are still skipped.
+
+### T025 — `DecisionTable.aggregate.test.ts` ✅
+
+- Every existing `aggregate()` call now passes the archetype (`"paid_lto"`, the fixture's
+  original meaning).
+- The existing 3d case still passes unchanged: its `w3d` (spend 30, 3 results) equals the 3-day
+  daily sum. No rewrite was needed.
+- New cases:
+  - 3d equals `w3d` even when the daily rows disagree;
+  - `appointment` counts `leadConversions` in today, 3d, 7d and custom;
+  - one `resultsUnknown` day makes the range `null`;
+  - a `null` `conversionValue` day makes the range value `null`.
+
+### T026 — `server/seriesChildrenSum.test.ts` ✅
+
+- **Deviation from the task text**: the children-sum is extracted into a new module,
+  `server/seriesChildrenSum.ts` (`sumChildDailyByDate`), instead of being exported from
+  `routers.ts`. The reason: the client invariant test (T027) imports it, and importing
+  `routers.ts` would pull in the tRPC router and database modules. `routers.ts` imports the new
+  module.
+- 5 tests: the split fields are summed, and become `undefined` if any child's is; the sales value
+  becomes `null` if any child's is; `resultsUnknown` is ORed; dates stay sorted.
+
+### T027 — `client/src/components/DecisionTable.invariants.test.ts` ✅
+
+- **Setup**: every fixture in `server/fixtures016.ts` × ranges {3d, today, 7d, 14d, 30d,
+  custom}, with the series built the way `dashboard.get` builds them.
+- **Invariants**:
+  - **N6.1**: results > 0 ⇒ the cost cell is neither `—` nor `؟`.
+  - **N6.2**: 3d results and cost equal the engine row's.
+  - **N6.4**: an unknown count is never rendered as 0.
+  - **N6.3, interpretation note**: a reason that starts with "اليوم:" (the circuit breaker) is
+    checked against today's results. Every other reason is checked against the 3-day results.
+    The demo's `as_cb` has 1 result in 3 days and 0 today, and its CB2 reason correctly says
+    "اليوم: … بدون أي نتيجة". Read literally ("any displayed result > 0"), FR-018 would flag this
+    correct text. Rulebook §5.5 rule 3 ties every reason number to the window its rule read.
+
+### T028 — Engine row and result ✅
+
+- `EngineRow.conversions_3d` is now `number | null`, computed with `countedResults` (`null` =
+  unknown), in both row builders.
+- `cpa_3d` is `null` when the count is unknown.
+- `EngineResult.archetype` is added, on the no-target result too.
+
+### T029 — Series children-sum ✅
+
+`sumChildDailyByDate` implements contract N3, and `dailyOf` in `routers.ts` calls it.
+
+### T030 — `FilterAgg` ✅
+
+`results` and `conversionValue` are now nullable. No filter predicate reads `results`
+(`filters.ts` filters on spend, impressions, CPA, CTR and CPM only), so no predicate change was
+needed.
+
+### T031 — `aggregate` / `aggFromWindow` ✅
+
+- Both take the archetype and count with `countedResults`.
+- The 3d chip always returns `aggFromWindow(s.w3d)`.
+- Every `w.conversions` / `d.conversions` read and both `?? 0` on `conversionValue` (the recorded
+  015 deviation) are gone.
+- One unknown day makes a range unknown.
+
+### T032 — `aggregateTotals` ✅
+
+Results and sales value become `null` when any part is unknown; `roasUnknown` is added. The `?? 0`
+is gone.
+
+### T033 — `cpaCell` / `resultsCell` ✅
+
+- `cpaCell`: branch 1 (`⏳ → —`) is removed; a new unknown branch returns `؟` with a title; ⏳ and
+  pre-gate rows with results show the cost uncolored.
+- `resultsCell` is added, along with the `RESULTS_UNKNOWN_TITLE` and `ROAS_UNKNOWN_TITLE`
+  constants.
+
+### T034 — Table cells and footer ✅
+
+- **3d**: the results cell reads `r.conversions_3d` and the CPA cell reads `r.cpa_3d`.
+- **Tooltips**: cells get `title` through the new `cellTitle(r, key)` and `totalTitle(key)`. They
+  keep the native `title` attribute pattern used elsewhere in the table; `cellValue` still returns
+  a string.
+- **Footer**: results and CPA follow N5; ROAS shows `—` with "قيمة المبيعات لم تصل من ميتا لبعض
+  الصفوف" when `roasUnknown`.
+- **Sorting**: unknown sorts like the old `-1`.
+
+### T035 — Dashboard ✅
+
+`Dashboard.tsx` passes `result.archetype` to `DecisionTable`.
+
+### T036 — US2 gate ✅
+
+- `pnpm run check`: clean.
+- `pnpm test`: **869 passed**, 37 skipped; only `auth-flow.e2e.test.ts` fails, as expected.
+- **Snapshot**: no change (`git diff --stat -- server/__snapshots__
+  specs/014-diagnosis-evidence-fallbacks` is empty). No verdict moved.
+- **Funnel card**: the report script vs `funnel-card-main.json` shows **0 differences** on all 12
+  fixtures.
+
+Raw `pnpm run check`:
+
+```text
+> qarar@1.0.0 check D:\Qarar worktrees\Qarar-016-judgment-model
+> tsc --noEmit
+
+```
+
+Raw `pnpm test` (closing block):
+
+```text
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+Error: Database connection failed
+ ❯ server/auth-flow.e2e.test.ts:22:13
+     20|     db = await getDb();
+     21|     if (!db) {
+     22|       throw new Error("Database connection failed");
+       |             ^
+     23|     }
+     24|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 58 passed | 2 skipped (61)
+      Tests  869 passed | 37 skipped (906)
+   Start at  17:52:42
+   Duration  21.60s (transform 10.95s, setup 144.08s, collect 83.78s, tests 31.72s, environment 39.85s, prepare 43.36s)
+
+ ELIFECYCLE  Test failed. See above for more details.
+```
+
+
+## Phase 5 — User Story 3 (verdict/diagnosis consistency guard)
+
+### T037 — `server/engine.consistencyGuard.test.ts` ✅
+
+20 tests:
+- 🔴 K1 with an INSUFFICIENT_DATA finding becomes ⏳ GATE, with the reason taken from the finding
+  and the action "اترك البيانات تتجمع";
+- 🔴 K3, CB1 and CB2 are unchanged;
+- 🟡, 🟢 and 🛟 are unchanged (Q1: B);
+- 🔴 without the finding is unchanged;
+- an SC-005 sweep over all 12 fixtures.
+
+It failed first (8 failures: `applyConsistencyGuard is not a function`), then passed after T038.
+
+### T038 — `applyConsistencyGuard` ✅
+
+- Exported from `server/engine.ts` per contract G2.
+- Called in the ad loop and the ad-set loop, after `diagnose()` and before `toRow`. It is never
+  called in the campaign loop.
+- The derivation therefore reads the guarded ad-set verdicts.
+- Findings stay on the row.
+
+### T039 — US3 gate ✅
+
+- `pnpm run check`: clean.
+- `pnpm test`: **889 passed**, 37 skipped; only `auth-flow.e2e.test.ts` fails, as expected.
+- **No snapshot or baseline change.** The guard moves no fixture verdict, as research §1.3
+  predicted, so no "Snapshot changes" row is added.
+- Funnel card vs main: 0 differences.
+
+Raw `pnpm run check`:
+
+```text
+> qarar@1.0.0 check D:\Qarar worktrees\Qarar-016-judgment-model
+> tsc --noEmit
+
+```
+
+Raw `pnpm test` (closing block):
+
+```text
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+Error: Database connection failed
+ ❯ server/auth-flow.e2e.test.ts:22:13
+     20|     db = await getDb();
+     21|     if (!db) {
+     22|       throw new Error("Database connection failed");
+       |             ^
+     23|     }
+     24|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 59 passed | 2 skipped (62)
+      Tests  889 passed | 37 skipped (926)
+   Start at  17:57:52
+   Duration  20.79s (transform 11.40s, setup 135.76s, collect 72.05s, tests 27.77s, environment 35.96s, prepare 40.01s)
+
+ ELIFECYCLE  Test failed. See above for more details.
+```
+
+
+## Phase 6 — User Story 4 (circuit breaker counts the funnel's result type)
+
+### T040 — Tests ✅
+
+New describe "016 R4 — circuit breaker family" in `server/engine.test.ts` (4 tests), built on the
+demo's `as_cb` with today's spend at 3× the funnel's target:
+- paid_lto with 0 purchases / 5 leads → no CB1/CB2 (FR-024);
+- webinar with 0 / 0 → CB2 (FR-024);
+- webinar with 0 leads / 4 purchases → stands down;
+- paid_lto with both families at 0 → CB2.
+
+The first one failed before T041. The `NormalizedObject` type import was added to the test file.
+
+### T041 — `circuitBreaker(o, target, archetype)` ✅ (code)
+
+- Today's results are read with `countedResults(o.today, archetype)`: unknown → stand down;
+  counted > 0 → stand down; counted 0 with the other family > 0 → stand down (FR-023).
+- The call site in `evaluateAdset` passes the archetype. CB1/CB2 copy is unchanged.
+- The engine suite passes (163/163).
+
+## ⛔ STOPPED in the US4 gate — unexpected verdict change
+
+T042–T053 are **not started**. The T041 code is in place and uncommitted. No test was edited to
+match the new outcome.
+
+### What changed
+
+`pnpm test`: 892 passed, **1 failed** (plus the expected `auth-flow.e2e.test.ts`):
+`engine.campaignDerivation.test.ts` › "split-family cmp_test (🔴 + ⏳ ad sets) → 🟡 CB2 from
+as_cb…". No snapshot or baseline changed. The funnel card is the same as main on all 12 fixtures.
+
+In `split-family/paid_lto/hto-off`:
+
+| Row | Before R4 (US1 expected row) | After R4 |
+|---|---|---|
+| `as_cb` | 🔴 kill / CB2 "اليوم: صرف … بدون أي نتيجة" | 🟢 **continue / S2** "في آخر 3 أيام: الأرقام في النطاق الطبيعي — …" / "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام" |
+| `cmp_test` | 🟡 watch / CB2 from `as_cb`, "أوقِف «as_k1»، «as_cb»" | 🟡 **watch / K1** from `as_k1`, "أوقِف «Stage A — جمهور اهتمام: ريادة أعمال» وأبقِ «Stage B — جمهور Lookalike 1%»" |
+
+With hto on, `cmp_test` is still W5. The CB2 stand-down itself is exactly FR-023: today the ad set
+recorded 5 leads and 0 purchases on a paid_lto funnel, so "zero results today" is not evidence.
+The fixture was built for this case.
+
+### Why I stopped
+
+The change was not pre-filled. The T008 expected rows covered US1 only, with R3–R5 explicitly out
+of that run. And the result raises a question outside R4: once CB2 stands down, `as_cb` gets **🟢
+S2** even though its 3-day cost is **$116 per result against a $43 target (2.7×)**, on $116 spend
+(2.7× target). No existing rule covers that band:
+- K2 needs spend ≥ 3× target;
+- W1 covers cost 1×–1.5× target;
+- the engine's fallthrough is S2 "الأرقام في النطاق الطبيعي".
+
+This gap already exists on main for any ad set in that band without a CB trigger. R4 only uncovers
+it on this fixture. The campaign now tells the owner to **keep** that ad set.
+
+### Decisions needed
+
+1. **Accept the split-family change as an R4 consequence?** If yes, I'd update the T010 test, the
+   expected row, and the "Snapshot changes" side table (justification: FR-023, T041).
+2. **The 1.5×–3× gap** (cost above 1.5× target while spend is still under 3× target → 🟢 S2): leave
+   it for a later feature (not in R1–R6), or handle it now? Handling it would mean choosing a rule
+   the rulebook doesn't define for that band.
+
+### Gate output at the stop point
+
+Raw `pnpm run check`:
+
+```text
+> qarar@1.0.0 check D:\Qarar worktrees\Qarar-016-judgment-model
+> tsc --noEmit
+
+```
+
+Raw `pnpm test` (closing block):
+
+```text
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+Error: Database connection failed
+ ❯ server/auth-flow.e2e.test.ts:22:13
+     20|     db = await getDb();
+     21|     if (!db) {
+     22|       throw new Error("Database connection failed");
+       |             ^
+     23|     }
+     24|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/engine.campaignDerivation.test.ts > runEngine — demo campaigns are derived (FR-001–FR-007) > 
+split-family cmp_test (🔴 + ⏳ ad sets) → 🟡 CB2 from as_cb, stopping only the red ones
+AssertionError: expected 'K1' to be 'CB2' // Object.is equality
+
+Expected: "CB2"
+Received: "K1"
+
+ ❯ server/engine.campaignDerivation.test.ts:272:20
+    270|     const c = get(runEngine(fx.build(), fx.funnel), "cmp_test");
+    271|     expect(c.verdict).toBe("watch");
+    272|     expect(c.rule).toBe("CB2");
+       |                    ^
+    273|     expect(c.derived_from_adset?.id).toBe("as_cb");
+    274|     expect(c.action_ar).toBe("أوقِف «Stage A — جمهور اهتمام: ريادة أعم…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+ Test Files  2 failed | 58 passed | 2 skipped (62)
+      Tests  1 failed | 892 passed | 37 skipped (930)
+   Start at  17:59:41
+   Duration  18.70s (transform 12.35s, setup 119.72s, collect 73.22s, tests 26.03s, environment 37.34s, prepare 34.17s)
+
+ ELIFECYCLE  Test failed. See above for more details.
+```
+
+
+## ▶ Resumed after the owner's US4 decisions (2026-10-20)
+
+1. **The split-family change** is accepted as an R4 consequence (FR-023). The rows are recorded
+   once, with the final values after decision 2 (see "Campaign verdicts in the other fixtures").
+2. **The 1.5×–3× gap is fixed now, as a guard (FR-036).**
+   - **Bookkeeping**:
+     - spec: FR-036, US4 scenario 4, Clarifications;
+     - tasks: T041a–T041c;
+     - rulebook `docs/spec-015/qarar-rulebook-v2.2.md`: the W1 row now reads "CPA فوق الهدف ولم
+       تكتمل شروط K2 (صرف ≥ 3× الهدف)", with a new changelog section "2.2.1 — W1 يغطي كل تكلفة فوق
+       الهدف قبل K2". The W1 action column is unchanged.
+
+### T041a — Tests first ✅
+
+New describe "016 FR-036 — above-target guard" in `server/engine.test.ts` (6 tests):
+- ad set at 2.7× → 🟡 W1, new copy, feminine;
+- ad at 2.7× → masculine copy;
+- 1.2× → the existing W1 copy, byte-identical;
+- cost ≤ target → still 🟢;
+- W3 / W4 / W6 rows unchanged (W6 at $70 = 1.63× with full return ≥ 2 stays 🟢 W6);
+- sweep: zero 🟢 rows with `cpa_3d > target` on all 12 fixtures.
+
+Before T041b, 3 failed (the two new-copy cases and the sweep) and 3 passed (behaviour that must
+not change). The split-family test in `engine.campaignDerivation.test.ts` was updated once, to the
+final values.
+
+### T041b — `aboveTargetGuard` ✅
+
+- Called in `evaluateAdset` and `evaluateAd` immediately before `continueRules`, after every K
+  and W rule. No new rule code.
+- Condition: counted 3-day results > 0 and cost > target.
+  - 1×–1.5× → the existing W1 strings (in practice already caught earlier by `watchRules`).
+  - Above 1.5× → the new reason, plus the ad-set or ad action.
+- Money uses the engine's `money()`; for the $43 target: $129 = 3×, $65 = 1.5×.
+- K2 and the rule order are untouched (constitution v1.1.2 Principle I).
+
+### T041c — US4 gate ✅
+
+- `pnpm run check`: clean.
+- `pnpm test`: **899 passed**, 37 skipped; only `auth-flow.e2e.test.ts` fails, as expected.
+- **Snapshot**: `-u` run on `server/engine.test.ts` only, after confirming the diff touched only
+  `ad_cb` (🟢 S2, $116 against a $43 / $39 target) in both exports. 8 lines changed.
+- **Scenario 13 baseline**: `ad_cb` only, 4 lines. Both are in "Snapshot changes".
+- **split-family** final values match the owner's expected row exactly: `as_cb` 🟡 W1 (new copy);
+  `cmp_test` 🟡 W1 from `as_cb`, Stage A stopped, Stage B watched, no "أبقِ".
+- **Funnel card vs main**: 0 differences on all 12 fixtures.
+
+Raw `pnpm run check`:
+
+```text
+> qarar@1.0.0 check D:\Qarar worktrees\Qarar-016-judgment-model
+> tsc --noEmit
+
+```
+
+Raw `pnpm test` (closing block):
+
+```text
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+Error: Database connection failed
+ ❯ server/auth-flow.e2e.test.ts:22:13
+     20|     db = await getDb();
+     21|     if (!db) {
+     22|       throw new Error("Database connection failed");
+       |             ^
+     23|     }
+     24|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 59 passed | 2 skipped (62)
+      Tests  899 passed | 37 skipped (936)
+   Start at  18:45:10
+   Duration  15.56s (transform 9.29s, setup 98.41s, collect 61.19s, tests 22.52s, environment 31.59s, prepare 33.40s)
+
+ ELIFECYCLE  Test failed. See above for more details.
+```

@@ -2,10 +2,13 @@
  * CPA cell formatter — pure helper so the rendering rule is unit-testable
  * independent of the table component.
  *
- * Batch 2 / ISSUE-004 — branches (contracts/cpa-column.md):
- *   1. verdict === "too_early" OR pre-gate                  → "—"  neutral
+ * Spec 016 / FR-014 (contract single-source-numbers.md §N5) — branches:
+ *   1. results unknown (null)                               → "؟"  neutral, with tooltip
  *   2. results === 0 / cpa null (zero conversions)          → "—"  red iff kill, else neutral
- *   3. otherwise                                            → money(cpa) per target
+ *   3. otherwise, too_early or pre-gate                     → money(cpa), neutral
+ *   4. otherwise                                            → money(cpa) per target
+ * (Before 016, too_early / pre-gate rows always showed "—", which hid the
+ * cost of a ⏳ row that had results — rulebook §5.5 rule 4.)
  *
  * Spec 012 — `target` is `number | null` (FR-019d). When null we cannot
  * colour the cell good/bad because there is no threshold to compare
@@ -20,7 +23,8 @@ import { RULES, type EngineRow, type RuleCode, type Verdict } from "@shared/qara
 
 export interface CpaCellInput {
   verdict: Verdict;
-  results: number;
+  /** Spec 016 / FR-014 — `null` = the count is unknown. */
+  results: number | null;
   cpa: number | null;
   /** True when the row has not met the gate threshold (e.g. pre-gate under-data). */
   preGate?: boolean;
@@ -37,27 +41,47 @@ export interface CpaCellInput {
 export interface CpaCellOutput {
   value: string;
   className: string;
+  /** Spec 016 / FR-014 — tooltip, set on the unknown cell. */
+  title?: string;
 }
 
 export function cpaCell(input: CpaCellInput): CpaCellOutput {
   const { verdict, results, cpa, preGate, target, currency = "$" } = input;
-  // 1. Pre-gate / too_early: neutral dash, no color
-  if (verdict === "too_early" || preGate) {
-    return { value: "—", className: "font-bold" };
+  // 1. Unknown count: say so, never "0" or "—" (FR-014, FR-015)
+  if (results === null) {
+    return { value: "؟", className: "font-bold", title: RESULTS_UNKNOWN_TITLE };
   }
-  // 2. Zero conversions / null CPA: em dash. Red ONLY for kill (so the
-  // kill signal survives); neutral for every other verdict.
+  // 2. Zero conversions / null CPA
   if (results === 0 || cpa === null) {
     const color = verdict === "kill" ? cpaColorClass(null, target) : "";
     return { value: "—", className: `font-bold ${color}`.trim() };
   }
-  // 3. CPA present — money(cpa) with target-relative color. When the
-  // target is null we render uncoloured (SC-022) rather than fabricating
-  // a comparison baseline.
-  return {
-    value: money(cpa, currency),
-    className: `font-bold ${cpaColorClass(cpa, target)}`,
-  };
+  // 3. A ⏳ / pre-gate row with results shows its cost, uncolored: it passes
+  //    no judgment on it (FR-014).
+  if (verdict === "too_early" || preGate) {
+    return { value: money(cpa, currency), className: "font-bold" };
+  }
+  // 4.
+  return { value: money(cpa, currency), className: `font-bold ${cpaColorClass(cpa, target)}` };
+}
+
+
+/** Spec 016 / FR-015 — tooltip on a result count Meta did not send. */
+export const RESULTS_UNKNOWN_TITLE = "لم يصل عدد النتائج من ميتا";
+
+/** Spec 016 / FR-017 — tooltip on a footer ROAS with an unknown sales value. */
+export const ROAS_UNKNOWN_TITLE = "قيمة المبيعات لم تصل من ميتا لبعض الصفوف";
+
+/**
+ * Spec 016 / FR-015 — the results cell: unknown is "؟" with a tooltip,
+ * never "0".
+ */
+export function resultsCell(
+  results: number | null,
+  fmt: (n: number) => string = n => String(n)
+): { value: string; title?: string } {
+  if (results === null) return { value: "؟", title: RESULTS_UNKNOWN_TITLE };
+  return { value: fmt(results) };
 }
 
 /**

@@ -26,7 +26,8 @@ export interface FilterRule {
 export interface FilterAgg {
   spend: number;
   impressions: number;
-  results: number;
+  /** Spec 016 / FR-012 — counted with `countedResults`; `null` = unknown, never 0. */
+  results: number | null;
   linkClicks: number;
   clicks: number;
   lpViews: number;
@@ -40,8 +41,12 @@ export interface FilterAgg {
   lpRate: number | null;
   frequency: number | null;
   spendShare: number | null;
-  /** Hotfix T9: sum of conversion value across the selected window — for ROAS. */
-  conversionValue: number;
+  /**
+   * Hotfix T9: sum of conversion value across the selected window — for ROAS.
+   * Spec 016 / FR-017 — `null` when Meta sent no value for any part of the
+   * window; never summed as 0.
+   */
+  conversionValue: number | null;
 }
 
 export const FILTER_FIELDS: Record<

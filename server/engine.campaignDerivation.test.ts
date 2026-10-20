@@ -265,13 +265,25 @@ describe("runEngine — demo campaigns are derived (FR-001–FR-007)", () => {
     for (const id of ["as_w1", "as_w3"]) expect(get(paid, id).budget_control).toBeNull();
     for (const x of paid.rows.filter(x => x.level === "ad")) expect(x.budget_control).toBeNull();
   });
-  it("split-family cmp_test (🔴 + ⏳ ad sets) → 🟡 CB2 from as_cb, stopping only the red ones", () => {
+  it("split-family cmp_test → 🟡 W1 from as_cb: stop Stage A, watch Stage B, keep nothing (R4 + FR-036)", () => {
+    // as_cb recorded 5 leads / 0 purchases today, so CB2 stands down (FR-023);
+    // its 3-day cost is 2.7× target, so the FR-036 guard makes it 🟡 W1.
     const fx = FIXTURES016.find(f => f.name === "split-family/paid_lto/hto-off")!;
-    const c = get(runEngine(fx.build(), fx.funnel), "cmp_test");
+    const r = runEngine(fx.build(), fx.funnel);
+    const as = get(r, "as_cb");
+    expect([as.verdict, as.rule]).toEqual(["watch", "W1"]);
+    expect(as.action_ar).toBe(
+      "لا تزد الميزانية. راقبها يومين أو ثلاثة — إن وصل صرفها إلى $129 والتكلفة ما زالت فوق $65 فأوقِفها"
+    );
+    const c = get(r, "cmp_test");
     expect(c.verdict).toBe("watch");
-    expect(c.rule).toBe("CB2");
+    expect(c.rule).toBe("W1");
     expect(c.derived_from_adset?.id).toBe("as_cb");
-    expect(c.action_ar).toBe("أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B — جمهور Lookalike 1%»");
+    expect(c.action_ar).toBe(
+      "«Stage A — جمهور اهتمام: ريادة أعمال»: أوقِف هذه المجموعة · «Stage B — جمهور Lookalike 1%»: " +
+        "لا تزد الميزانية. راقبها يومين أو ثلاثة — إن وصل صرفها إلى $129 والتكلفة ما زالت فوق $65 فأوقِفها"
+    );
+    expect(c.action_ar).not.toContain("أبقِ");
   });
   it("(Q2) a derived 🔴 campaign's top action names its source ad set", () => {
     // Pause the 🟢 and ⏳ ad sets so every active ad set of cmp_test is 🔴.

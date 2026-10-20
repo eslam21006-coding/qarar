@@ -20,6 +20,7 @@ function agg(overrides: Partial<FilterAgg> = {}): FilterAgg {
     lpRate: null,
     frequency: null,
     spendShare: null,
+    conversionValue: 0,
     ...overrides,
   };
 }
@@ -91,5 +92,32 @@ describe("aggregateTotals — US6", () => {
     const result = aggregateTotals(["a"], aggs);
 
     expect(result.lpRate).toBe(0);
+  });
+});
+
+// Spec 016 / T024 — the footer never sums an unknown as 0 (FR-016, FR-017).
+describe("aggregateTotals — spec 016 unknown is not zero", () => {
+  const ids = ["a", "b"];
+  it("any included row with unknown results → footer results and CPA null", () => {
+    const t = aggregateTotals(ids, new Map([["a", agg()], ["b", agg({ results: null, cpa: null })]]));
+    expect(t.results).toBeNull();
+    expect(t.cpa).toBeNull();
+  });
+  it("any included row with unknown sales value → conversionValue null, roasUnknown, ROAS null", () => {
+    const t = aggregateTotals(ids, new Map([["a", agg({ conversionValue: 300 })], ["b", agg({ conversionValue: null })]]));
+    expect(t.conversionValue).toBeNull();
+    expect(t.roasUnknown).toBe(true);
+    expect(t.roas).toBeNull();
+  });
+  it("all known → ROAS computed, roasUnknown false", () => {
+    const t = aggregateTotals(ids, new Map([["a", agg({ conversionValue: 300 })], ["b", agg({ conversionValue: 100 })]]));
+    expect(t.roasUnknown).toBe(false);
+    expect(t.roas).toBe(2);
+    expect(t.results).toBe(4);
+  });
+  it("loading (null) aggregates are still skipped", () => {
+    const t = aggregateTotals(ids, new Map<string, FilterAgg | null>([["a", agg()], ["b", null]]));
+    expect(t.results).toBe(2);
+    expect(t.spend).toBe(100);
   });
 });

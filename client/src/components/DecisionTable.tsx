@@ -30,13 +30,13 @@ import { Input } from "@/components/ui/input";
 import { VerdictBadge } from "@/components/Verdict";
 import { VerdictHistoryDialog } from "@/components/VerdictHistoryDialog";
 import { cpaColorClass, ctrColorClass, money, num, pct } from "@/lib/format";
-import { cpaCell, budgetControlView } from "@/lib/cellFormat";
+import { cpaCell, budgetControlView, resultsCell, RESULTS_UNKNOWN_TITLE, ROAS_UNKNOWN_TITLE } from "@/lib/cellFormat";
 import { applyFilters, FILTER_FIELDS, type FilterAgg, type FilterField, type FilterJoin, type FilterOp, type FilterRule } from "@/lib/filters";
 import { aggregateTotals } from "@/lib/aggregate";
 import { presetRangeBounds } from "@/lib/dateWindow";
 import { trpc } from "@/lib/trpc";
 import type { AccountSummary, DailyMetrics, EngineRow, Verdict, WindowMetrics } from "@shared/qarar";
-import { isDeliveringStatus, isHiddenStatus } from "@shared/qarar";
+import { countedResults, isDeliveringStatus, isHiddenStatus, type FunnelArchetype } from "@shared/qarar";
 import {
   ArrowDown,
   ArrowUp,
@@ -109,15 +109,17 @@ function dateStr(off: number): string {
   );
 }
 
-function aggFromWindow(w: WindowMetrics): FilterAgg {
+function aggFromWindow(w: WindowMetrics, archetype: FunnelArchetype): FilterAgg {
+  // Spec 016 / FR-012 — the engine's counting rule; `null` = unknown.
+  const results = countedResults(w, archetype);
   return {
     spend: w.spend,
     impressions: w.impressions,
-    results: w.conversions,
+    results,
     linkClicks: w.linkClicks,
     clicks: w.clicks,
     lpViews: w.lpViews,
-    cpa: w.conversions > 0 ? w.spend / w.conversions : null,
+    cpa: results !== null && results > 0 ? w.spend / results : null,
     ctrLink: w.impressions > 0 ? w.ctrLink : null,
     ctrAll: w.impressions > 0 ? w.ctrAll : null,
     cpm: w.impressions > 0 ? w.cpm : null,
@@ -134,14 +136,10 @@ function aggFromWindow(w: WindowMetrics): FilterAgg {
     frequency: null,
     spendShare: null,
     // Hotfix T9: ROAS input for the footer.
-    // Spec 015 / FR-026 — `w.conversionValue` is now `number | null`, where
-    // null means Meta sent no value data. Coalescing to 0 HERE is safe and
-    // is NOT the rule-level `?? 0` that contracts/unknown-vs-zero.md §U3
-    // forbids: this is a display sum, every consumer guards the result with
-    // `conversionValue > 0 ? … : null` (lib/aggregate.ts:56), so an unknown
-    // value contributes nothing and the footer renders "—" rather than
-    // "0.0x". No verdict reads this path.
-    conversionValue: w.conversionValue ?? 0,
+    // Spec 016 / FR-017 — an unknown value (null) stays null; the footer
+    // shows "—" with a tooltip instead of summing it as 0 (this replaces
+    // the `?? 0` deviation recorded in spec 015).
+    conversionValue: w.conversionValue,
   };
 }
 
@@ -167,10 +165,15 @@ export function aggregate(
   from: string,
   to: string,
   asOfDate: string,
-  lazyDaily?: DailyMetrics[] | null,
+  lazyDaily: DailyMetrics[] | null | undefined,
+  archetype: FunnelArchetype,
 ): FilterAgg | null {
   if (!s) return null;
-  if (range === "today") return aggFromWindow(s.today);
+  if (range === "today") return aggFromWindow(s.today, archetype);
+  // Spec 016 / FR-013, FR-018 (research D11) — the 3d chip IS the engine's
+  // window (last 3 complete days, without today), so its numbers equal the
+  // verdict's. It never sums the daily series.
+  if (range === "3d") return aggFromWindow(s.w3d, archetype);
   // Loading state — caller explicitly passed `null`. We deliberately do
   // NOT aggregate against the empty default; the DecisionTable shows a
   // row-level "—" with the toolbar spinner instead.
@@ -179,28 +182,29 @@ export function aggregate(
   //   undefined → use cached s.daily30
   //   [] or [...items] → authoritative use the lazy slice (even if empty)
   const dailyForAgg = lazyDaily !== undefined ? lazyDaily : s.daily30;
-  // 3d preset is the one case the historical code allowed falling back to
-  // the engine's w3d window when daily30 was absent.
-  if (range === "3d" && dailyForAgg.length === 0) return aggFromWindow(s.w3d);
-  const days = range === "3d" ? 3 : range === "7d" ? 7 : range === "14d" ? 14 : 30;
+  const days = range === "7d" ? 7 : range === "14d" ? 14 : 30;
   // Preset chips: window ends YESTERDAY (account-tz asOfDate − 1), never today
   // (spec 010 FR-004). custom keeps the user-picked from/to.
   const preset = range === "custom" ? null : presetRangeBounds(asOfDate, days);
   const since = range === "custom" ? from : preset!.since;
   const until = range === "custom" ? to : preset!.until;
   if (!since || !until) return null;
-  let spend = 0, imps = 0, clicks = 0, linkClicks = 0, conv = 0, lp = 0, v3 = 0, tp = 0, value = 0;
+  let spend = 0, imps = 0, clicks = 0, linkClicks = 0, lp = 0, v3 = 0, tp = 0;
+  // Spec 016 / FR-013, FR-017 — one unknown day makes the range unknown.
+  let conv: number | null = 0;
+  let value: number | null = 0;
   for (const d of dailyForAgg) {
     if (d.date < since || d.date > until) continue;
     spend += d.spend;
     imps += d.impressions;
     clicks += d.clicks;
     linkClicks += d.linkClicks;
-    conv += d.conversions;
+    const dayCount = countedResults(d, archetype);
+    conv = conv === null || dayCount === null ? null : conv + dayCount;
     lp += d.lpViews;
     v3 += d.videoViews3s ?? 0;
     tp += d.thruplays ?? 0;
-    value += d.conversionValue ?? 0;
+    value = value === null || d.conversionValue === null ? null : value + d.conversionValue;
   }
   return {
     spend,
@@ -209,7 +213,7 @@ export function aggregate(
     linkClicks,
     clicks,
     lpViews: lp,
-    cpa: conv > 0 ? spend / conv : null,
+    cpa: conv !== null && conv > 0 ? spend / conv : null,
     ctrLink: imps > 0 ? (linkClicks / imps) * 100 : null,
     ctrAll: imps > 0 ? (clicks / imps) * 100 : null,
     cpm: imps > 0 ? (spend / imps) * 1000 : null,
@@ -326,6 +330,7 @@ export function DecisionTable({
   summary,
   currencySymbol = "$",
   asOfDate,
+  archetype,
 }: {
   rows: EngineRow[];
   series: SeriesObj[];
@@ -351,6 +356,8 @@ export function DecisionTable({
    * for snapshots cached before this field existed (research R4).
    */
   asOfDate?: string;
+  /** Spec 016 / FR-012 — the funnel archetype the engine counted with. */
+  archetype: FunnelArchetype;
 }) {
   const utils = trpc.useUtils();
 
@@ -576,10 +583,10 @@ export function DecisionTable({
         // AD ROWS, FETCHED: lazy data is authoritative even when empty.
         lazySlice = lazyById[r.id] ?? [];
       }
-      m.set(r.id, aggregate(seriesMap.get(r.id), aggRange, from, to, asOf, lazySlice));
+      m.set(r.id, aggregate(seriesMap.get(r.id), aggRange, from, to, asOf, lazySlice, archetype));
     }
     return m;
-  }, [rows, seriesMap, range, from, to, asOfDate, lazyHistory.data, lazyHistory.error, needsLazyHistory]);
+  }, [rows, seriesMap, range, from, to, asOfDate, lazyHistory.data, lazyHistory.error, needsLazyHistory, archetype]);
 
   // visible rows — when searching/filtering, search across ALL levels
   const hasFilters = filterRules.length > 0;
@@ -664,8 +671,10 @@ export function DecisionTable({
       case "spend":
         return money(totals.spend, currencySymbol);
       case "results":
-        return num(totals.results);
+        return resultsCell(totals.results, num).value;
       case "cpa":
+        // Spec 016 / FR-016 — "؟" when the count is unknown, "—" at 0.
+        if (totals.results === null) return "؟";
         return totals.cpa === null ? "—" : money(totals.cpa, currencySymbol);
       case "roas":
         return totals.roas === null ? "—" : `${totals.roas.toFixed(2)}x`;
@@ -686,6 +695,26 @@ export function DecisionTable({
     }
   };
 
+  // Spec 016 / FR-015, FR-017 — tooltips on unknown footer cells.
+  const totalTitle = (key: ColKey): string | undefined => {
+    if ((key === "results" || key === "cpa") && totals.results === null) return RESULTS_UNKNOWN_TITLE;
+    if (key === "roas" && totals.roasUnknown) return ROAS_UNKNOWN_TITLE;
+    return undefined;
+  };
+
+  // Spec 016 / FR-018 — in 3d the results and cost cells read the engine
+  // row: the exact figures the verdict was judged on.
+  const rowResults = (r: EngineRow, a: FilterAgg | null | undefined): number | null =>
+    range === "3d" ? r.conversions_3d : (a?.results ?? null);
+
+  // Spec 016 / FR-014, FR-015 — tooltip on a result count Meta did not send.
+  const cellTitle = (r: EngineRow, key: ColKey): string | undefined => {
+    if (key !== "results" && key !== "cpa") return undefined;
+    const a = aggs.get(r.id);
+    if (range !== "3d" && a == null) return undefined;
+    return rowResults(r, a) === null ? RESULTS_UNKNOWN_TITLE : undefined;
+  };
+
   const cellValue = (r: EngineRow, key: ColKey): string => {
     const a = aggs.get(r.id);
     switch (key) {
@@ -697,7 +726,8 @@ export function DecisionTable({
         // worse than a missing cell.
         return a == null ? "—" : money(a.spend, currencySymbol);
       case "results":
-        return a == null ? "—" : num(a.results);
+        if (range !== "3d" && a == null) return "—";
+        return resultsCell(rowResults(r, a), num).value;
       case "cpa":
         // Batch 2 / ISSUE-004 — in the default 3d view, the column must show
         // the engine's cpa_3d (the exact figure behind the verdict). For
@@ -761,7 +791,7 @@ export function DecisionTable({
       }
       return cpaCell({
         verdict: r.verdict,
-        results: a?.results ?? 0,
+        results: a ? a.results : 0,
         cpa: a?.cpa ?? null,
         target: unitTarget,
         currency: currencySymbol,
@@ -1269,6 +1299,7 @@ export function DecisionTable({
                       <td
                         key={c.key}
                         className={`num whitespace-nowrap px-2 py-2.5 text-center ${cellClass(r, c.key)}`}
+                        title={cellTitle(r, c.key)}
                       >
                         {cellValue(r, c.key)}
                       </td>
@@ -1369,6 +1400,7 @@ export function DecisionTable({
                     <td
                       key={c.key}
                       className="num whitespace-nowrap px-2 py-2 text-center text-xs"
+                      title={totalTitle(c.key)}
                     >
                       {totalCell(c.key)}
                     </td>

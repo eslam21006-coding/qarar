@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { deriveTargets, judgingTargets, runEngine } from "./engine";
 import { buildDemoSnapshot, DEMO_FUNNEL } from "./demo";
 import { parseInsightsRow } from "./meta";
-import { FunnelInputs, type AccountSnapshotPayload } from "../shared/qarar";
+import { FunnelInputs, type AccountSnapshotPayload, type NormalizedObject } from "../shared/qarar";
 
 const baseFunnel: FunnelInputs = {
   archetype: "paid_lto",
@@ -2179,5 +2179,117 @@ describe("T082 — no 🔴 row claims 'no results' while its window has results 
     }
     // The invariant must have been exercised, not vacuously true.
     expect(checked).toBeGreaterThan(0);
+  });
+});
+
+// Spec 016 / US4 (R4, FR-022–FR-024) — the circuit breaker reads today's
+// results with the funnel's counting rule and stands down when today's
+// results came in the other family. Contract: circuit-breaker-and-k5.md §B1.
+describe("016 R4 — circuit breaker family", () => {
+  function cbRow(archetype: FunnelInputs["archetype"], today: Partial<NormalizedObject["today"]>, spendMultiple = 3) {
+    const funnel = { ...(DEMO_FUNNEL as FunnelInputs), archetype };
+    const target = runEngine(buildDemoSnapshot(), funnel).targets.unitTarget as number;
+    const snap = buildDemoSnapshot();
+    const o = snap.objects.find(x => x.id === "as_cb")!;
+    o.today = { ...o.today, spend: spendMultiple * target, ...today };
+    return runEngine(snap, funnel).rows.find(r => r.id === "as_cb")!;
+  }
+
+  it("paid_lto: today 0 purchases / 5 leads at 3× target → no CB1/CB2 (FR-024)", () => {
+    const row = cbRow("paid_lto", { conversions: 0, purchaseConversions: 0, leadConversions: 5 });
+    expect(row.rule).not.toBe("CB2");
+    expect(row.rule).not.toBe("CB1");
+  });
+
+  it("webinar: today 0 leads / 0 purchases at 3× target → CB2 (FR-024)", () => {
+    const row = cbRow("webinar", { conversions: 0, leadConversions: 0, purchaseConversions: 0 });
+    expect(row.verdict).toBe("kill");
+    expect(row.rule).toBe("CB2");
+  });
+
+  it("webinar: today 0 leads but 4 purchases at 3× target → stands down (other family recorded)", () => {
+    const row = cbRow("webinar", { conversions: 4, leadConversions: 0, purchaseConversions: 4 });
+    expect(row.rule).not.toBe("CB2");
+  });
+
+  it("paid_lto: both families 0 today at 3× target → CB2 (a genuine zero)", () => {
+    const row = cbRow("paid_lto", { conversions: 0, purchaseConversions: 0, leadConversions: 0 });
+    expect(row.rule).toBe("CB2");
+  });
+});
+
+// Spec 016 / FR-036 (owner decision 2026-10-20, US4 stop) — a row that
+// reaches the S1–S4 step with results and a cost above its target is 🟡 W1,
+// never 🟢. Placed after every K and W rule; K2 and rule order untouched.
+describe("016 FR-036 — above-target guard", () => {
+  // Demo paid_lto target is $43; as_cb / ad_cb carry spend $116 with 1 result
+  // over 3 days. Today's spend is zeroed so the circuit breaker stays out.
+  function run(edit: (o: NormalizedObject) => void, ids: string[] = ["as_cb"]) {
+    const snap = buildDemoSnapshot();
+    for (const o of snap.objects) {
+      if (o.id === "as_cb") o.today = { ...o.today, spend: 0 };
+      if (ids.includes(o.id)) edit(o);
+    }
+    return runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+  }
+  const REASON_27 = "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $43 — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ($129)";
+
+  it("ad set at 2.7× target cost on 2.7× target spend → 🟡 W1, new copy (feminine)", () => {
+    const row = run(() => {}).rows.find(r => r.id === "as_cb")!;
+    expect([row.verdict, row.rule]).toEqual(["watch", "W1"]);
+    expect(row.reason_ar).toBe(REASON_27);
+    expect(row.action_ar).toBe(
+      "لا تزد الميزانية. راقبها يومين أو ثلاثة — إن وصل صرفها إلى $129 والتكلفة ما زالت فوق $65 فأوقِفها"
+    );
+  });
+
+  it("ad at 2.7× target cost → 🟡 W1, new copy (masculine)", () => {
+    const row = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs).rows.find(r => r.id === "ad_cb")!;
+    expect([row.verdict, row.rule]).toEqual(["watch", "W1"]);
+    expect(row.reason_ar).toBe(REASON_27);
+    expect(row.action_ar).toBe(
+      "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى $129 والتكلفة ما زالت فوق $65 فأوقِفه"
+    );
+  });
+
+  it("cost 1.2× target → 🟡 W1 with the existing copy, byte-identical", () => {
+    const row = run(o => {
+      o.w3d = { ...o.w3d, spend: 51.6, conversions: 1, leadConversions: 1, purchaseConversions: 1, cpa: 51.6 };
+    }).rows.find(r => r.id === "as_cb")!;
+    expect([row.verdict, row.rule]).toEqual(["watch", "W1"]);
+    expect(row.reason_ar).toBe("في آخر 3 أيام: تكلفة العميل $52 أعلى من هدفك ($43) بقليل — ليست كارثة");
+    expect(row.action_ar).toBe("راقبه يومين أو ثلاثة بدون أي تعديل");
+  });
+
+  it("cost ≤ target → still 🟢", () => {
+    const row = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs).rows.find(r => r.id === "as_good")!;
+    expect(row.verdict).toBe("continue");
+  });
+
+  it("rows that are W3, W4 or W6 today are unchanged", () => {
+    const demo = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs);
+    expect(demo.rows.find(r => r.id === "as_w3")!.rule).toBe("W3");
+    // W4: good clicks, few page views (cost 2.7× target).
+    const w4 = run(o => {
+      o.w3d = { ...o.w3d, lpViews: 40 };
+    }).rows.find(r => r.id === "as_cb")!;
+    expect([w4.verdict, w4.rule]).toEqual(["watch", "W4"]);
+    // W6: cost 1.63× target ($70) but full return ≥ 2 → stays 🟢 W6.
+    const w6 = run(o => {
+      o.w3d = { ...o.w3d, spend: 70, conversions: 1, leadConversions: 1, purchaseConversions: 1, cpa: 70 };
+    }).rows.find(r => r.id === "as_cb")!;
+    expect([w6.verdict, w6.rule]).toEqual(["continue", "W6"]);
+  });
+
+  it("sweep: zero 🟢 rows with cpa_3d above target across the 12 fixtures", async () => {
+    const { FIXTURES016 } = await import("./fixtures016");
+    for (const fx of FIXTURES016) {
+      const r = runEngine(fx.build(), fx.funnel);
+      const target = r.targets.unitTarget as number;
+      for (const row of r.rows) {
+        if (row.verdict !== "continue" || row.cpa_3d === null) continue;
+        expect(row.cpa_3d <= target, `${fx.name} ${row.id} ${row.rule}`).toBe(true);
+      }
+    }
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { budgetControlView, cpaCell, historyRuleTitle, ruleTitleText } from "./cellFormat";
+import { budgetControlView, cpaCell, historyRuleTitle, resultsCell, ruleTitleText } from "./cellFormat";
 
 describe("T058: cpaCell formatter — too_early vs kill+zero-results", () => {
   it("too_early row renders a neutral dash (no color)", () => {
@@ -202,5 +202,41 @@ describe("historyRuleTitle — spec 016 C2b (FR-004a)", () => {
   it("campaign / watch / W1 → no prefix", () => {
     const t = historyRuleTitle({ level: "campaign", verdict: "watch", rule: "W1" });
     expect(t.startsWith("من إحدى")).toBe(false);
+  });
+});
+
+// Spec 016 / T023 — cost shown whenever results > 0, for every verdict
+// (FR-014); unknown counts render "؟" with a tooltip (FR-015).
+describe("cpaCell — spec 016 FR-014 / FR-015", () => {
+  it("results unknown → ؟ with the tooltip, never 0 or —", () => {
+    const out = cpaCell({ verdict: "watch", results: null, cpa: null, target: 30 });
+    expect(out.value).toBe("؟");
+    expect(out.title).toBe("لم يصل عدد النتائج من ميتا");
+    expect(out.className).not.toMatch(/text-v-/);
+  });
+  it("too_early with results > 0 → the cost, uncolored", () => {
+    const out = cpaCell({ verdict: "too_early", results: 3, cpa: 30, target: 20 });
+    expect(out.value).toBe("$30");
+    expect(out.className).not.toMatch(/text-v-/);
+  });
+  it("pre-gate with results > 0 → the cost, uncolored", () => {
+    const out = cpaCell({ verdict: "continue", results: 2, cpa: 15, preGate: true, target: 20 });
+    expect(out.value).toBe("$15");
+    expect(out.className).not.toMatch(/text-v-/);
+  });
+  it("results = 0 → — for every verdict", () => {
+    for (const verdict of ["kill", "watch", "continue", "rescue", "too_early"] as const) {
+      expect(cpaCell({ verdict, results: 0, cpa: null, target: 30 }).value).toBe("—");
+    }
+  });
+});
+
+describe("resultsCell — spec 016 FR-015", () => {
+  it("a number renders as the number, 0 as 0", () => {
+    expect(resultsCell(4)).toEqual({ value: "4" });
+    expect(resultsCell(0)).toEqual({ value: "0" });
+  });
+  it("unknown → ؟ with the tooltip", () => {
+    expect(resultsCell(null)).toEqual({ value: "؟", title: "لم يصل عدد النتائج من ميتا" });
   });
 });

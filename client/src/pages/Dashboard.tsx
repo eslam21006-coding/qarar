@@ -148,7 +148,7 @@ export default function Dashboard() {
   const accountExternalId = (d as { accountExternalId?: string }).accountExternalId;
   const series = ((d as { series?: SeriesObj[] }).series ?? []) as SeriesObj[];
   const asOfDate = (d as { asOfDate?: string }).asOfDate;
-  const { rows, summary, targets, currencySymbol } = result;
+  const { rows, summary, targets, currencySymbol, archetype } = result;
 
   return (
     <Shell
@@ -327,6 +327,7 @@ export default function Dashboard() {
             summary={summary ?? null}
             currencySymbol={currencySymbol}
             asOfDate={asOfDate}
+            archetype={archetype}
           />
         </div>
 
