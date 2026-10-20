@@ -267,7 +267,7 @@ and equally, a lead funnel must not be saved by purchases it does not count.
    runs, **Then** it stands down (unchanged behaviour).
 4. **Given** an ad set with 3-day spend 2.7× its target and a 3-day cost per result 2.7× its target,
    that no K or W rule catches, **When** it reaches the continue/scale step, **Then** it is 🟡 W1
-   with the reason "في آخر 3 أيام: تكلفة النتيجة {cpa} والهدف {target} — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ({3×target})" and the action "لا تزد الميزانية. راقبها يومين أو ثلاثة — إن وصل صرفها إلى {3×target} والتكلفة ما زالت فوق {1.5×target} فأوقِفها" (ad wording: "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى {3×target} والتكلفة ما زالت فوق {1.5×target} فأوقِفه"), never 🟢 (FR-036).
+   with the reason "في آخر 3 أيام: تكلفة النتيجة {cpa} والهدف {target} — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ({3×target})" and the action "لا تزد الميزانية. راقبها يومين أو ثلاثة — إن وصل صرفها إلى {3×target} والتكلفة ما زالت فوق {1.5×target} فأوقِفها", never 🟢 (FR-036). Any ad above 1.5× target (ads have no K2), and an ad set whose 3-day spend is already ≥ 3× target, instead get the reason "في آخر 3 أيام: تكلفة النتيجة {cpa} والهدف {target} — التكلفة عالية" and the action "لا تزد الميزانية. إن بقيت التكلفة فوق {1.5×target} بعد يومين أو ثلاثة فأوقِف هذا الإعلان" (ad) or "لا تزد الميزانية. إن بقيت التكلفة فوق {1.5×target} بعد يومين أو ثلاثة فأوقِفها" (ad set) — no promise of a stop the engine never gives.
 
 ---
 
@@ -512,8 +512,8 @@ clause)
   after every K and W rule — with counted 3-day results > 0 and a 3-day cost per result above its
   target MUST become 🟡 W1 instead of 🟢. No new rule code; K2 (spend ≥ 3× target) and the order
   of every other rule stay as they are, so only rows that would have been 🟢 can move. Cost 1×–1.5×
-  target: the existing W1 reason and action, unchanged. Cost above 1.5× target: reason
-  "في آخر 3 أيام: تكلفة النتيجة {cpa} والهدف {target} — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ({3×target})"; action for an ad set "لا تزد الميزانية. راقبها يومين أو ثلاثة — إن وصل صرفها إلى {3×target} والتكلفة ما زالت فوق {1.5×target} فأوقِفها"; for an ad "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى {3×target} والتكلفة ما زالت فوق {1.5×target} فأوقِفه". Money in the
+  target: the existing W1 reason and action, unchanged. Cost above 1.5× target, for an ad set whose 3-day spend is under 3× target (K2 still ahead of it): reason
+  "في آخر 3 أيام: تكلفة النتيجة {cpa} والهدف {target} — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ({3×target})"; action "لا تزد الميزانية. راقبها يومين أو ثلاثة — إن وصل صرفها إلى {3×target} والتكلفة ما زالت فوق {1.5×target} فأوقِفها". Every other case above 1.5× target — any ad (ads have no K2: evaluateAd runs K1 only), or an ad set whose 3-day spend is already ≥ 3× target — names a cost limit instead of a stop the engine never gives: reason "في آخر 3 أيام: تكلفة النتيجة {cpa} والهدف {target} — التكلفة عالية"; action for an ad "لا تزد الميزانية. إن بقيت التكلفة فوق {1.5×target} بعد يومين أو ثلاثة فأوقِف هذا الإعلان"; for an ad set "لا تزد الميزانية. إن بقيت التكلفة فوق {1.5×target} بعد يومين أو ثلاثة فأوقِفها" (owner fix, pre-PR). Money in the
   existing format, numerals left-to-right. Rulebook v2.2.1 widens W1 to "CPA فوق الهدف ولم تكتمل
   شروط K2 (صرف ≥ 3× الهدف)".
 

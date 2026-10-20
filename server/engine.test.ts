@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveTargets, judgingTargets, runEngine } from "./engine";
+import { aboveTargetGuard, deriveTargets, judgingTargets, runEngine } from "./engine";
 import { buildDemoSnapshot, DEMO_FUNNEL } from "./demo";
 import { parseInsightsRow } from "./meta";
 import { FunnelInputs, type AccountSnapshotPayload, type NormalizedObject } from "../shared/qarar";
@@ -2282,22 +2282,52 @@ describe("016 FR-036 — above-target guard", () => {
     );
   });
 
-  it("ad at 2.7× target cost → 🟡 W1, new copy (masculine)", () => {
+  // Ads have no K2 (evaluateAd runs K1 only), so their copy never promises a
+  // stop at 3× spend; it names the cost limit instead (owner fix, pre-PR).
+  const REASON_HIGH = "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $43 — التكلفة عالية";
+  const AD_ACTION = "لا تزد الميزانية. إن بقيت التكلفة فوق $65 بعد يومين أو ثلاثة فأوقِف هذا الإعلان";
+
+  it("ad at 2.7× target cost on < 3× spend → 🟡 W1, ad wording (no stop promise)", () => {
     const row = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs).rows.find(r => r.id === "ad_cb")!;
     expect([row.verdict, row.rule]).toEqual(["watch", "W1"]);
-    expect(row.reason_ar).toBe(REASON_27);
-    expect(row.action_ar).toBe(
-      "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى $129 والتكلفة ما زالت فوق $65 فأوقِفه"
-    );
+    expect(row.reason_ar).toBe(REASON_HIGH);
+    expect(row.action_ar).toBe(AD_ACTION);
   });
 
-  it("cost 1.2× target → 🟡 W1 with the existing copy, byte-identical", () => {
+  it("ad at 2.7× target cost on ≥ 3× spend → 🟡 W1, same ad wording", () => {
+    // $348 spend (8.1× target) with 3 results → $116 per result.
+    const row = run(
+      o => {
+        o.w3d = { ...o.w3d, spend: 348, conversions: 3, leadConversions: 3, purchaseConversions: 3, cpa: 116 };
+      },
+      ["ad_cb"]
+    ).rows.find(r => r.id === "ad_cb")!;
+    expect([row.verdict, row.rule]).toEqual(["watch", "W1"]);
+    expect(row.reason_ar).toBe(REASON_HIGH);
+    expect(row.action_ar).toBe(AD_ACTION);
+  });
+
+  it("ad set reaching the guard at ≥ 3× spend → 🟡 W1, ad-set wording (no stop promise)", () => {
+    // Unreachable through runEngine (K2 catches it, and K2's W3 suppression
+    // fires W3 first), so the guard is called directly.
+    runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs); // binds "$"
+    const snap = buildDemoSnapshot();
+    const o = snap.objects.find(x => x.id === "as_cb")!;
+    o.w3d = { ...o.w3d, spend: 348, conversions: 3, leadConversions: 3, purchaseConversions: 3, cpa: 116 };
+    const t = judgingTargets(DEMO_FUNNEL as FunnelInputs, snap, null);
+    const fired = aboveTargetGuard(o, t as Parameters<typeof aboveTargetGuard>[1], "paid_lto")!;
+    expect([fired.verdict, fired.rule]).toEqual(["watch", "W1"]);
+    expect(fired.reason).toBe(REASON_HIGH);
+    expect(fired.action).toBe("لا تزد الميزانية. إن بقيت التكلفة فوق $65 بعد يومين أو ثلاثة فأوقِفها");
+  });
+
+  it("cost 1.2× target → 🟡 W1 with the existing copy (ad-set agreement)", () => {
     const row = run(o => {
       o.w3d = { ...o.w3d, spend: 51.6, conversions: 1, leadConversions: 1, purchaseConversions: 1, cpa: 51.6 };
     }).rows.find(r => r.id === "as_cb")!;
     expect([row.verdict, row.rule]).toEqual(["watch", "W1"]);
     expect(row.reason_ar).toBe("في آخر 3 أيام: تكلفة العميل $52 أعلى من هدفك ($43) بقليل — ليست كارثة");
-    expect(row.action_ar).toBe("راقبه يومين أو ثلاثة بدون أي تعديل");
+    expect(row.action_ar).toBe("راقبها يومين أو ثلاثة بدون أي تعديل");
   });
 
   it("cost ≤ target → still 🟢", () => {
@@ -2328,6 +2358,69 @@ describe("016 FR-036 — above-target guard", () => {
       for (const row of r.rows) {
         if (row.verdict !== "continue" || row.cpa_3d === null) continue;
         expect(row.cpa_3d <= target, `${fx.name} ${row.id} ${row.rule}`).toBe(true);
+      }
+    }
+  });
+});
+
+// Spec 016 / FR-030 (owner fix, pre-PR) — the W rules shared by ads and ad
+// sets agree with the row: masculine for an ad, feminine for an ad set. Only
+// the agreement differs; verdict and rule never move.
+describe("016 FR-030 — level-aware W copy", () => {
+  function rowsWith(edit: (o: NormalizedObject) => void, ids: string[]) {
+    const snap = buildDemoSnapshot();
+    for (const o of snap.objects) if (ids.includes(o.id)) edit(o);
+    return runEngine(snap, DEMO_FUNNEL as FunnelInputs).rows;
+  }
+
+  it("W1 (1×–1.5×): ad set feminine, ad masculine", () => {
+    const rows = rowsWith(o => {
+      o.today = { ...o.today, spend: 0 };
+      o.w3d = { ...o.w3d, spend: 51.6, conversions: 1, leadConversions: 1, purchaseConversions: 1, cpa: 51.6 };
+    }, ["as_cb", "ad_cb"]);
+    const as = rows.find(r => r.id === "as_cb")!;
+    const ad = rows.find(r => r.id === "ad_cb")!;
+    expect([as.rule, ad.rule]).toEqual(["W1", "W1"]);
+    expect(as.action_ar).toBe("راقبها يومين أو ثلاثة بدون أي تعديل");
+    expect(ad.action_ar).toBe("راقبه يومين أو ثلاثة بدون أي تعديل");
+  });
+
+  it("W1 (zero results, 1×–2× spend): ad set feminine reason and action", () => {
+    const as = rowsWith(o => {
+      o.today = { ...o.today, spend: 0 };
+      o.w3d = { ...o.w3d, spend: 60, conversions: 0, leadConversions: 0, purchaseConversions: 0, cpa: null };
+    }, ["as_cb"]).find(r => r.id === "as_cb")!;
+    expect(as.rule).toBe("W1");
+    expect(as.reason_ar).toBe("صرفت $60 بدون أي نتيجة — لم تصل لحد الإيقاف بعد لكن تحتاج مراقبة");
+    expect(as.action_ar).toBe("راقبها — إن لم تحقق نتائج قبل أن يصل صرفها لـ $86 ستُوقف تلقائيًا");
+  });
+
+  it("W2 (one bad day after good days): ad set feminine", () => {
+    const as = rowsWith(o => {
+      o.today = { ...o.today, spend: 0 };
+      o.w3d = { ...o.w3d, spend: 90, conversions: 3, leadConversions: 3, purchaseConversions: 3, cpa: 30 };
+      const base = o.daily7[0];
+      o.daily7 = [0, 1, 2, 3].map(i => ({
+        ...base,
+        spend: 30,
+        conversions: i < 3 ? 1 : 0,
+        leadConversions: i < 3 ? 1 : 0,
+        purchaseConversions: i < 3 ? 1 : 0,
+        cpa: i < 3 ? 30 : null,
+      }));
+    }, ["as_cb"]).find(r => r.id === "as_cb")!;
+    expect(as.rule).toBe("W2");
+    expect(as.action_ar).toBe("لا تلمسها — أي تعديل الآن سيخرب تعلّم فيسبوك ويزيد التكلفة");
+  });
+
+  it("no masculine object pronoun survives in any ad-set W row across the 12 fixtures", async () => {
+    const { FIXTURES016 } = await import("./fixtures016");
+    // The masculine suffix must end the word ("راقبه", not "راقبها").
+    const MASCULINE = /(راقبه|تلمسه|صرفه)(?![ء-ي])|يحقق|لم يصل/;
+    for (const fx of FIXTURES016) {
+      for (const row of runEngine(fx.build(), fx.funnel).rows) {
+        if (row.level !== "adset" || !row.rule.startsWith("W")) continue;
+        expect(MASCULINE.test(row.action_ar), `${fx.name} ${row.id} ${row.rule}`).toBe(false);
       }
     }
   });

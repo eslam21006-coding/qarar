@@ -1019,6 +1019,15 @@ function fatigueSignals(ad: NormalizedObject, baselines: Baselines): Fired | nul
 // Watch rules W1–W6 (5.2)
 // ============================================================
 
+/**
+ * Spec 016 / FR-030 — the W rules are shared by ads and ad sets, so any word
+ * that refers to the row agrees with it: masculine for an ad (الإعلان),
+ * feminine for an ad set (المجموعة). Only the agreement differs.
+ */
+function byLevel(o: NormalizedObject, ad: string, adset: string): string {
+  return o.level === "adset" ? adset : ad;
+}
+
 function watchRules(
   o: NormalizedObject,
   t: JudgeableTargets,
@@ -1038,7 +1047,7 @@ function watchRules(
       verdict: "watch",
       rule: "W1",
       reason: `في آخر 3 أيام: تكلفة العميل ${money(cpa)} أعلى من هدفك (${money(target)}) بقليل — ليست كارثة`,
-      action: "راقبه يومين أو ثلاثة بدون أي تعديل",
+      action: byLevel(o, "راقبه يومين أو ثلاثة بدون أي تعديل", "راقبها يومين أو ثلاثة بدون أي تعديل"),
     };
   }
 
@@ -1066,7 +1075,11 @@ function watchRules(
           verdict: "watch",
           rule: "W2",
           reason: `في آخر 3 أيام: يوم سيئ واحد بعد ${prior.length} أيام جيدة — أمر طبيعي جدًا`,
-          action: "لا تلمسه — أي تعديل الآن سيخرب تعلّم فيسبوك ويزيد التكلفة",
+          action: byLevel(
+            o,
+            "لا تلمسه — أي تعديل الآن سيخرب تعلّم فيسبوك ويزيد التكلفة",
+            "لا تلمسها — أي تعديل الآن سيخرب تعلّم فيسبوك ويزيد التكلفة"
+          ),
         };
       }
     }
@@ -1126,8 +1139,16 @@ function watchRules(
     return {
       verdict: "watch",
       rule: "W1",
-      reason: `صرف ${money(o.w3d.spend)} بدون أي نتيجة — لم يصل لحد الإيقاف بعد لكن يحتاج مراقبة`,
-      action: `راقبه — إن لم يحقق نتائج قبل أن يصل صرفه لـ ${money(2 * target)} سيُوقف تلقائيًا`,
+      reason: byLevel(
+        o,
+        `صرف ${money(o.w3d.spend)} بدون أي نتيجة — لم يصل لحد الإيقاف بعد لكن يحتاج مراقبة`,
+        `صرفت ${money(o.w3d.spend)} بدون أي نتيجة — لم تصل لحد الإيقاف بعد لكن تحتاج مراقبة`
+      ),
+      action: byLevel(
+        o,
+        `راقبه — إن لم يحقق نتائج قبل أن يصل صرفه لـ ${money(2 * target)} سيُوقف تلقائيًا`,
+        `راقبها — إن لم تحقق نتائج قبل أن يصل صرفها لـ ${money(2 * target)} ستُوقف تلقائيًا`
+      ),
     };
   }
 
@@ -1145,8 +1166,15 @@ function watchRules(
  * matched no rule (K2 needs spend ≥ 3× target; W1 stopped at 1.5×), so it
  * fell through to S2. It now takes W1 — no new rule code, and K2 and every
  * other rule keep their order. 1×–1.5× keeps the existing W1 copy.
+ *
+ * Above 1.5× the copy may promise a stop only where the engine gives one:
+ * K2 exists for ad sets alone (evaluateAd runs K1 only), and only an ad set
+ * whose 3-day spend is still under 3× target has K2 ahead of it. Every other
+ * case (any ad; an ad set already at ≥ 3× spend) names a cost limit instead.
+ * Exported for tests: an ad set at ≥ 3× spend cannot reach this step through
+ * runEngine (K2 catches it, and K2's W3 suppression fires W3 first).
  */
-function aboveTargetGuard(
+export function aboveTargetGuard(
   o: NormalizedObject,
   t: JudgeableTargets,
   archetype: FunnelInputs["archetype"]
@@ -1160,19 +1188,28 @@ function aboveTargetGuard(
       verdict: "watch",
       rule: "W1",
       reason: `في آخر 3 أيام: تكلفة العميل ${money(cpa)} أعلى من هدفك (${money(target)}) بقليل — ليست كارثة`,
-      action: "راقبه يومين أو ثلاثة بدون أي تعديل",
+      action: byLevel(o, "راقبه يومين أو ثلاثة بدون أي تعديل", "راقبها يومين أو ثلاثة بدون أي تعديل"),
     };
   }
   const stopAt = money(3 * target);
   const costLimit = money(1.5 * target);
+  if (o.level === "adset" && o.w3d.spend < 3 * target) {
+    return {
+      verdict: "watch",
+      rule: "W1",
+      reason: `في آخر 3 أيام: تكلفة النتيجة ${money(cpa)} والهدف ${money(target)} — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف (${stopAt})`,
+      action: `لا تزد الميزانية. راقبها يومين أو ثلاثة — إن وصل صرفها إلى ${stopAt} والتكلفة ما زالت فوق ${costLimit} فأوقِفها`,
+    };
+  }
   return {
     verdict: "watch",
     rule: "W1",
-    reason: `في آخر 3 أيام: تكلفة النتيجة ${money(cpa)} والهدف ${money(target)} — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف (${stopAt})`,
-    action:
-      o.level === "adset"
-        ? `لا تزد الميزانية. راقبها يومين أو ثلاثة — إن وصل صرفها إلى ${stopAt} والتكلفة ما زالت فوق ${costLimit} فأوقِفها`
-        : `لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى ${stopAt} والتكلفة ما زالت فوق ${costLimit} فأوقِفه`,
+    reason: `في آخر 3 أيام: تكلفة النتيجة ${money(cpa)} والهدف ${money(target)} — التكلفة عالية`,
+    action: byLevel(
+      o,
+      `لا تزد الميزانية. إن بقيت التكلفة فوق ${costLimit} بعد يومين أو ثلاثة فأوقِف هذا الإعلان`,
+      `لا تزد الميزانية. إن بقيت التكلفة فوق ${costLimit} بعد يومين أو ثلاثة فأوقِفها`
+    ),
   };
 }
 

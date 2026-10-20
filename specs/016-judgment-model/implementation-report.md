@@ -157,18 +157,21 @@ text is filled when T021 confirms each row.
 | Object id | Old verdict / rule / reason | New verdict / rule / reason | Justifying FR / task | Status |
 |---|---|---|---|---|
 | T008 snapshot · paid_lto `cmp_test` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 2.6x عند حساب قيمة العميل الكاملة ($148) — مع 2 إعلان/مجموعة تحتاج إيقافًا بالداخل" / action "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك" | watch / CB2 (from as_cb) / "مجموعات هذه الحملة — ناجحة: مجموعة واحدة · خاسرة: مجموعتان · لم يُحكم عليها بعد: مجموعة واحدة" / action "أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B — جمهور Lookalike 1%» وأبقِ «Stage A — بروود + Advantage» — فيها إعلان واحد يستحق الإنقاذ" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 | ✅ confirmed (matches expected) |
-| T008 snapshot · paid_lto `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبه يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 | ✅ confirmed (matches expected) |
+| T008 snapshot · paid_lto `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبها يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 + FR-030 copy agreement (level-aware W copy) | ✅ confirmed (matches expected) |
 | T008 snapshot · free_lead `cmp_test` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 2.6x عند حساب قيمة العميل الكاملة ($148) — مع 2 إعلان/مجموعة تحتاج إيقافًا بالداخل" / action "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك" | watch / W3 (from as_good) / "مجموعات هذه الحملة — خاسرة: مجموعتان · تحت المراقبة: مجموعة واحدة · لم يُحكم عليها بعد: مجموعة واحدة" / action "«Stage A — جمهور اهتمام: ريادة أعمال»: أوقِف هذه المجموعة · «Stage B — جمهور Lookalike 1%»: أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى · «Stage A — بروود + Advantage»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا — فيها إعلان واحد يستحق الإنقاذ" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 | ✅ confirmed (matches expected) |
-| T008 snapshot · free_lead `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبه يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 | ✅ confirmed (matches expected) |
+| T008 snapshot · free_lead `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبها يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 + FR-030 copy agreement (level-aware W copy) | ✅ confirmed (matches expected) |
 | Scenario 13 baseline (`specs/014-diagnosis-evidence-fallbacks/verdict-baseline.json`) · paid_lto `cmp_test` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 2.6x عند حساب قيمة العميل الكاملة ($148) — مع 2 إعلان/مجموعة تحتاج إيقافًا بالداخل" / action "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك" | watch / CB2 (from as_cb) / "مجموعات هذه الحملة — ناجحة: مجموعة واحدة · خاسرة: مجموعتان · لم يُحكم عليها بعد: مجموعة واحدة" / action "أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B — جمهور Lookalike 1%» وأبقِ «Stage A — بروود + Advantage» — فيها إعلان واحد يستحق الإنقاذ" | FR-003, FR-004, FR-007 / T016 — owner-approved (decision 3) | ✅ updated, same values as the snapshot |
-| Scenario 13 baseline (`specs/014-diagnosis-evidence-fallbacks/verdict-baseline.json`) · paid_lto `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبه يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004, FR-007 / T016 — owner-approved (decision 3) | ✅ updated, same values as the snapshot |
-| T008 snapshot · paid_lto `ad_cb` | continue / S2 / "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)" / action "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام" | watch / W1 / "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $43 — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ($129)" / action "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى $129 والتكلفة ما زالت فوق $65 فأوقِفه" | FR-036 / T041b — was 🟢 with cpa_3d $116 > target | ✅ updated |
-| T008 snapshot · free_lead `ad_cb` | continue / S2 / "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)" / action "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام" | watch / W1 / "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $39 — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ($117)" / action "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى $117 والتكلفة ما زالت فوق $59 فأوقِفه" | FR-036 / T041b — was 🟢 with cpa_3d $116 > target | ✅ updated |
-| Scenario 13 baseline · paid_lto `ad_cb` | continue / S2 / "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)" / action "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام" | watch / W1 / "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $43 — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ($129)" / action "لا تزد الميزانية. راقبه يومين أو ثلاثة — إن وصل صرفه إلى $129 والتكلفة ما زالت فوق $65 فأوقِفه" | FR-036 / T041b — was 🟢 with cpa_3d $116 > target | ✅ updated |
+| Scenario 13 baseline (`specs/014-diagnosis-evidence-fallbacks/verdict-baseline.json`) · paid_lto `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبها يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004, FR-007 / T016 — owner-approved (decision 3) + FR-030 copy agreement (level-aware W copy) | ✅ updated, same values as the snapshot |
+| T008 snapshot · paid_lto `ad_cb` | continue / S2 / "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)" / action "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام" | watch / W1 / "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $43 — التكلفة عالية" / action "لا تزد الميزانية. إن بقيت التكلفة فوق $65 بعد يومين أو ثلاثة فأوقِف هذا الإعلان" | FR-036 / T041b — was 🟢 with cpa_3d $116 > target + FR-036 wording by level and spend (owner fix, pre-PR: ads have no K2) | ✅ updated |
+| T008 snapshot · free_lead `ad_cb` | continue / S2 / "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)" / action "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام" | watch / W1 / "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $39 — التكلفة عالية" / action "لا تزد الميزانية. إن بقيت التكلفة فوق $59 بعد يومين أو ثلاثة فأوقِف هذا الإعلان" | FR-036 / T041b — was 🟢 with cpa_3d $116 > target + FR-036 wording by level and spend (owner fix, pre-PR: ads have no K2) | ✅ updated |
+| Scenario 13 baseline · paid_lto `ad_cb` | continue / S2 / "في آخر 3 أيام: الأرقام في النطاق الطبيعي — نسبة الضغط على الإعلان 1.20% (متوسط حسابك 1.70%)" / action "واصل بدون تعديل وراجعه بعد اكتمال 3 أيام" | watch / W1 / "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $43 — التكلفة عالية" / action "لا تزد الميزانية. إن بقيت التكلفة فوق $65 بعد يومين أو ثلاثة فأوقِف هذا الإعلان" | FR-036 / T041b — was 🟢 with cpa_3d $116 > target + FR-036 wording by level and spend (owner fix, pre-PR: ads have no K2) | ✅ updated |
 | T008 snapshot · paid_lto `as_cb` | kill / CB2 / (reason unchanged) / action "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى" | kill / CB2 / (reason unchanged) / action "أوقِفها الآن — وراجعها بنفسك قبل تشغيلها مرة أخرى" | T047 / FR-030 copy agreement (CB2 is ad-set-only → feminine); verdict and rule unchanged | ✅ updated |
 | T008 snapshot · free_lead `as_cb` | kill / CB2 / (reason unchanged) / action "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى" | kill / CB2 / (reason unchanged) / action "أوقِفها الآن — وراجعها بنفسك قبل تشغيلها مرة أخرى" | T047 / FR-030 copy agreement (CB2 is ad-set-only → feminine); verdict and rule unchanged | ✅ updated |
 | T008 snapshot · free_lead `cmp_test` | (T021 row above) action quoting "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى" | watch / W3 / (reason unchanged) / action "«Stage A — جمهور اهتمام: ريادة أعمال»: أوقِف هذه المجموعة · «Stage B — جمهور Lookalike 1%»: أوقِفها الآن — وراجعها بنفسك قبل تشغيلها مرة أخرى · «Stage A — بروود + Advantage»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا — فيها إعلان واحد يستحق الإنقاذ" | T047 / FR-030 copy agreement — the derived action quotes `as_cb`'s CB2 action; verdict, rule and reason unchanged | ✅ updated |
 | Scenario 13 baseline · paid_lto `as_cb` | kill / CB2 / action "أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى" | kill / CB2 / action "أوقِفها الآن — وراجعها بنفسك قبل تشغيلها مرة أخرى" | T047 / FR-030 copy agreement; verdict and rule unchanged | ✅ updated |
+| T008 snapshot · paid_lto `as_w1` | watch / W1 / (reason unchanged) / action "راقبه يومين أو ثلاثة بدون أي تعديل" | watch / W1 / (reason unchanged) / action "راقبها يومين أو ثلاثة بدون أي تعديل" | FR-030 copy agreement (level-aware W copy) | ✅ updated |
+| T008 snapshot · free_lead `as_w1` | watch / W1 / (reason unchanged) / action "راقبه يومين أو ثلاثة بدون أي تعديل" | watch / W1 / (reason unchanged) / action "راقبها يومين أو ثلاثة بدون أي تعديل" | FR-030 copy agreement (level-aware W copy) | ✅ updated |
+| Scenario 13 baseline · paid_lto `as_w1` | watch / W1 / (reason unchanged) / action "راقبه يومين أو ثلاثة بدون أي تعديل" | watch / W1 / (reason unchanged) / action "راقبها يومين أو ثلاثة بدون أي تعديل" | FR-030 copy agreement (level-aware W copy) | ✅ updated |
 
 Campaign verdicts in the other fixtures (not snapshot-locked; checked by the report script):
 
@@ -1207,4 +1210,111 @@ Error: Database connection failed
    Duration  15.04s (transform 9.29s, setup 107.13s, collect 58.36s, tests 21.49s, environment 27.39s, prepare 33.86s)
 
  ELIFECYCLE  Test failed. See above for more details.
+```
+
+
+## ▶ Pre-PR owner fixes (2026-10-20)
+
+No verdict or rule code moved: the snapshot and baseline diffs contain only `reason_ar` /
+`action_ar` lines.
+
+### Fix 1 — FR-036 wording by level and spend ✅
+
+The >1.5× copy promised a stop ("حد الإيقاف", "إن وصل صرفه إلى {3×target} … فأوقِفه") that the
+engine never gives to an ad: `evaluateAd` runs K1 only, so ads have no K2.
+
+- `aboveTargetGuard` (`server/engine.ts`) now keeps the stop-promise copy only for **ad sets with
+  3-day spend < 3× target**, which still have K2 ahead of them.
+- Every other >1.5× case (any ad, or an ad set at ≥ 3× spend):
+  - reason "في آخر 3 أيام: تكلفة النتيجة {cpa} والهدف {target} — التكلفة عالية";
+  - ad action "لا تزد الميزانية. إن بقيت التكلفة فوق {1.5×target} بعد يومين أو ثلاثة فأوقِف هذا
+    الإعلان";
+  - ad-set action "… فأوقِفها".
+- **An ad set at ≥ 3× spend cannot reach the guard through `runEngine`.** K2 catches it, and K2's
+  only suppression (`adInnocent`) uses the same condition as W3, which fires first. The branch is
+  defensive. The guard is exported, and its test calls it directly.
+- **spec.md**: FR-036 and US4 scenario 4 are updated. **tasks.md**: T041a now lists the added tests.
+- **Tests** (describe "016 FR-036 — above-target guard"):
+  - the ad case is rewritten: 2.7× cost on < 3× spend → ad wording;
+  - new: an ad at 2.7× cost on ≥ 3× spend ($348, 3 results) → the same ad wording;
+  - new: an ad set at ≥ 3× spend, direct call → the ad-set cost-limit wording.
+- **Snapshot and baseline**: `ad_cb` reason and action, in paid_lto, free_lead and the Scenario 13
+  baseline. The rows are updated in "Snapshot changes".
+
+### Fix 2 — Level-aware W copy (FR-030) ✅
+
+A new helper, `byLevel(o, ad, adset)`, picks masculine copy for an ad and feminine copy for an ad
+set. Only the agreement changes. Ad-only copy (decay-map W1 / W2) is untouched.
+
+| Rule | Ad (unchanged) | Ad set (new) |
+|---|---|---|
+| W1 1×–1.5× (watchRules and the guard's 1×–1.5× branch) | راقبه يومين أو ثلاثة بدون أي تعديل | راقبها يومين أو ثلاثة بدون أي تعديل |
+| W2 | لا تلمسه — … | لا تلمسها — … |
+| W1 zero results, reason | صرف {x} بدون أي نتيجة — لم يصل لحد الإيقاف بعد لكن يحتاج مراقبة | صرفت {x} بدون أي نتيجة — لم تصل لحد الإيقاف بعد لكن تحتاج مراقبة |
+| W1 zero results, action | راقبه — إن لم يحقق نتائج قبل أن يصل صرفه لـ {2×target} سيُوقف تلقائيًا | راقبها — إن لم تحقق نتائج قبل أن يصل صرفها لـ {2×target} ستُوقف تلقائيًا |
+
+- **W3, W4 and W6 are unchanged.** Their copy has no pronoun or verb that refers to the row:
+  - W3 "⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا";
+  - W4 "افحص سرعة تحميل صفحتك أولًا…";
+  - W6 "واصل بحذر — وإن استمر هذا النمط ففكّر في رفع هدفك قليلًا".
+  - W3's reason ends "الإعلان بريء". That is a noun about the ads, not an agreement form, so it
+    stays.
+- **Tests**: new describe "016 FR-030 — level-aware W copy":
+  - W1 ad set vs ad;
+  - W1 zero-result reason and action;
+  - W2 ad set;
+  - a sweep over the 12 fixtures: no masculine object form in any ad-set W action.
+  - The FR-036 1.2× test now expects "راقبها".
+- **Snapshot and baseline**:
+  - `as_w1` action, in paid_lto, free_lead and the baseline;
+  - `cmp_scale` action, which quotes `as_w1`, in paid_lto, free_lead and the baseline.
+  - Justification: "FR-030 copy agreement (level-aware W copy)".
+- This resolves the T047 follow-up ("Noted, not changed").
+
+### Fix 3 — Rulebook 2.2.1 ✅
+
+`git diff -- docs/spec-015/qarar-rulebook-v2.2.md` is text only: 22 insertions and 9 deletions,
+with the same line-ending class as HEAD. It is included in this commit unchanged.
+
+**Two markdown defects in the owner's file, reported and not fixed:**
+- The "(2.2) قاعدة الاختيار" paragraph moved between rows 1b and 1c of the setup table, which
+  splits the table in two when rendered.
+- The G1 row lost the `|` between its condition and its decision, so it has 3 cells instead of 4.
+
+**One wording mismatch:** changelog row 1 says that above 1.5× the copy states "الصرف لم يصل بعد
+إلى حد الإيقاف". After fix 1 that is true only for ad sets with spend < 3× target.
+
+### Gate ✅
+
+- `pnpm run check`: clean.
+- `pnpm test`: **912 passed**, 37 skipped. Only `auth-flow.e2e.test.ts` fails, as expected: it
+  needs a database and `DATABASE_URL` is empty.
+- **Snapshot scope**: 6 rows changed on this run, and no verdict or rule line:
+  - `ad_cb`, `as_w1` and `cmp_scale`, in both paid_lto and free_lead.
+  - `vitest -u` was run on `server/engine.test.ts` only, after the diff was read.
+- **Scenario 13 baseline**: `ad_cb`, `as_w1` and `cmp_scale`. The update script refused any other
+  id and any verdict or rule move.
+- **Funnel card vs `funnel-card-main.json`**: 0 differences on all 12 fixtures.
+
+Raw `pnpm run check`:
+
+```text
+> qarar@1.0.0 check D:\Qarar worktrees\Qarar-016-judgment-model
+> tsc --noEmit
+
+```
+
+Raw `pnpm test` (closing block):
+
+```text
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+Error: Database connection failed
+ ❯ server/auth-flow.e2e.test.ts:22:13
+
+ Test Files  1 failed | 60 passed | 2 skipped (63)
+      Tests  912 passed | 37 skipped (949)
+   Start at  20:03:15
+   Duration  15.74s (transform 9.25s, setup 112.39s, collect 64.58s, tests 22.95s, environment 30.38s, prepare 34.74s)
+
+ ELIFECYCLE  Test failed. See above for more details.
 ```
