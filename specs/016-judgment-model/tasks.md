@@ -187,9 +187,9 @@ results.
 
 **Independent Test**: T044.
 
-- [ ] T044 [P] [US6] Create `client/src/components/DecisionTable.copy.test.ts`: the exported `ALL_COLUMNS` labels and hints equal [contracts/copy.md §L1](./contracts/copy.md); the exported `WINDOW_BANNER_TEXT` equals §L2 exactly; the 3d CPA header text is "تكلفة النتيجة (3 أيام)"
-- [ ] T045 [US6] In `client/src/components/DecisionTable.tsx`, export `ALL_COLUMNS` (`:243–261`) with the L1 labels and a new `hint` field; render `hint` as the header `title` (`:1154`) and keep labels in the column picker (`:936–947`); change the 3d CPA override to "تكلفة النتيجة (3 أيام)"
-- [ ] T046 [US6] In `client/src/components/DecisionTable.tsx`, export `WINDOW_BANNER_TEXT` = "الحكم محسوب دائمًا على آخر 3 أيام كاملة (بدون اليوم)، ولا يتأثر بالفترة المختارة." and render it, prefixed "ℹ️ ", in the banner (`:1096–1101`), still only when `range !== "3d"`; loading and error lines unchanged
+- [X] T044 [P] [US6] Create `client/src/components/DecisionTable.copy.test.ts`: the exported `ALL_COLUMNS` labels and hints equal [contracts/copy.md §L1](./contracts/copy.md); the exported `WINDOW_BANNER_TEXT` equals §L2 exactly; the 3d CPA header text is "تكلفة النتيجة (3 أيام)"
+- [X] T045 [US6] In `client/src/components/DecisionTable.tsx`, export `ALL_COLUMNS` (`:243–261`) with the L1 labels and a new `hint` field; render `hint` as the header `title` (`:1154`) and keep labels in the column picker (`:936–947`); change the 3d CPA override to "تكلفة النتيجة (3 أيام)"
+- [X] T046 [US6] In `client/src/components/DecisionTable.tsx`, export `WINDOW_BANNER_TEXT` = "الحكم محسوب دائمًا على آخر 3 أيام كاملة (بدون اليوم)، ولا يتأثر بالفترة المختارة." and render it, prefixed "ℹ️ ", in the banner (`:1096–1101`), still only when `range !== "3d"`; loading and error lines unchanged
 
 **Checkpoint**: All stories complete.
 

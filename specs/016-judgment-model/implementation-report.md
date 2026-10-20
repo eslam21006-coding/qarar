@@ -974,3 +974,71 @@ Error: Database connection failed
 
  ELIFECYCLE  Test failed. See above for more details.
 ```
+
+
+## Phase 8 — User Story 6 (Arabic headers and window banner)
+
+### T044 — `client/src/components/DecisionTable.copy.test.ts` ✅
+
+Checks:
+- all 14 labels and hints against copy.md §L1;
+- no Latin letters in any label;
+- `CPA_3D_HEADER` is "تكلفة النتيجة (3 أيام)";
+- `WINDOW_BANNER_TEXT` matches exactly.
+
+It failed first (3 failures: the exports didn't exist yet), then passed.
+
+### T045 — Labels and hints ✅
+
+- `ALL_COLUMNS` is exported with the L1 labels and a new `hint` field.
+- Headers render `title={c.hint}`.
+- The 3d CPA header is now `CPA_3D_HEADER`: "تكلفة النتيجة (3 أيام)" replaces "تكلفة العميل (٣
+  أيام)" and its Arabic-Indic numeral.
+- The column picker shows the same Arabic labels. The `qarar_columns_v1` storage key holds keys,
+  not labels, so it is unaffected.
+
+### T046 — Window banner ✅
+
+- The banner reads "ℹ️ " + `WINDOW_BANNER_TEXT`.
+- It still shows only when `range !== "3d"`.
+- The old prefix ("الأرقام معروضة لفترة «…» — لكن …") and the wrong "آخر 3 أيام + اليوم" are gone.
+- The loading and error lines are unchanged.
+
+### US6 gate ✅
+
+- `pnpm run check`: clean.
+- `pnpm test`: **906 passed**, 37 skipped; only `auth-flow.e2e.test.ts` fails, as expected.
+- No snapshot or baseline change; no engine change, so the funnel card is unaffected.
+
+Raw `pnpm run check`:
+
+```text
+> qarar@1.0.0 check D:\Qarar worktrees\Qarar-016-judgment-model
+> tsc --noEmit
+
+```
+
+Raw `pnpm test` (closing block):
+
+```text
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+Error: Database connection failed
+ ❯ server/auth-flow.e2e.test.ts:22:13
+     20|     db = await getDb();
+     21|     if (!db) {
+     22|       throw new Error("Database connection failed");
+       |             ^
+     23|     }
+     24|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed | 60 passed | 2 skipped (63)
+      Tests  906 passed | 37 skipped (943)
+   Start at  18:48:41
+   Duration  14.63s (transform 8.85s, setup 107.11s, collect 58.18s, tests 21.32s, environment 25.85s, prepare 32.88s)
+
+ ELIFECYCLE  Test failed. See above for more details.
+```

@@ -244,25 +244,34 @@ type ColKey =
   | "frequency"
   | "impressions";
 
-const ALL_COLUMNS: { key: ColKey; label: string; adOnly?: boolean }[] = [
-  { key: "spend", label: "Spend" },
-  { key: "results", label: "Results" },
-  { key: "cpa", label: "CPA" },
+// Spec 016 / FR-028 (contract copy.md §L1) — Arabic labels; the metric
+// abbreviation moves to `hint`, shown only as the header tooltip.
+export const ALL_COLUMNS: { key: ColKey; label: string; hint: string; adOnly?: boolean }[] = [
+  { key: "spend", label: "الصرف", hint: "Spend" },
+  { key: "results", label: "النتائج", hint: "Results" },
+  { key: "cpa", label: "تكلفة النتيجة", hint: "CPA" },
   // Hotfix T9: ROAS column placed right after CPA so ad buyers see
   // "how much I spent → how much each result cost → how much came back"
   // in a single glance.
-  { key: "roas", label: "ROAS" },
-  { key: "ctrLink", label: "Link CTR" },
-  { key: "ctrAll", label: "CTR (All)" },
-  { key: "cpm", label: "CPM" },
-  { key: "cpc", label: "CPC" },
-  { key: "hookRate", label: "Hook Rate", adOnly: true },
-  { key: "holdRate", label: "Hold Rate", adOnly: true },
-  { key: "lpRate", label: "LP View %" },
-  { key: "spendShare", label: "% Spend", adOnly: true },
-  { key: "frequency", label: "Frequency" },
-  { key: "impressions", label: "مشاهدات" },
+  { key: "roas", label: "العائد على الإعلان", hint: "ROAS" },
+  { key: "ctrLink", label: "نسبة الضغط على الرابط", hint: "Link CTR" },
+  { key: "ctrAll", label: "نسبة الضغط الكلية", hint: "CTR (All)" },
+  { key: "cpm", label: "تكلفة ألف ظهور", hint: "CPM" },
+  { key: "cpc", label: "تكلفة الضغطة", hint: "CPC" },
+  { key: "hookRate", label: "نسبة جذب أول 3 ثوانٍ", hint: "Hook Rate", adOnly: true },
+  { key: "holdRate", label: "نسبة إكمال المشاهدة", hint: "Hold Rate", adOnly: true },
+  { key: "lpRate", label: "نسبة الوصول للصفحة", hint: "LP View %" },
+  { key: "spendShare", label: "نصيبه من الصرف", hint: "% Spend", adOnly: true },
+  { key: "frequency", label: "مرات الظهور للشخص", hint: "Frequency" },
+  { key: "impressions", label: "مشاهدات", hint: "Impressions" },
 ];
+
+/** Spec 016 / FR-028 — the 3d CPA header (LTR numeral, Principle III). */
+export const CPA_3D_HEADER = "تكلفة النتيجة (3 أيام)";
+
+/** Spec 016 / FR-029 (contract copy.md §L2) — the window banner. */
+export const WINDOW_BANNER_TEXT =
+  "الحكم محسوب دائمًا على آخر 3 أيام كاملة (بدون اليوم)، ولا يتأثر بالفترة المختارة.";
 
 const DEFAULT_VISIBLE: ColKey[] = ["spend", "results", "cpa", "ctrLink", "spendShare"];
 const LS_KEY = "qarar_columns_v1";
@@ -1125,10 +1134,7 @@ export function DecisionTable({
 
         {range !== "3d" && (
           <div className="space-y-1.5">
-            <p className="text-[11px] text-muted-foreground">
-              ℹ️ الأرقام معروضة لفترة «{RANGE_LABELS[range]}» — لكن <b>الحكم</b> محسوب دائمًا حسب
-              قواعد التقييم (آخر 3 أيام + اليوم) ولا يتأثر بالفترة المختارة.
-            </p>
+            <p className="text-[11px] text-muted-foreground">ℹ️ {WINDOW_BANNER_TEXT}</p>
             {/*
               Refresh-bottleneck fix: ad-level daily history wider than 7 days
               is now lazy-loaded on demand (routers.ts#dashboard.adDailyHistory).
@@ -1177,11 +1183,12 @@ export function DecisionTable({
                     key={c.key}
                     className="num cursor-pointer select-none whitespace-nowrap px-2 py-2 text-center font-medium hover:text-foreground"
                     onClick={() => clickSort(c.key)}
+                    title={c.hint}
                   >
                     {/* Batch 2 / ISSUE-004 / FR-019 — CPA header indicates the
                         3-day window in the default view, range-appropriate
                         label otherwise so range-aware values aren't mislabeled. */}
-                    {c.key === "cpa" && range === "3d" ? "تكلفة العميل (٣ أيام)" : c.label}{" "}
+                    {c.key === "cpa" && range === "3d" ? CPA_3D_HEADER : c.label}{" "}
                     <SortIcon active={sort.key === c.key} dir={sort.dir} />
                   </th>
                 ))}
