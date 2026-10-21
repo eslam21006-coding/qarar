@@ -59,13 +59,15 @@ export const RULES: Record<RuleCode, { titleAr: string; defAr: string }> = {
     titleAr: "أوقِفه — الحساب يخسر",
     defAr: "تكلفة العميل المحتمل وصلت لـ 70% من قيمته المتوقعة — حتى لو باع، أنت تخسر. راجع العرض كاملًا.",
   },
+  // Spec 016 self-review M1 — CB1/CB2 fire on ad sets only (§5.3), so the
+  // copy is feminine (المجموعة), like their actions (T047).
   CB1: {
-    titleAr: "تنبيه اليوم — راجعه غدًا",
-    defAr: "صرف اليوم مبلغًا كبيرًا بلا أي نتيجة — راجعه صباح الغد قبل أن تتركه يصرف من جديد.",
+    titleAr: "تنبيه اليوم — راجعها غدًا",
+    defAr: "صرفت اليوم مبلغًا كبيرًا بلا أي نتيجة — راجعها صباح الغد قبل أن تتركها تصرف من جديد.",
   },
   CB2: {
-    titleAr: "خطر اليوم — أوقِفه فورًا",
-    defAr: "صرف اليوم أكثر من ضعفين ونصف هدفك بلا أي نتيجة — أوقِفه الآن وقيّم الوضع بنفسك.",
+    titleAr: "خطر اليوم — أوقِفها فورًا",
+    defAr: "صرفت اليوم أكثر من ضعفين ونصف هدفك بلا أي نتيجة — أوقِفها الآن وقيّم الوضع بنفسك.",
   },
   F1: {
     titleAr: "الإعلان بدأ يتعب",
@@ -678,7 +680,12 @@ export interface EngineRow {
   cpa_3d: number | null;
   ctr_link: number;
   ctr_all: number;
-  conversions_3d: number;
+  /**
+   * Spec 016 / FR-012, FR-015 — counted results in the 3-day window, from
+   * the shared `countedResults`. `null` = Meta sent no count (unknown,
+   * never 0).
+   */
+  conversions_3d: number | null;
   frequency_3d: number;
   spend_share_pct: number | null;
   /** 3-day ROAS = conversionValue / spend. null when either is 0. */
@@ -700,6 +707,25 @@ export interface EngineRow {
    * optional only so hand-built test rows need not.
    */
   statusBadge?: string | null;
+  /**
+   * Spec 016 / FR-006 — full-funnel return on campaign rows (counted results
+   * × full buyer value ÷ spend). Display data only: no rule reads it. `null`
+   * on ad sets and ads, and when it cannot be computed. Optional only so
+   * hand-built test rows need not set it; the engine always does.
+   */
+  full_roas_3d?: number | null;
+  /**
+   * Spec 016 / FR-008, FR-009 — where the ±20% budget buttons go. `null` =
+   * no buttons; `disabled` = shown but disabled (a CBO campaign whose ad
+   * sets are not all 🟢). The engine always sets it.
+   */
+  budget_control?: "enabled" | "disabled" | null;
+  /**
+   * Spec 016 / FR-004 — on a campaign whose verdict is derived from its ad
+   * sets, the ad set its rule code came from; `null` everywhere else. Names
+   * the source in the rule tooltip ("من مجموعة {name}: …").
+   */
+  derived_from_adset?: { id: string; name: string } | null;
 }
 
 export interface TopAction {
@@ -715,6 +741,8 @@ export interface TopAction {
   action_ar: string;
   impact_ar: string;
   impactValue: number;
+  /** Spec 016 / Q2 — copied from the row, for the rule tooltip. */
+  derived_from_adset?: { id: string; name: string } | null;
 }
 
 export interface Cadence {
@@ -782,6 +810,11 @@ export interface EngineResult {
   targets: DerivedTargets;
   /** Display symbol for the account's currency (e.g. "AED" → "د.إ"). */
   currencySymbol: string;
+  /**
+   * Spec 016 / FR-012 — the funnel archetype the run counted with, so the
+   * table counts results with the same rule (`countedResults`).
+   */
+  archetype: FunnelArchetype;
 }
 
 /**
@@ -805,6 +838,71 @@ export function median(values: number[]): number | null {
   const mid = Math.floor(v.length / 2);
   return v.length % 2 === 0 ? (v[mid - 1] + v[mid]) / 2 : v[mid];
 }
+
+/** The funnel archetype (rulebook §2.1 input 1). */
+export type FunnelArchetype = FunnelInputs["archetype"];
+
+/**
+ * Spec 016 / FR-012 — the single counting rule for a window's results,
+ * shared by the engine and the table (rulebook principle 9). It keeps the
+ * engine's historical mapping exactly: `appointment` / `webinar` count
+ * captured leads; `paid_lto` / `free_lead` count the legacy `conversions`
+ * field. `null` means the count is unknown — Meta sent no count
+ * (`resultsUnknown`) or the counted field was never captured (a
+ * pre-separation snapshot) — and must never be read as 0 (principle 10).
+ */
+export function countedResults(
+  w: Pick<WindowMetrics, "conversions" | "leadConversions" | "resultsUnknown">,
+  archetype: FunnelArchetype
+): number | null {
+  if (w.resultsUnknown) return null;
+  const v =
+    archetype === "appointment" || archetype === "webinar"
+      ? w.leadConversions
+      : w.conversions;
+  return v === undefined ? null : v;
+}
+
+/**
+ * Spec 016 / R4 — the result family this archetype does NOT count, with the
+ * event-match gate's mapping (`paid_lto` counts sales, so its other family
+ * is leads; every other archetype counts registrations, so its other family
+ * is purchases). `undefined` = not captured.
+ */
+export function otherFamilyResults(
+  w: Pick<WindowMetrics, "leadConversions" | "purchaseConversions">,
+  archetype: FunnelArchetype
+): number | undefined {
+  return archetype === "paid_lto" ? w.leadConversions : w.purchaseConversions;
+}
+
+/**
+ * Spec 016 / FR-005, FR-003a — Arabic number–noun agreement for engine
+ * copy, with the same rules as `client/src/lib/killCountLabel.ts`:
+ * 1 → `one`, 2 → `two`, 3–10 → `few`, 11+ → `many`, 0 → null (the caller
+ * omits the part). `{n}` in a form is replaced by the number, so a form may
+ * carry a whole phrase (verb agreement included).
+ */
+export function arabicCount(
+  n: number,
+  forms: { one: string; two: string; few: string; many: string }
+): string | null {
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const form = n === 1 ? forms.one : n === 2 ? forms.two : n <= 10 ? forms.few : forms.many;
+  return form.replace("{n}", String(n));
+}
+
+/**
+ * Spec 016 / FR-004 — verdict severity, most severe first. Used to pick the
+ * ad set a derived campaign takes its rule code from.
+ */
+export const VERDICT_SEVERITY: Record<Verdict, number> = {
+  kill: 0,
+  watch: 1,
+  rescue: 2,
+  continue: 3,
+  too_early: 4,
+};
 
 /** Attribution model change date (March 2026) */
 export const ATTRIBUTION_CHANGE_DATE = "2026-03-01";

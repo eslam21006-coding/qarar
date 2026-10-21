@@ -2,10 +2,13 @@
  * CPA cell formatter — pure helper so the rendering rule is unit-testable
  * independent of the table component.
  *
- * Batch 2 / ISSUE-004 — branches (contracts/cpa-column.md):
- *   1. verdict === "too_early" OR pre-gate                  → "—"  neutral
+ * Spec 016 / FR-014 (contract single-source-numbers.md §N5) — branches:
+ *   1. results unknown (null)                               → "؟"  neutral, with tooltip
  *   2. results === 0 / cpa null (zero conversions)          → "—"  red iff kill, else neutral
- *   3. otherwise                                            → money(cpa) per target
+ *   3. otherwise, too_early or pre-gate                     → money(cpa), neutral
+ *   4. otherwise                                            → money(cpa) per target
+ * (Before 016, too_early / pre-gate rows always showed "—", which hid the
+ * cost of a ⏳ row that had results — rulebook §5.5 rule 4.)
  *
  * Spec 012 — `target` is `number | null` (FR-019d). When null we cannot
  * colour the cell good/bad because there is no threshold to compare
@@ -16,11 +19,12 @@
  * always renders an em dash, never "∞" and never "0".
  */
 import { cpaColorClass, money } from "./format";
-import type { Verdict } from "@shared/qarar";
+import { RULES, type EngineRow, type RuleCode, type Verdict } from "@shared/qarar";
 
 export interface CpaCellInput {
   verdict: Verdict;
-  results: number;
+  /** Spec 016 / FR-014 — `null` = the count is unknown. */
+  results: number | null;
   cpa: number | null;
   /** True when the row has not met the gate threshold (e.g. pre-gate under-data). */
   preGate?: boolean;
@@ -37,25 +41,93 @@ export interface CpaCellInput {
 export interface CpaCellOutput {
   value: string;
   className: string;
+  /** Spec 016 / FR-014 — tooltip, set on the unknown cell. */
+  title?: string;
 }
 
 export function cpaCell(input: CpaCellInput): CpaCellOutput {
   const { verdict, results, cpa, preGate, target, currency = "$" } = input;
-  // 1. Pre-gate / too_early: neutral dash, no color
-  if (verdict === "too_early" || preGate) {
-    return { value: "—", className: "font-bold" };
+  // 1. Unknown count: say so, never "0" or "—" (FR-014, FR-015)
+  if (results === null) {
+    return { value: "؟", className: "font-bold", title: RESULTS_UNKNOWN_TITLE };
   }
-  // 2. Zero conversions / null CPA: em dash. Red ONLY for kill (so the
-  // kill signal survives); neutral for every other verdict.
+  // 2. Zero conversions / null CPA
   if (results === 0 || cpa === null) {
     const color = verdict === "kill" ? cpaColorClass(null, target) : "";
     return { value: "—", className: `font-bold ${color}`.trim() };
   }
-  // 3. CPA present — money(cpa) with target-relative color. When the
-  // target is null we render uncoloured (SC-022) rather than fabricating
-  // a comparison baseline.
-  return {
-    value: money(cpa, currency),
-    className: `font-bold ${cpaColorClass(cpa, target)}`,
-  };
+  // 3. A ⏳ / pre-gate row with results shows its cost, uncolored: it passes
+  //    no judgment on it (FR-014).
+  if (verdict === "too_early" || preGate) {
+    return { value: money(cpa, currency), className: "font-bold" };
+  }
+  // 4.
+  return { value: money(cpa, currency), className: `font-bold ${cpaColorClass(cpa, target)}` };
+}
+
+
+/** Spec 016 / FR-015 — tooltip on a result count Meta did not send. */
+export const RESULTS_UNKNOWN_TITLE = "لم يصل عدد النتائج من ميتا";
+
+/** Spec 016 / FR-017 — tooltip on a footer ROAS with an unknown sales value. */
+export const ROAS_UNKNOWN_TITLE = "قيمة المبيعات لم تصل من ميتا لبعض الصفوف";
+
+/**
+ * Spec 016 / FR-015 — the results cell: unknown is "؟" with a tooltip,
+ * never "0".
+ */
+export function resultsCell(
+  results: number | null,
+  fmt: (n: number) => string = n => String(n)
+): { value: string; title?: string } {
+  if (results === null) return { value: "؟", title: RESULTS_UNKNOWN_TITLE };
+  return { value: fmt(results) };
+}
+
+/**
+ * Spec 016 / FR-008, FR-009 (contracts/campaign-derivation.md C6) — how the
+ * ±20% budget buttons render for a row, from the engine's `budget_control`.
+ */
+export function budgetControlView(
+  row: Pick<EngineRow, "budget_control">
+): { show: boolean; disabled: boolean; title?: string } {
+  const bc = row.budget_control ?? null;
+  if (bc === null) return { show: false, disabled: false };
+  if (bc === "disabled") {
+    return {
+      show: true,
+      disabled: true,
+      title: "غيّر ميزانية الحملة فقط عندما تكون كل المجموعات بالداخل ناجحة — وإلا أوقِف المجموعات الخاسرة، والميزانية تذهب وحدها إلى الرابحة",
+    };
+  }
+  return { show: true, disabled: false };
+}
+
+/**
+ * Spec 016 / FR-004 (C2a) — a rule's title. On a campaign derived from its
+ * ad sets it names the ad set the code came from.
+ */
+export function ruleTitleText(rule: RuleCode, fromAdsetName?: string | null): string {
+  const title = RULES[rule]?.titleAr ?? rule;
+  return fromAdsetName ? `من مجموعة ${fromAdsetName}: ${title}` : title;
+}
+
+/** Kill-family codes — a 🟡 campaign entry with one of these is 016-derived. */
+const KILL_FAMILY: ReadonlySet<RuleCode> = new Set<RuleCode>(["K1", "K2", "K3", "K4", "K6", "K7", "CB2"]);
+
+/**
+ * Spec 016 / FR-004a (C2b) — a verdict-history entry's rule title. Only a
+ * 016-derived 🟡 campaign can be logged as watch with a kill-family code,
+ * so only that entry gets the prefix; history stores no ad-set name.
+ */
+export function historyRuleTitle(entry: {
+  level: "campaign" | "adset" | "ad";
+  verdict: Verdict;
+  rule: RuleCode;
+}): string {
+  const title = RULES[entry.rule]?.titleAr ?? entry.rule;
+  if (entry.level === "campaign" && entry.verdict === "watch" && KILL_FAMILY.has(entry.rule)) {
+    return `من إحدى مجموعاتها: ${title}`;
+  }
+  return title;
 }

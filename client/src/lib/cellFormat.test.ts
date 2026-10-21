@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { cpaCell } from "./cellFormat";
+import { budgetControlView, cpaCell, historyRuleTitle, resultsCell, ruleTitleText } from "./cellFormat";
+import { RULES } from "@shared/qarar";
 
 describe("T058: cpaCell formatter — too_early vs kill+zero-results", () => {
   it("too_early row renders a neutral dash (no color)", () => {
@@ -155,5 +156,100 @@ describe("cpaCell — null target handling (spec 012 / SC-022)", () => {
     });
     expect(out.value).toBe("—");
     expect(out.className).toMatch(/text-v-kill/);
+  });
+});
+
+// Spec 016 / T019 — budget-button placement (FR-008, FR-009), the derived
+// rule title (FR-004, C2a) and the history prefix (FR-004a, C2b).
+describe("budgetControlView — spec 016 C6", () => {
+  it("null → no buttons", () => {
+    expect(budgetControlView({ budget_control: null })).toEqual({ show: false, disabled: false });
+  });
+  it("enabled → buttons, active", () => {
+    expect(budgetControlView({ budget_control: "enabled" })).toEqual({ show: true, disabled: false });
+  });
+  it("disabled → buttons, disabled, with the tooltip", () => {
+    expect(budgetControlView({ budget_control: "disabled" })).toEqual({
+      show: true,
+      disabled: true,
+      title: "غيّر ميزانية الحملة فقط عندما تكون كل المجموعات بالداخل ناجحة — وإلا أوقِف المجموعات الخاسرة، والميزانية تذهب وحدها إلى الرابحة",
+    });
+  });
+});
+
+describe("ruleTitleText — spec 016 C2a", () => {
+  it("no ad-set name → the bare rule title", () => {
+    expect(ruleTitleText("CB2")).toBe("خطر اليوم — أوقِفها فورًا");
+  });
+  it("with the source ad set → prefixed", () => {
+    expect(ruleTitleText("CB2", "Stage B — جمهور Lookalike 1%")).toBe(
+      "من مجموعة Stage B — جمهور Lookalike 1%: خطر اليوم — أوقِفها فورًا"
+    );
+  });
+});
+
+// Self-review M1 — CB1 and CB2 fire on ad sets only (circuit breaker, §5.3),
+// so their titles and definitions use the feminine forms, like their
+// actions (T047). They render as "من مجموعة {name}: …" on derived campaigns.
+describe("RULES CB1 / CB2 — ad-set agreement (self-review M1)", () => {
+  it("titles and definitions are feminine", () => {
+    expect(RULES.CB1.titleAr).toBe("تنبيه اليوم — راجعها غدًا");
+    expect(RULES.CB1.defAr).toBe("صرفت اليوم مبلغًا كبيرًا بلا أي نتيجة — راجعها صباح الغد قبل أن تتركها تصرف من جديد.");
+    expect(RULES.CB2.titleAr).toBe("خطر اليوم — أوقِفها فورًا");
+    expect(RULES.CB2.defAr).toBe("صرفت اليوم أكثر من ضعفين ونصف هدفك بلا أي نتيجة — أوقِفها الآن وقيّم الوضع بنفسك.");
+  });
+});
+
+describe("historyRuleTitle — spec 016 C2b (FR-004a)", () => {
+  it("old-style entry (campaign, kill, K1) → no prefix", () => {
+    expect(historyRuleTitle({ level: "campaign", verdict: "kill", rule: "K1" })).toBe("أوقِفه — لا يوجد أي نتائج");
+  });
+  it("derived entry (campaign, watch, CB2) → prefixed", () => {
+    expect(historyRuleTitle({ level: "campaign", verdict: "watch", rule: "CB2" })).toBe(
+      "من إحدى مجموعاتها: خطر اليوم — أوقِفها فورًا"
+    );
+  });
+  it("ad set / watch / K1 → no prefix", () => {
+    expect(historyRuleTitle({ level: "adset", verdict: "watch", rule: "K1" })).toBe("أوقِفه — لا يوجد أي نتائج");
+  });
+  it("campaign / watch / W1 → no prefix", () => {
+    const t = historyRuleTitle({ level: "campaign", verdict: "watch", rule: "W1" });
+    expect(t.startsWith("من إحدى")).toBe(false);
+  });
+});
+
+// Spec 016 / T023 — cost shown whenever results > 0, for every verdict
+// (FR-014); unknown counts render "؟" with a tooltip (FR-015).
+describe("cpaCell — spec 016 FR-014 / FR-015", () => {
+  it("results unknown → ؟ with the tooltip, never 0 or —", () => {
+    const out = cpaCell({ verdict: "watch", results: null, cpa: null, target: 30 });
+    expect(out.value).toBe("؟");
+    expect(out.title).toBe("لم يصل عدد النتائج من ميتا");
+    expect(out.className).not.toMatch(/text-v-/);
+  });
+  it("too_early with results > 0 → the cost, uncolored", () => {
+    const out = cpaCell({ verdict: "too_early", results: 3, cpa: 30, target: 20 });
+    expect(out.value).toBe("$30");
+    expect(out.className).not.toMatch(/text-v-/);
+  });
+  it("pre-gate with results > 0 → the cost, uncolored", () => {
+    const out = cpaCell({ verdict: "continue", results: 2, cpa: 15, preGate: true, target: 20 });
+    expect(out.value).toBe("$15");
+    expect(out.className).not.toMatch(/text-v-/);
+  });
+  it("results = 0 → — for every verdict", () => {
+    for (const verdict of ["kill", "watch", "continue", "rescue", "too_early"] as const) {
+      expect(cpaCell({ verdict, results: 0, cpa: null, target: 30 }).value).toBe("—");
+    }
+  });
+});
+
+describe("resultsCell — spec 016 FR-015", () => {
+  it("a number renders as the number, 0 as 0", () => {
+    expect(resultsCell(4)).toEqual({ value: "4" });
+    expect(resultsCell(0)).toEqual({ value: "0" });
+  });
+  it("unknown → ؟ with the tooltip", () => {
+    expect(resultsCell(null)).toEqual({ value: "؟", title: "لم يصل عدد النتائج من ميتا" });
   });
 });

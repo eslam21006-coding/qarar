@@ -11,6 +11,7 @@ import { buildDemoSnapshot } from "./demo";
 import { decryptToken } from "./crypto";
 import { auditLog } from "../drizzle/auth-schema";
 import type { AccountSnapshotPayload, EngineResult, EngineRow, FunnelInputs } from "../shared/qarar";
+import { arabicCount } from "../shared/qarar";
 
 /**
  * US11 — daily automatic refresh of every active, selected ad account.
@@ -75,6 +76,18 @@ export interface NotificationDraft {
  * considered "new" and produces a draft. If `old === new` (no engine change),
  * the diff is empty and null is returned.
  */
+// Spec 016 self-review N10 — a derived 🔴 campaign (FR-011) is notified
+// too, so the copy names each object by its level, with agreement.
+const KILL_LEVELS: {
+  level: EngineRow["level"];
+  noun: string;
+  forms: { one: string; two: string; few: string; many: string };
+}[] = [
+  { level: "campaign", noun: "الحملة", forms: { one: "حملة واحدة", two: "حملتان", few: "{n} حملات", many: "{n} حملة" } },
+  { level: "adset", noun: "المجموعة", forms: { one: "مجموعة واحدة", two: "مجموعتان", few: "{n} مجموعات", many: "{n} مجموعة" } },
+  { level: "ad", noun: "الإعلان", forms: { one: "إعلان واحد", two: "إعلانان", few: "{n} إعلانات", many: "{n} إعلانًا" } },
+];
+
 export function diffKillSet(input: KillSetDiffInput): NotificationDraft | null {
   const { userId, adAccountId, old, new: next, bleedDaily } = input;
   const oldKillIds = new Set(
@@ -84,11 +97,16 @@ export function diffKillSet(input: KillSetDiffInput): NotificationDraft | null {
   const newlyKilled = newKillRows.filter((r: EngineRow) => !oldKillIds.has(r.id));
   if (newlyKilled.length === 0) return null;
 
-  const names = newlyKilled.map((r: EngineRow) => r.name).join("، ");
-  const title = `إيقاف ${newlyKilled.length} إعلان/إعلانات جديد`;
+  const counts = KILL_LEVELS.map(l =>
+    arabicCount(newlyKilled.filter((r: EngineRow) => r.level === l.level).length, l.forms)
+  ).filter((c): c is string => c !== null);
+  const lines = KILL_LEVELS.flatMap(l =>
+    newlyKilled.filter((r: EngineRow) => r.level === l.level).map((r: EngineRow) => `${l.noun}: ${r.name}`)
+  );
+  const title = `إيقاف جديد: ${counts.join("، ")}`;
   const content =
-    `الإعلانات التالية دخلت حالة الإيقاف منذ آخر تحديث:\n` +
-    `${names}\n\n` +
+    `دخلت حالة الإيقاف منذ آخر تحديث:\n` +
+    `${lines.join("\n")}\n\n` +
     `النزيف اليومي: $${bleedDaily.toFixed(2)}/يوم`;
   return { userId, adAccountId, title, content };
 }

@@ -80,7 +80,12 @@ describe("non-sales containment + ordering (US2 / T014)", () => {
     // the diagnosis routine was invoked for it. The exempt fixture's
     // empty findings list above is therefore a hard skip, not a
     // coincidence.
-    expect(row.findings.length).toBeGreaterThan(0);
+    // Spec 016 / FR-020a — the non-exempt campaign's verdict is now derived
+    // from its ad set, so the campaign row displays no findings; the proof
+    // moves to its ad set, which carries the same numbers.
+    expect(row.findings).toEqual([]);
+    const adset = result.rows.find(r => r.id === "as_ns")!;
+    expect(adset.findings.length).toBeGreaterThan(0);
   });
 
   it("account whose only non-continue verdicts are NS2 yields account_funnel_cta === null (FR-010b, SC-013)", () => {

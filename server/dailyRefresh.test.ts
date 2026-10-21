@@ -178,3 +178,63 @@ describe("diffKillSet — US11 / T045 (pure function)", () => {
     }
   });
 });
+
+// Spec 016 / T011 (FR-011) — a campaign that becomes 🔴 by derivation from
+// its ad sets is notified like any newly killed object.
+describe("diffKillSet — derived campaign kill (spec 016 / FR-011)", () => {
+  it("a campaign that turns 🔴 because every active ad set is 🔴 is reported as newly killed", () => {
+    const oldResult = runEngine(buildDemoSnapshot(), DEMO_FUNNEL);
+    expect(oldResult.rows.find(r => r.id === "cmp_test")!.verdict).not.toBe("kill");
+
+    // Pause cmp_test's 🟢 and ⏳ ad sets: every active ad set left is 🔴.
+    const snap = buildDemoSnapshot();
+    for (const o of snap.objects) if (o.id === "as_good" || o.id === "as_gate") o.effectiveStatus = "PAUSED";
+    const newResult = runEngine(snap, DEMO_FUNNEL);
+    const camp = newResult.rows.find(r => r.id === "cmp_test")!;
+    expect(camp.verdict).toBe("kill");
+
+    const draft = diffKillSet({
+      userId: "u-1",
+      adAccountId: 1,
+      old: oldResult,
+      new: newResult,
+      bleedDaily: newResult.summary.bleed_daily,
+    });
+    expect(draft).not.toBeNull();
+    expect(draft!.content).toContain(camp.name);
+  });
+});
+
+// Spec 016 self-review N10 — the notification names each object by its
+// level, with agreement: a derived 🔴 campaign is not an "إعلان".
+describe("diffKillSet — noun by level (spec 016 self-review N10)", () => {
+  const kill = (id: string, level: "campaign" | "adset" | "ad") =>
+    ({ id, name: `name-${id}`, level, verdict: "kill" }) as unknown as EngineResult["rows"][number];
+  const result = (rows: EngineResult["rows"]) => ({ rows }) as unknown as EngineResult;
+  const draftFor = (rows: EngineResult["rows"]) =>
+    diffKillSet({ userId: "u-1", adAccountId: 1, old: result([]), new: result(rows), bleedDaily: 12.5 })!;
+
+  it("one campaign → «حملة واحدة», listed as الحملة", () => {
+    const d = draftFor([kill("c1", "campaign")]);
+    expect(d.title).toBe("إيقاف جديد: حملة واحدة");
+    expect(d.content).toContain("الحملة: name-c1");
+    expect(d.content).not.toMatch(/إعلان/);
+  });
+  it("mixed levels → counts per level, each name with its own noun", () => {
+    const d = draftFor([
+      kill("c1", "campaign"),
+      kill("s1", "adset"),
+      kill("s2", "adset"),
+      kill("a1", "ad"),
+      kill("a2", "ad"),
+      kill("a3", "ad"),
+    ]);
+    expect(d.title).toBe("إيقاف جديد: حملة واحدة، مجموعتان، 3 إعلانات");
+    expect(d.content).toContain("المجموعة: name-s1");
+    expect(d.content).toContain("الإعلان: name-a3");
+    expect(d.content).toContain("12.50");
+  });
+  it("one ad → «إعلان واحد»", () => {
+    expect(draftFor([kill("a1", "ad")]).title).toBe("إيقاف جديد: إعلان واحد");
+  });
+});

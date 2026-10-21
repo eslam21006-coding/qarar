@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { deriveTargets, judgingTargets, runEngine } from "./engine";
+import { aboveTargetGuard, deriveTargets, judgingTargets, runEngine } from "./engine";
 import { buildDemoSnapshot, DEMO_FUNNEL } from "./demo";
 import { parseInsightsRow } from "./meta";
-import { FunnelInputs, type AccountSnapshotPayload } from "../shared/qarar";
+import { FunnelInputs, type AccountSnapshotPayload, type NormalizedObject } from "../shared/qarar";
 
 const baseFunnel: FunnelInputs = {
   archetype: "paid_lto",
@@ -148,6 +148,12 @@ describe("runEngine — demo snapshot verdicts (hand-computed)", () => {
 
   it("kill/watch rows always carry at least one finding with a primary; continue rows don't need one", () => {
     for (const r of result.rows) {
+      // Spec 016 / FR-020a — a campaign whose verdict is derived from its
+      // ad sets displays no findings of its own (owner-approved exception).
+      if (r.level === "campaign" && r.derived_from_adset) {
+        expect(r.findings, `derived campaign ${r.id}`).toEqual([]);
+        continue;
+      }
       if (r.verdict === "kill" || r.verdict === "watch") {
         expect(r.findings.length, `findings missing for ${r.id}`).toBeGreaterThanOrEqual(1);
         expect(r.findings.some(f => f.primary), `no primary finding for ${r.id}`).toBe(true);
@@ -215,10 +221,13 @@ describe("W5 — funnel-level HTO signal", () => {
     expect(r.rule).toBe("W5");
   });
 
-  it("without the flag the same campaign is judged by full-funnel ROAS", () => {
+  it("without the flag the same campaign is derived from its ad sets (spec 016 / FR-003, FR-007)", () => {
+    // Spec 016 / FR-007 — campaign full-funnel ROAS no longer judges a
+    // campaign; without W5 its verdict is derived from its ad sets.
     const result = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs);
     const r = result.rows.find(x => x.id === "cmp_scale")!;
     expect(r.rule).not.toBe("W5");
+    expect(r.derived_from_adset?.id).toBe("as_w1");
   });
 });
 
@@ -1729,6 +1738,8 @@ describe("T033-T038 — starvation floor (spec 015 / US3)", () => {
     /** per-day ad spend against parent spend of 60/61/58 */
     adDaily?: number[];
     adDailyCount?: number;
+    /** Spec 016 / T042 — run with another funnel (e.g. a lower target). */
+    funnel?: FunnelInputs;
   }) {
     const snap = buildDemoSnapshot();
     const ad = snap.objects.find(o => o.id === "ad_rescue")!;
@@ -1758,7 +1769,7 @@ describe("T033-T038 — starvation floor (spec 015 / US3)", () => {
     if (opts.parentMissingTarget) {
       parent.w3d = { ...parent.w3d, conversions: 1, leadConversions: 1, purchaseConversions: 1, cpa: parent.w3d.spend };
     }
-    const row = runEngine(snap, DEMO_FUNNEL as FunnelInputs).rows.find(r => r.id === "ad_rescue")!;
+    const row = runEngine(snap, opts.funnel ?? (DEMO_FUNNEL as FunnelInputs)).rows.find(r => r.id === "ad_rescue")!;
     return row;
   }
 
@@ -1802,14 +1813,51 @@ describe("T033-T038 — starvation floor (spec 015 / US3)", () => {
     expect(row.rule).not.toBe("K5");
   });
 
-  it("T037 — the CPA rescue needs ≥ 1 counted conversion; with one it fires even under the floor", () => {
-    // 0 conversions: effectiveCpa() is null, so no CPA rescue; CTR half is floored.
+  // Spec 016 / FR-025–FR-027 (US5, T042) — the cost half of the rescue now
+  // needs ≥ 2 counted results. Before 016 this test asserted that a single
+  // conversion at $12 ≤ $43 rescued an ad under the floor; one sale is not
+  // evidence of a "رابح مخنوق", so that case now waits (deliberate update).
+  it("T037 — the CPA rescue needs ≥ 2 counted results; with one, below the floor, the ad waits", () => {
+    // 0 conversions: no CPA rescue; CTR half is floored.
     const none = starved({ impressions: 300, ctrLink: 1.0, conversions: 0 });
     expect(none.verdict).not.toBe("rescue");
-    // 1 conversion at $12 ≤ $43 target: the CPA half rescues, floor does not apply to it.
+    // 1 conversion at $12 ≤ $43 target, under the floor → ⏳ K5 (FR-026).
     const one = starved({ impressions: 300, ctrLink: 1.0, conversions: 1 });
-    expect(one.verdict).toBe("rescue");
-    expect(one.rule).toBe("K5");
+    expect([one.verdict, one.rule]).toEqual(["too_early", "K5"]);
+    expect(one.reason_ar).toBe("نتيجة واحدة لا تكفي للحكم — اتركه يجمع بيانات");
+    expect(one.action_ar).toBe("راجعه بعد أن يحقق نتيجة ثانية");
+  });
+
+  it("T037b — 2 counted results at CPA ≤ target, under the floor → 🛟 K5 (FR-025)", () => {
+    const two = starved({ impressions: 300, ctrLink: 1.0, conversions: 2 });
+    expect([two.verdict, two.rule]).toEqual(["rescue", "K5"]);
+  });
+
+  it("T037c — the CTR half at ≥ 500 impressions still rescues with one result", () => {
+    const row = starved({ impressions: 1100, ctrLink: 3.4, conversions: 1 });
+    expect([row.verdict, row.rule]).toEqual(["rescue", "K5"]);
+  });
+
+  it("T037d — 1 counted result with CPA above target is not the new branch (matrix as before)", () => {
+    // Target $10 (AOV 10): 1 result on $12 spend is CPA $12 > $10.
+    const funnel = { ...(DEMO_FUNNEL as FunnelInputs), aov: 10 };
+    const row = starved({ impressions: 300, ctrLink: 1.0, conversions: 1, funnel });
+    expect([row.verdict, row.rule]).toEqual(["too_early", "K5"]);
+    expect(row.reason_ar).toBe(FLOOR_REASON);
+  });
+
+  it("T037e — sweep: no 🛟 via the cost path with fewer than 2 counted results (SC-006)", async () => {
+    const { FIXTURES016 } = await import("./fixtures016");
+    for (const fx of FIXTURES016) {
+      const snap = fx.build();
+      const r = runEngine(snap, fx.funnel);
+      const median = snap.baselines.ctrLinkMedian90 ?? 1.0;
+      for (const row of r.rows) {
+        if (row.verdict !== "rescue" || (row.conversions_3d ?? 0) >= 2) continue;
+        // only the CTR half may rescue it
+        expect(row.impressions_3d >= 500 && row.ctr_link > median, `${fx.name} ${row.id}`).toBe(true);
+      }
+    }
   });
 
   it("T038 — fewer than three usable daily7 slices ⇒ the matrix does not fire", () => {
@@ -1912,9 +1960,10 @@ describe("T060-T064 — unknown is not zero (spec 015 / US6)", () => {
     for (const r of result.rows) {
       expect(r.roas_3d, r.id).toBeNull();
       expect(`${r.reason_ar} ${r.action_ar}`, r.id).not.toMatch(/0\.0x/);
-      // No rule reads Meta's sales value: the campaign "return" (S2/W6) is
-      // counts × the funnel's configured buyer value. So an unknown value
-      // changes no verdict, which proves no return rule fires on it.
+      // No rule reads Meta's sales value (spec 016 / FR-007: campaign
+      // verdicts are derived from ad sets; the full-funnel return is
+      // display data, counts × the funnel's configured buyer value). So an
+      // unknown value changes no verdict.
       const b = base.rows.find(x => x.id === r.id)!;
       expect([r.verdict, r.rule, r.reason_ar], r.id).toEqual([b.verdict, b.rule, b.reason_ar]);
     }
@@ -1962,11 +2011,19 @@ describe("T060-T064 — unknown is not zero (spec 015 / US6)", () => {
     expect(row.reason_ar).toContain(UNKNOWN_REASON);
   });
 
-  it("T062 — campaign level: unknown counts ⇒ ⏳, no K1 and no W6 '0.0x'", () => {
+  it("T062 — campaign level: own count unknown, ad sets known ⇒ derived from the ad sets, no K1 and no '0.0x'", () => {
+    // Spec 016 / FR-001 (owner decision 2026-10-20) — the campaign-level
+    // results-unknown exit is gone. Only cmp_scale's own 3-day count is
+    // unknown here; its ad sets' counts are known, so the campaign (a
+    // summary of its ad sets) derives from them: 🟡 W1 from as_w1. Before
+    // 016 this asserted ⏳ with the unknown-count reason.
     const { snap } = withParsed("cmp_scale", { linkClicks: 800 });
     const row = rowOf(snap, "cmp_scale");
-    expect(row.verdict).toBe("too_early");
-    expect(row.reason_ar).toContain(UNKNOWN_REASON);
+    expect(row.verdict).toBe("watch");
+    expect(row.rule).toBe("W1");
+    expect(row.derived_from_adset?.id).toBe("as_w1");
+    expect(row.rule).not.toBe("K1");
+    expect(row.reason_ar).not.toContain(UNKNOWN_REASON);
     expect(row.reason_ar).not.toMatch(/0\.0x/);
   });
 
@@ -2028,37 +2085,30 @@ describe("T068-T069 — scale guard (spec 015 / US7)", () => {
     return result.rows.find(r => r.id === "cmp_scale")!;
   }
 
-  it("T068 — full return 3.2 with cost at 1.38× target ⇒ no +20%, 'واصل بدون زيادة الميزانية', watch (W1 band)", () => {
-    // $712 / 12 = $59.33 = 1.38 × $43; 12 × $190 / $712 = 3.20x
-    const row = campaign(712, 12);
-    expect(row.action_ar).toBe("واصل بدون زيادة الميزانية");
-    expect(row.action_ar).not.toMatch(/20%/);
-    expect(row.verdict).toBe("watch");
-    expect(row.rule).toBe("W1");
-    expect(row.reason_ar).toContain("3.2x");
+  // Spec 016 / FR-007 — the campaign W1/W6/S2 scale guard is removed. The
+  // campaign's own cost and return no longer decide anything: its verdict
+  // is derived from its ad sets, and "+20%" lives in the budget buttons,
+  // enabled on a CBO campaign only when every active ad set is 🟢
+  // (FR-009). Before 016 these asserted the campaign-level W1 / W6 / S2.
+  it("T068 — campaign cost 1.38× or 1.63× target no longer decides: derived 🟡 W1, no +20%, buttons disabled", () => {
+    // $712 / 12 = $59.33 = 1.38 × $43; $700 / 10 = $70 = 1.63 × $43
+    for (const row of [campaign(712, 12), campaign(700, 10)]) {
+      expect(row.verdict).toBe("watch");
+      expect(row.rule).toBe("W1");
+      expect(row.derived_from_adset?.id).toBe("as_w1");
+      expect(row.action_ar).not.toMatch(/20%/);
+      expect(row.budget_control).toBe("disabled");
+    }
   });
 
-  it("T068 — cost above 1.5× target with a return still ≥ 2 ⇒ W6 'كمّل بحذر', no +20%", () => {
-    // $700 / 10 = $70 = 1.63 × $43; 10 × $190 / $700 = 2.71x
-    const row = campaign(700, 10);
-    expect(row.action_ar).toBe("واصل بدون زيادة الميزانية");
-    expect(row.verdict).toBe("watch");
-    expect(row.rule).toBe("W6");
-    expect(row.reason_ar).toContain("كمّل بحذر — الحكم النهائي للفانل");
-  });
-
-  it("T069 — at or below target with a healthy return ⇒ the S2 +20% action is unchanged", () => {
-    const S2_ACTION = "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة";
-    // below target: $516 / 12 = $43.00 exactly at target
+  it("T069 — at target with a healthy return: still derived, no campaign action carries +20%", () => {
     const at = campaign(516, 12);
-    expect([at.verdict, at.rule]).toEqual(["continue", "S2"]);
-    // demo cmp_scale with the demo funnel: CPA ≈ $37 < $43
-    const demo = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs).rows.find(
-      r => r.id === "cmp_scale"
-    )!;
-    expect(demo.rule).toBe("S2");
-    expect(demo.action_ar).toBe(S2_ACTION);
-    // and no campaign anywhere in the demo gets +20% above its target
+    expect([at.verdict, at.rule]).toEqual(["watch", "W1"]);
+    const demo = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs);
+    for (const c of demo.rows.filter(r => r.level === "campaign")) {
+      expect(c.action_ar, c.id).not.toMatch(/20%/);
+    }
+    expect(demo.rows.find(r => r.id === "cmp_scale")!.budget_control).toBe("disabled");
   });
 });
 
@@ -2168,5 +2218,210 @@ describe("T082 — no 🔴 row claims 'no results' while its window has results 
     }
     // The invariant must have been exercised, not vacuously true.
     expect(checked).toBeGreaterThan(0);
+  });
+});
+
+// Spec 016 / US4 (R4, FR-022–FR-024) — the circuit breaker reads today's
+// results with the funnel's counting rule and stands down when today's
+// results came in the other family. Contract: circuit-breaker-and-k5.md §B1.
+describe("016 R4 — circuit breaker family", () => {
+  function cbRow(archetype: FunnelInputs["archetype"], today: Partial<NormalizedObject["today"]>, spendMultiple = 3) {
+    const funnel = { ...(DEMO_FUNNEL as FunnelInputs), archetype };
+    const target = runEngine(buildDemoSnapshot(), funnel).targets.unitTarget as number;
+    const snap = buildDemoSnapshot();
+    const o = snap.objects.find(x => x.id === "as_cb")!;
+    o.today = { ...o.today, spend: spendMultiple * target, ...today };
+    return runEngine(snap, funnel).rows.find(r => r.id === "as_cb")!;
+  }
+
+  it("paid_lto: today 0 purchases / 5 leads at 3× target → no CB1/CB2 (FR-024)", () => {
+    const row = cbRow("paid_lto", { conversions: 0, purchaseConversions: 0, leadConversions: 5 });
+    expect(row.rule).not.toBe("CB2");
+    expect(row.rule).not.toBe("CB1");
+  });
+
+  it("webinar: today 0 leads / 0 purchases at 3× target → CB2 (FR-024)", () => {
+    const row = cbRow("webinar", { conversions: 0, leadConversions: 0, purchaseConversions: 0 });
+    expect(row.verdict).toBe("kill");
+    expect(row.rule).toBe("CB2");
+  });
+
+  it("webinar: today 0 leads but 4 purchases at 3× target → stands down (other family recorded)", () => {
+    const row = cbRow("webinar", { conversions: 4, leadConversions: 0, purchaseConversions: 4 });
+    expect(row.rule).not.toBe("CB2");
+  });
+
+  it("paid_lto: both families 0 today at 3× target → CB2 (a genuine zero)", () => {
+    const row = cbRow("paid_lto", { conversions: 0, purchaseConversions: 0, leadConversions: 0 });
+    expect(row.rule).toBe("CB2");
+  });
+});
+
+// Spec 016 / FR-036 (owner decision 2026-10-20, US4 stop) — a row that
+// reaches the S1–S4 step with results and a cost above its target is 🟡 W1,
+// never 🟢. Placed after every K and W rule; K2 and rule order untouched.
+describe("016 FR-036 — above-target guard", () => {
+  // Demo paid_lto target is $43; as_cb / ad_cb carry spend $116 with 1 result
+  // over 3 days. Today's spend is zeroed so the circuit breaker stays out.
+  function run(edit: (o: NormalizedObject) => void, ids: string[] = ["as_cb"]) {
+    const snap = buildDemoSnapshot();
+    for (const o of snap.objects) {
+      if (o.id === "as_cb") o.today = { ...o.today, spend: 0 };
+      if (ids.includes(o.id)) edit(o);
+    }
+    return runEngine(snap, DEMO_FUNNEL as FunnelInputs);
+  }
+  const REASON_27 = "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $43 — التكلفة عالية، لكن الصرف لم يصل بعد إلى حد الإيقاف ($129)";
+
+  it("ad set at 2.7× target cost on 2.7× target spend → 🟡 W1, new copy (feminine)", () => {
+    const row = run(() => {}).rows.find(r => r.id === "as_cb")!;
+    expect([row.verdict, row.rule]).toEqual(["watch", "W1"]);
+    expect(row.reason_ar).toBe(REASON_27);
+    expect(row.action_ar).toBe(
+      "لا تزد الميزانية. راقبها يومين أو ثلاثة — إن وصل صرفها إلى $129 والتكلفة ما زالت فوق $65 فأوقِفها"
+    );
+  });
+
+  // Ads have no K2 (evaluateAd runs K1 only), so their copy never promises a
+  // stop at 3× spend; it names the cost limit instead (owner fix, pre-PR).
+  const REASON_HIGH = "في آخر 3 أيام: تكلفة النتيجة $116 والهدف $43 — التكلفة عالية";
+  const AD_ACTION = "لا تزد الميزانية. إن بقيت التكلفة فوق $65 بعد يومين أو ثلاثة فأوقِف هذا الإعلان";
+
+  it("ad at 2.7× target cost on < 3× spend → 🟡 W1, ad wording (no stop promise)", () => {
+    const row = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs).rows.find(r => r.id === "ad_cb")!;
+    expect([row.verdict, row.rule]).toEqual(["watch", "W1"]);
+    expect(row.reason_ar).toBe(REASON_HIGH);
+    expect(row.action_ar).toBe(AD_ACTION);
+  });
+
+  it("ad at 2.7× target cost on ≥ 3× spend → 🟡 W1, same ad wording", () => {
+    // $348 spend (8.1× target) with 3 results → $116 per result.
+    const row = run(
+      o => {
+        o.w3d = { ...o.w3d, spend: 348, conversions: 3, leadConversions: 3, purchaseConversions: 3, cpa: 116 };
+      },
+      ["ad_cb"]
+    ).rows.find(r => r.id === "ad_cb")!;
+    expect([row.verdict, row.rule]).toEqual(["watch", "W1"]);
+    expect(row.reason_ar).toBe(REASON_HIGH);
+    expect(row.action_ar).toBe(AD_ACTION);
+  });
+
+  it("ad set reaching the guard at ≥ 3× spend → 🟡 W1, ad-set wording (no stop promise)", () => {
+    // Unreachable through runEngine (K2 catches it, and K2's W3 suppression
+    // fires W3 first), so the guard is called directly.
+    runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs); // binds "$"
+    const snap = buildDemoSnapshot();
+    const o = snap.objects.find(x => x.id === "as_cb")!;
+    o.w3d = { ...o.w3d, spend: 348, conversions: 3, leadConversions: 3, purchaseConversions: 3, cpa: 116 };
+    const t = judgingTargets(DEMO_FUNNEL as FunnelInputs, snap, null);
+    const fired = aboveTargetGuard(o, t as Parameters<typeof aboveTargetGuard>[1], "paid_lto")!;
+    expect([fired.verdict, fired.rule]).toEqual(["watch", "W1"]);
+    expect(fired.reason).toBe(REASON_HIGH);
+    expect(fired.action).toBe("لا تزد الميزانية. إن بقيت التكلفة فوق $65 بعد يومين أو ثلاثة فأوقِفها");
+  });
+
+  it("cost 1.2× target → 🟡 W1 with the existing copy (ad-set agreement)", () => {
+    const row = run(o => {
+      o.w3d = { ...o.w3d, spend: 51.6, conversions: 1, leadConversions: 1, purchaseConversions: 1, cpa: 51.6 };
+    }).rows.find(r => r.id === "as_cb")!;
+    expect([row.verdict, row.rule]).toEqual(["watch", "W1"]);
+    expect(row.reason_ar).toBe("في آخر 3 أيام: تكلفة العميل $52 أعلى من هدفك ($43) بقليل — ليست كارثة");
+    expect(row.action_ar).toBe("راقبها يومين أو ثلاثة بدون أي تعديل");
+  });
+
+  it("cost ≤ target → still 🟢", () => {
+    const row = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs).rows.find(r => r.id === "as_good")!;
+    expect(row.verdict).toBe("continue");
+  });
+
+  it("rows that are W3, W4 or W6 today are unchanged", () => {
+    const demo = runEngine(buildDemoSnapshot(), DEMO_FUNNEL as FunnelInputs);
+    expect(demo.rows.find(r => r.id === "as_w3")!.rule).toBe("W3");
+    // W4: good clicks, few page views (cost 2.7× target).
+    const w4 = run(o => {
+      o.w3d = { ...o.w3d, lpViews: 40 };
+    }).rows.find(r => r.id === "as_cb")!;
+    expect([w4.verdict, w4.rule]).toEqual(["watch", "W4"]);
+    // W6: cost 1.63× target ($70) but full return ≥ 2 → stays 🟢 W6.
+    const w6 = run(o => {
+      o.w3d = { ...o.w3d, spend: 70, conversions: 1, leadConversions: 1, purchaseConversions: 1, cpa: 70 };
+    }).rows.find(r => r.id === "as_cb")!;
+    expect([w6.verdict, w6.rule]).toEqual(["continue", "W6"]);
+  });
+
+  it("sweep: zero 🟢 rows with cpa_3d above target across the 12 fixtures", async () => {
+    const { FIXTURES016 } = await import("./fixtures016");
+    for (const fx of FIXTURES016) {
+      const r = runEngine(fx.build(), fx.funnel);
+      const target = r.targets.unitTarget as number;
+      for (const row of r.rows) {
+        if (row.verdict !== "continue" || row.cpa_3d === null) continue;
+        expect(row.cpa_3d <= target, `${fx.name} ${row.id} ${row.rule}`).toBe(true);
+      }
+    }
+  });
+});
+
+// Spec 016 / FR-030 (owner fix, pre-PR) — the W rules shared by ads and ad
+// sets agree with the row: masculine for an ad, feminine for an ad set. Only
+// the agreement differs; verdict and rule never move.
+describe("016 FR-030 — level-aware W copy", () => {
+  function rowsWith(edit: (o: NormalizedObject) => void, ids: string[]) {
+    const snap = buildDemoSnapshot();
+    for (const o of snap.objects) if (ids.includes(o.id)) edit(o);
+    return runEngine(snap, DEMO_FUNNEL as FunnelInputs).rows;
+  }
+
+  it("W1 (1×–1.5×): ad set feminine, ad masculine", () => {
+    const rows = rowsWith(o => {
+      o.today = { ...o.today, spend: 0 };
+      o.w3d = { ...o.w3d, spend: 51.6, conversions: 1, leadConversions: 1, purchaseConversions: 1, cpa: 51.6 };
+    }, ["as_cb", "ad_cb"]);
+    const as = rows.find(r => r.id === "as_cb")!;
+    const ad = rows.find(r => r.id === "ad_cb")!;
+    expect([as.rule, ad.rule]).toEqual(["W1", "W1"]);
+    expect(as.action_ar).toBe("راقبها يومين أو ثلاثة بدون أي تعديل");
+    expect(ad.action_ar).toBe("راقبه يومين أو ثلاثة بدون أي تعديل");
+  });
+
+  it("W1 (zero results, 1×–2× spend): ad set feminine reason and action", () => {
+    const as = rowsWith(o => {
+      o.today = { ...o.today, spend: 0 };
+      o.w3d = { ...o.w3d, spend: 60, conversions: 0, leadConversions: 0, purchaseConversions: 0, cpa: null };
+    }, ["as_cb"]).find(r => r.id === "as_cb")!;
+    expect(as.rule).toBe("W1");
+    expect(as.reason_ar).toBe("صرفت $60 بدون أي نتيجة — لم تصل لحد الإيقاف بعد لكن تحتاج مراقبة");
+    expect(as.action_ar).toBe("راقبها — إن لم تحقق نتائج قبل أن يصل صرفها لـ $86 ستُوقف تلقائيًا");
+  });
+
+  it("W2 (one bad day after good days): ad set feminine", () => {
+    const as = rowsWith(o => {
+      o.today = { ...o.today, spend: 0 };
+      o.w3d = { ...o.w3d, spend: 90, conversions: 3, leadConversions: 3, purchaseConversions: 3, cpa: 30 };
+      const base = o.daily7[0];
+      o.daily7 = [0, 1, 2, 3].map(i => ({
+        ...base,
+        spend: 30,
+        conversions: i < 3 ? 1 : 0,
+        leadConversions: i < 3 ? 1 : 0,
+        purchaseConversions: i < 3 ? 1 : 0,
+        cpa: i < 3 ? 30 : null,
+      }));
+    }, ["as_cb"]).find(r => r.id === "as_cb")!;
+    expect(as.rule).toBe("W2");
+    expect(as.action_ar).toBe("لا تلمسها — أي تعديل الآن سيخرب تعلّم فيسبوك ويزيد التكلفة");
+  });
+
+  it("no masculine object pronoun survives in any ad-set W row across the 12 fixtures", async () => {
+    const { FIXTURES016 } = await import("./fixtures016");
+    // The masculine suffix must end the word ("راقبه", not "راقبها").
+    const MASCULINE = /(راقبه|تلمسه|صرفه)(?![ء-ي])|يحقق|لم يصل/;
+    for (const fx of FIXTURES016) {
+      for (const row of runEngine(fx.build(), fx.funnel).rows) {
+        if (row.level !== "adset" || !row.rule.startsWith("W")) continue;
+        expect(MASCULINE.test(row.action_ar), `${fx.name} ${row.id} ${row.rule}`).toBe(false);
+      }
+    }
   });
 });

@@ -1,8 +1,18 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { RULES, VERDICT_META, type RuleCode, type Verdict } from "@shared/qarar";
+import { ruleTitleText } from "@/lib/cellFormat";
 
 /** Fixed verdict emoji set: 🔴 kill · 🟡 watch · 🟢 continue · 🛟 rescue · ⏳ too-early */
-export function VerdictBadge({ verdict, rule }: { verdict: Verdict; rule: RuleCode }) {
+export function VerdictBadge({
+  verdict,
+  rule,
+  fromAdsetName,
+}: {
+  verdict: Verdict;
+  rule: RuleCode;
+  /** Spec 016 / FR-004 — source ad set of a derived campaign's rule code. */
+  fromAdsetName?: string | null;
+}) {
   const m = VERDICT_META[verdict];
   const colorCls =
     verdict === "kill"
@@ -20,7 +30,7 @@ export function VerdictBadge({ verdict, rule }: { verdict: Verdict; rule: RuleCo
     >
       <span aria-hidden>{m.emoji}</span>
       <span>{m.labelAr}</span>
-      <RuleChip rule={rule} />
+      <RuleChip rule={rule} fromAdsetName={fromAdsetName} />
     </span>
   );
 }
@@ -30,7 +40,7 @@ export function VerdictBadge({ verdict, rule }: { verdict: Verdict; rule: RuleCo
  * tooltip. The internal rule code (K1, W5...) appears only faded inside the
  * tooltip for reference/support, never as the primary label.
  */
-export function RuleChip({ rule }: { rule: RuleCode }) {
+export function RuleChip({ rule, fromAdsetName }: { rule: RuleCode; fromAdsetName?: string | null }) {
   const def = RULES[rule];
   if (!def) return null;
   return (
@@ -41,7 +51,7 @@ export function RuleChip({ rule }: { rule: RuleCode }) {
         </span>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-xs text-right" dir="rtl">
-        <p className="mb-1 font-bold">{def.titleAr}</p>
+        <p className="mb-1 font-bold">{ruleTitleText(rule, fromAdsetName)}</p>
         <p className="text-xs leading-relaxed opacity-90">{def.defAr}</p>
         <p className="num mt-1.5 text-[9px] opacity-40">رمز القاعدة: {rule}</p>
       </TooltipContent>

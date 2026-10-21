@@ -1,5 +1,5 @@
 import { trpc } from "@/lib/trpc";
-import { VERDICT_META, RULES, type RuleCode, type Verdict } from "@shared/qarar";
+import { VERDICT_META, type RuleCode, type Verdict } from "@shared/qarar";
 import {
   Dialog,
   DialogContent,
@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Loader2, History } from "lucide-react";
+import { historyRuleTitle } from "@/lib/cellFormat";
 
 interface VerdictHistoryDialogProps {
   open: boolean;
@@ -96,7 +97,7 @@ export function VerdictHistoryDialog({
             <ol className="space-y-2">
               {entries.map((e, i) => {
                 const meta = VERDICT_META[e.verdict];
-                const ruleTitle = RULES[e.rule]?.titleAr ?? e.rule;
+                const ruleTitle = historyRuleTitle(e);
                 return (
                   <li
                     key={`${e.evaluatedAt}-${i}`}

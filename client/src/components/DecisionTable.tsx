@@ -30,13 +30,14 @@ import { Input } from "@/components/ui/input";
 import { VerdictBadge } from "@/components/Verdict";
 import { VerdictHistoryDialog } from "@/components/VerdictHistoryDialog";
 import { cpaColorClass, ctrColorClass, money, num, pct } from "@/lib/format";
-import { cpaCell } from "@/lib/cellFormat";
+import { cpaCell, budgetControlView, resultsCell, RESULTS_UNKNOWN_TITLE, ROAS_UNKNOWN_TITLE } from "@/lib/cellFormat";
 import { applyFilters, FILTER_FIELDS, type FilterAgg, type FilterField, type FilterJoin, type FilterOp, type FilterRule } from "@/lib/filters";
 import { aggregateTotals } from "@/lib/aggregate";
+import { withLtrNumerals } from "@/lib/ltrNumerals";
 import { presetRangeBounds } from "@/lib/dateWindow";
 import { trpc } from "@/lib/trpc";
 import type { AccountSummary, DailyMetrics, EngineRow, Verdict, WindowMetrics } from "@shared/qarar";
-import { isDeliveringStatus, isHiddenStatus } from "@shared/qarar";
+import { countedResults, isDeliveringStatus, isHiddenStatus, type FunnelArchetype } from "@shared/qarar";
 import {
   ArrowDown,
   ArrowUp,
@@ -109,15 +110,17 @@ function dateStr(off: number): string {
   );
 }
 
-function aggFromWindow(w: WindowMetrics): FilterAgg {
+function aggFromWindow(w: WindowMetrics, archetype: FunnelArchetype): FilterAgg {
+  // Spec 016 / FR-012 — the engine's counting rule; `null` = unknown.
+  const results = countedResults(w, archetype);
   return {
     spend: w.spend,
     impressions: w.impressions,
-    results: w.conversions,
+    results,
     linkClicks: w.linkClicks,
     clicks: w.clicks,
     lpViews: w.lpViews,
-    cpa: w.conversions > 0 ? w.spend / w.conversions : null,
+    cpa: results !== null && results > 0 ? w.spend / results : null,
     ctrLink: w.impressions > 0 ? w.ctrLink : null,
     ctrAll: w.impressions > 0 ? w.ctrAll : null,
     cpm: w.impressions > 0 ? w.cpm : null,
@@ -134,14 +137,10 @@ function aggFromWindow(w: WindowMetrics): FilterAgg {
     frequency: null,
     spendShare: null,
     // Hotfix T9: ROAS input for the footer.
-    // Spec 015 / FR-026 — `w.conversionValue` is now `number | null`, where
-    // null means Meta sent no value data. Coalescing to 0 HERE is safe and
-    // is NOT the rule-level `?? 0` that contracts/unknown-vs-zero.md §U3
-    // forbids: this is a display sum, every consumer guards the result with
-    // `conversionValue > 0 ? … : null` (lib/aggregate.ts:56), so an unknown
-    // value contributes nothing and the footer renders "—" rather than
-    // "0.0x". No verdict reads this path.
-    conversionValue: w.conversionValue ?? 0,
+    // Spec 016 / FR-017 — an unknown value (null) stays null; the footer
+    // shows "—" with a tooltip instead of summing it as 0 (this replaces
+    // the `?? 0` deviation recorded in spec 015).
+    conversionValue: w.conversionValue,
   };
 }
 
@@ -167,10 +166,15 @@ export function aggregate(
   from: string,
   to: string,
   asOfDate: string,
-  lazyDaily?: DailyMetrics[] | null,
+  lazyDaily: DailyMetrics[] | null | undefined,
+  archetype: FunnelArchetype,
 ): FilterAgg | null {
   if (!s) return null;
-  if (range === "today") return aggFromWindow(s.today);
+  if (range === "today") return aggFromWindow(s.today, archetype);
+  // Spec 016 / FR-013, FR-018 (research D11) — the 3d chip IS the engine's
+  // window (last 3 complete days, without today), so its numbers equal the
+  // verdict's. It never sums the daily series.
+  if (range === "3d") return aggFromWindow(s.w3d, archetype);
   // Loading state — caller explicitly passed `null`. We deliberately do
   // NOT aggregate against the empty default; the DecisionTable shows a
   // row-level "—" with the toolbar spinner instead.
@@ -179,28 +183,29 @@ export function aggregate(
   //   undefined → use cached s.daily30
   //   [] or [...items] → authoritative use the lazy slice (even if empty)
   const dailyForAgg = lazyDaily !== undefined ? lazyDaily : s.daily30;
-  // 3d preset is the one case the historical code allowed falling back to
-  // the engine's w3d window when daily30 was absent.
-  if (range === "3d" && dailyForAgg.length === 0) return aggFromWindow(s.w3d);
-  const days = range === "3d" ? 3 : range === "7d" ? 7 : range === "14d" ? 14 : 30;
+  const days = range === "7d" ? 7 : range === "14d" ? 14 : 30;
   // Preset chips: window ends YESTERDAY (account-tz asOfDate − 1), never today
   // (spec 010 FR-004). custom keeps the user-picked from/to.
   const preset = range === "custom" ? null : presetRangeBounds(asOfDate, days);
   const since = range === "custom" ? from : preset!.since;
   const until = range === "custom" ? to : preset!.until;
   if (!since || !until) return null;
-  let spend = 0, imps = 0, clicks = 0, linkClicks = 0, conv = 0, lp = 0, v3 = 0, tp = 0, value = 0;
+  let spend = 0, imps = 0, clicks = 0, linkClicks = 0, lp = 0, v3 = 0, tp = 0;
+  // Spec 016 / FR-013, FR-017 — one unknown day makes the range unknown.
+  let conv: number | null = 0;
+  let value: number | null = 0;
   for (const d of dailyForAgg) {
     if (d.date < since || d.date > until) continue;
     spend += d.spend;
     imps += d.impressions;
     clicks += d.clicks;
     linkClicks += d.linkClicks;
-    conv += d.conversions;
+    const dayCount = countedResults(d, archetype);
+    conv = conv === null || dayCount === null ? null : conv + dayCount;
     lp += d.lpViews;
     v3 += d.videoViews3s ?? 0;
     tp += d.thruplays ?? 0;
-    value += d.conversionValue ?? 0;
+    value = value === null || d.conversionValue === null ? null : value + d.conversionValue;
   }
   return {
     spend,
@@ -209,7 +214,7 @@ export function aggregate(
     linkClicks,
     clicks,
     lpViews: lp,
-    cpa: conv > 0 ? spend / conv : null,
+    cpa: conv !== null && conv > 0 ? spend / conv : null,
     ctrLink: imps > 0 ? (linkClicks / imps) * 100 : null,
     ctrAll: imps > 0 ? (clicks / imps) * 100 : null,
     cpm: imps > 0 ? (spend / imps) * 1000 : null,
@@ -221,6 +226,55 @@ export function aggregate(
     spendShare: null,
     conversionValue: value,
   };
+}
+
+const VERDICT_SORT_ORDER: Record<Verdict, number> = {
+  kill: 0,
+  rescue: 1,
+  watch: 2,
+  continue: 3,
+  too_early: 4,
+};
+
+/**
+ * The value a row sorts by, read from the same source the cell renders
+ * (spec 016 self-review N9: ROAS used to read a `FilterAgg` key that does
+ * not exist, so every row sorted as −1). Unknown or missing sorts as −1.
+ */
+export function sortValue(
+  r: EngineRow,
+  a: FilterAgg | null | undefined,
+  key: ColKey | "verdict" | "name",
+  range: RangeKey,
+): number | string {
+  switch (key) {
+    case "verdict":
+      return VERDICT_SORT_ORDER[r.verdict] * 1e9 - r.spend_3d;
+    case "name":
+      return r.name;
+    case "spendShare":
+      return r.spend_share_pct ?? -1;
+    case "frequency":
+      return r.frequency_3d ?? -1;
+    case "roas":
+      // The ROAS cell always shows the engine's 3-day figure.
+      return r.roas_3d ?? -1;
+    case "results":
+      // Spec 016 / FR-018 — in 3d the cell reads the engine row.
+      if (range === "3d") return r.conversions_3d ?? -1;
+      return a?.results ?? -1;
+    case "cpa":
+      // Batch 2 / ISSUE-004 — match the render path. In the default
+      // 3d view the column shows r.cpa_3d; for every other range we
+      // fall back to the per-range aggregate CPA so the sort order
+      // matches the on-screen value.
+      if (range === "3d") return r.cpa_3d ?? -1;
+      return a?.cpa ?? -1;
+    default: {
+      const v = a?.[key as keyof FilterAgg];
+      return typeof v === "number" ? v : -1;
+    }
+  }
 }
 
 // ---------- columns ----------
@@ -240,25 +294,34 @@ type ColKey =
   | "frequency"
   | "impressions";
 
-const ALL_COLUMNS: { key: ColKey; label: string; adOnly?: boolean }[] = [
-  { key: "spend", label: "Spend" },
-  { key: "results", label: "Results" },
-  { key: "cpa", label: "CPA" },
+// Spec 016 / FR-028 (contract copy.md §L1) — Arabic labels; the metric
+// abbreviation moves to `hint`, shown only as the header tooltip.
+export const ALL_COLUMNS: { key: ColKey; label: string; hint: string; adOnly?: boolean }[] = [
+  { key: "spend", label: "الصرف", hint: "Spend" },
+  { key: "results", label: "النتائج", hint: "Results" },
+  { key: "cpa", label: "تكلفة النتيجة", hint: "CPA" },
   // Hotfix T9: ROAS column placed right after CPA so ad buyers see
   // "how much I spent → how much each result cost → how much came back"
   // in a single glance.
-  { key: "roas", label: "ROAS" },
-  { key: "ctrLink", label: "Link CTR" },
-  { key: "ctrAll", label: "CTR (All)" },
-  { key: "cpm", label: "CPM" },
-  { key: "cpc", label: "CPC" },
-  { key: "hookRate", label: "Hook Rate", adOnly: true },
-  { key: "holdRate", label: "Hold Rate", adOnly: true },
-  { key: "lpRate", label: "LP View %" },
-  { key: "spendShare", label: "% Spend", adOnly: true },
-  { key: "frequency", label: "Frequency" },
-  { key: "impressions", label: "مشاهدات" },
+  { key: "roas", label: "العائد على الإعلان", hint: "ROAS" },
+  { key: "ctrLink", label: "نسبة الضغط على الرابط", hint: "Link CTR" },
+  { key: "ctrAll", label: "نسبة الضغط الكلية", hint: "CTR (All)" },
+  { key: "cpm", label: "تكلفة ألف ظهور", hint: "CPM" },
+  { key: "cpc", label: "تكلفة الضغطة", hint: "CPC" },
+  { key: "hookRate", label: "نسبة جذب أول 3 ثوانٍ", hint: "Hook Rate", adOnly: true },
+  { key: "holdRate", label: "نسبة إكمال المشاهدة", hint: "Hold Rate", adOnly: true },
+  { key: "lpRate", label: "نسبة الوصول للصفحة", hint: "LP View %" },
+  { key: "spendShare", label: "نصيبه من الصرف", hint: "% Spend", adOnly: true },
+  { key: "frequency", label: "مرات الظهور للشخص", hint: "Frequency" },
+  { key: "impressions", label: "مشاهدات", hint: "Impressions" },
 ];
+
+/** Spec 016 / FR-028 — the 3d CPA header (LTR numeral, Principle III). */
+export const CPA_3D_HEADER = "تكلفة النتيجة (3 أيام)";
+
+/** Spec 016 / FR-029 (contract copy.md §L2) — the window banner. */
+export const WINDOW_BANNER_TEXT =
+  "الحكم محسوب دائمًا على آخر 3 أيام كاملة (بدون اليوم)، ولا يتأثر بالفترة المختارة.";
 
 const DEFAULT_VISIBLE: ColKey[] = ["spend", "results", "cpa", "ctrLink", "spendShare"];
 const LS_KEY = "qarar_columns_v1";
@@ -326,6 +389,7 @@ export function DecisionTable({
   summary,
   currencySymbol = "$",
   asOfDate,
+  archetype,
 }: {
   rows: EngineRow[];
   series: SeriesObj[];
@@ -351,6 +415,8 @@ export function DecisionTable({
    * for snapshots cached before this field existed (research R4).
    */
   asOfDate?: string;
+  /** Spec 016 / FR-012 — the funnel archetype the engine counted with. */
+  archetype: FunnelArchetype;
 }) {
   const utils = trpc.useUtils();
 
@@ -576,10 +642,10 @@ export function DecisionTable({
         // AD ROWS, FETCHED: lazy data is authoritative even when empty.
         lazySlice = lazyById[r.id] ?? [];
       }
-      m.set(r.id, aggregate(seriesMap.get(r.id), aggRange, from, to, asOf, lazySlice));
+      m.set(r.id, aggregate(seriesMap.get(r.id), aggRange, from, to, asOf, lazySlice, archetype));
     }
     return m;
-  }, [rows, seriesMap, range, from, to, asOfDate, lazyHistory.data, lazyHistory.error, needsLazyHistory]);
+  }, [rows, seriesMap, range, from, to, asOfDate, lazyHistory.data, lazyHistory.error, needsLazyHistory, archetype]);
 
   // visible rows — when searching/filtering, search across ALL levels
   const hasFilters = filterRules.length > 0;
@@ -609,41 +675,10 @@ export function DecisionTable({
     return list;
   }, [rows, level, path, q, verdicts, isSearching, hasFilters, filterRules, filterJoin, aggs, getStatus, hidePaused]);
 
-  const verdictOrder: Record<Verdict, number> = {
-    kill: 0,
-    rescue: 1,
-    watch: 2,
-    continue: 3,
-    too_early: 4,
-  };
-
   const sorted = useMemo(() => {
-    const val = (r: EngineRow): number | string => {
-      const a = aggs.get(r.id);
-      switch (sort.key) {
-        case "verdict":
-          return verdictOrder[r.verdict] * 1e9 - r.spend_3d;
-        case "name":
-          return r.name;
-        case "spendShare":
-          return r.spend_share_pct ?? -1;
-        case "frequency":
-          return r.frequency_3d ?? -1;
-        case "cpa":
-          // Batch 2 / ISSUE-004 — match the render path. In the default
-          // 3d view the column shows r.cpa_3d; for every other range we
-          // fall back to the per-range aggregate CPA so the sort order
-          // matches the on-screen value.
-          if (range === "3d") return r.cpa_3d ?? -1;
-          return a?.cpa ?? -1;
-        default: {
-          const v = a?.[sort.key as keyof FilterAgg];
-          return typeof v === "number" ? v : -1;
-        }
-      }
-    };
     return [...visible].sort((x, y) => {
-      const a = val(x), b = val(y);
+      const a = sortValue(x, aggs.get(x.id), sort.key, range);
+      const b = sortValue(y, aggs.get(y.id), sort.key, range);
       if (typeof a === "string" || typeof b === "string")
         return String(a).localeCompare(String(b), "ar") * sort.dir;
       return (a - b) * sort.dir;
@@ -664,8 +699,10 @@ export function DecisionTable({
       case "spend":
         return money(totals.spend, currencySymbol);
       case "results":
-        return num(totals.results);
+        return resultsCell(totals.results, num).value;
       case "cpa":
+        // Spec 016 / FR-016 — "؟" when the count is unknown, "—" at 0.
+        if (totals.results === null) return "؟";
         return totals.cpa === null ? "—" : money(totals.cpa, currencySymbol);
       case "roas":
         return totals.roas === null ? "—" : `${totals.roas.toFixed(2)}x`;
@@ -686,6 +723,26 @@ export function DecisionTable({
     }
   };
 
+  // Spec 016 / FR-015, FR-017 — tooltips on unknown footer cells.
+  const totalTitle = (key: ColKey): string | undefined => {
+    if ((key === "results" || key === "cpa") && totals.results === null) return RESULTS_UNKNOWN_TITLE;
+    if (key === "roas" && totals.roasUnknown) return ROAS_UNKNOWN_TITLE;
+    return undefined;
+  };
+
+  // Spec 016 / FR-018 — in 3d the results and cost cells read the engine
+  // row: the exact figures the verdict was judged on.
+  const rowResults = (r: EngineRow, a: FilterAgg | null | undefined): number | null =>
+    range === "3d" ? r.conversions_3d : (a?.results ?? null);
+
+  // Spec 016 / FR-014, FR-015 — tooltip on a result count Meta did not send.
+  const cellTitle = (r: EngineRow, key: ColKey): string | undefined => {
+    if (key !== "results" && key !== "cpa") return undefined;
+    const a = aggs.get(r.id);
+    if (range !== "3d" && a == null) return undefined;
+    return rowResults(r, a) === null ? RESULTS_UNKNOWN_TITLE : undefined;
+  };
+
   const cellValue = (r: EngineRow, key: ColKey): string => {
     const a = aggs.get(r.id);
     switch (key) {
@@ -697,7 +754,8 @@ export function DecisionTable({
         // worse than a missing cell.
         return a == null ? "—" : money(a.spend, currencySymbol);
       case "results":
-        return a == null ? "—" : num(a.results);
+        if (range !== "3d" && a == null) return "—";
+        return resultsCell(rowResults(r, a), num).value;
       case "cpa":
         // Batch 2 / ISSUE-004 — in the default 3d view, the column must show
         // the engine's cpa_3d (the exact figure behind the verdict). For
@@ -759,10 +817,13 @@ export function DecisionTable({
           currency: currencySymbol,
         }).className;
       }
+      // Loading (no aggregate yet): the cell shows "—", so no verdict colour
+      // either — a 🔴 row used to get the red class on a dash (CodeRabbit #32).
+      if (!a) return "font-bold";
       return cpaCell({
         verdict: r.verdict,
-        results: a?.results ?? 0,
-        cpa: a?.cpa ?? null,
+        results: a.results,
+        cpa: a.cpa,
         target: unitTarget,
         currency: currencySymbol,
       }).className;
@@ -1095,10 +1156,7 @@ export function DecisionTable({
 
         {range !== "3d" && (
           <div className="space-y-1.5">
-            <p className="text-[11px] text-muted-foreground">
-              ℹ️ الأرقام معروضة لفترة «{RANGE_LABELS[range]}» — لكن <b>الحكم</b> محسوب دائمًا حسب
-              قواعد التقييم (آخر 3 أيام + اليوم) ولا يتأثر بالفترة المختارة.
-            </p>
+            <p className="text-[11px] text-muted-foreground">ℹ️ {WINDOW_BANNER_TEXT}</p>
             {/*
               Refresh-bottleneck fix: ad-level daily history wider than 7 days
               is now lazy-loaded on demand (routers.ts#dashboard.adDailyHistory).
@@ -1147,11 +1205,12 @@ export function DecisionTable({
                     key={c.key}
                     className="num cursor-pointer select-none whitespace-nowrap px-2 py-2 text-center font-medium hover:text-foreground"
                     onClick={() => clickSort(c.key)}
+                    title={c.hint}
                   >
                     {/* Batch 2 / ISSUE-004 / FR-019 — CPA header indicates the
                         3-day window in the default view, range-appropriate
                         label otherwise so range-aware values aren't mislabeled. */}
-                    {c.key === "cpa" && range === "3d" ? "تكلفة العميل (٣ أيام)" : c.label}{" "}
+                    {c.key === "cpa" && range === "3d" ? CPA_3D_HEADER : c.label}{" "}
                     <SortIcon active={sort.key === c.key} dir={sort.dir} />
                   </th>
                 ))}
@@ -1269,12 +1328,17 @@ export function DecisionTable({
                       <td
                         key={c.key}
                         className={`num whitespace-nowrap px-2 py-2.5 text-center ${cellClass(r, c.key)}`}
+                        title={cellTitle(r, c.key)}
                       >
                         {cellValue(r, c.key)}
                       </td>
                     ))}
                     <td className="px-2 py-2.5 text-center">
-                      <VerdictBadge verdict={r.verdict} rule={r.rule} />
+                      <VerdictBadge
+                        verdict={r.verdict}
+                        rule={r.rule}
+                        fromAdsetName={r.derived_from_adset?.name}
+                      />
                       {/* Spec 015 / FR-008 — names the real gated state.
                           Display-only beside the ⏳ verdict, never a verdict. */}
                       {r.statusBadge && (
@@ -1284,12 +1348,22 @@ export function DecisionTable({
                       )}
                     </td>
                     <td className="max-w-[340px] px-4 py-2.5">
-                      <p className="text-xs leading-relaxed">{r.reason_ar}</p>
+                      {/* Spec 016 self-review N11 — figures render LTR, as in the diagnosis panel. */}
+                      <p className="text-xs leading-relaxed">{withLtrNumerals(r.reason_ar)}</p>
                       <p className="mt-0.5 text-xs font-bold text-foreground/90">
-                        ← {r.action_ar}
+                        ← {withLtrNumerals(r.action_ar)}
                       </p>
                       {r.promotion_note && (
                         <p className="mt-0.5 text-[11px] text-v-continue">{r.promotion_note}</p>
+                      )}
+                      {/* Spec 016 / FR-006 — campaign full-funnel return: display data only. */}
+                      {r.level === "campaign" && r.full_roas_3d != null && r.full_roas_3d > 0 && (
+                        <p
+                          className="mt-0.5 text-[11px] text-muted-foreground"
+                          title="قيمة المشتري الكاملة ÷ تكلفة النتيجة — معلومة فقط ولا تغيّر الحكم"
+                        >
+                          العائد الكلي للفانل: <span className="num">{r.full_roas_3d.toFixed(2)}x</span>
+                        </p>
                       )}
                     </td>
                     <td className="px-2 py-2.5 text-center">
@@ -1310,13 +1384,14 @@ export function DecisionTable({
                           {paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
                           {paused ? "تشغيل" : "إيقاف"}
                         </Button>
-                        {r.daily_budget !== null && (
-                          <div className="flex w-full gap-1">
+                        {budgetControlView(r).show && (
+                          <div className="flex w-full gap-1" title={budgetControlView(r).title}>
                             <Button
                               variant="outline"
                               size="sm"
                               className="h-6 flex-1 px-1 text-[10px] font-bold text-primary"
                               title="زيادة 20%"
+                              disabled={budgetControlView(r).disabled}
                               onClick={e => {
                                 e.stopPropagation();
                                 setBudgetRow({ row: r, direction: 1 });
@@ -1329,6 +1404,7 @@ export function DecisionTable({
                               size="sm"
                               className="h-6 flex-1 px-1 text-[10px] font-bold text-amber-700"
                               title="خفض 20%"
+                              disabled={budgetControlView(r).disabled}
                               onClick={e => {
                                 e.stopPropagation();
                                 setBudgetRow({ row: r, direction: -1 });
@@ -1354,6 +1430,7 @@ export function DecisionTable({
                     <td
                       key={c.key}
                       className="num whitespace-nowrap px-2 py-2 text-center text-xs"
+                      title={totalTitle(c.key)}
                     >
                       {totalCell(c.key)}
                     </td>

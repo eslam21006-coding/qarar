@@ -26,7 +26,8 @@ export interface FilterRule {
 export interface FilterAgg {
   spend: number;
   impressions: number;
-  results: number;
+  /** Spec 016 / FR-012 — counted with `countedResults`; `null` = unknown, never 0. */
+  results: number | null;
   linkClicks: number;
   clicks: number;
   lpViews: number;
@@ -40,8 +41,12 @@ export interface FilterAgg {
   lpRate: number | null;
   frequency: number | null;
   spendShare: number | null;
-  /** Hotfix T9: sum of conversion value across the selected window — for ROAS. */
-  conversionValue: number;
+  /**
+   * Hotfix T9: sum of conversion value across the selected window — for ROAS.
+   * Spec 016 / FR-017 — `null` when Meta sent no value for any part of the
+   * window; never summed as 0.
+   */
+  conversionValue: number | null;
 }
 
 export const FILTER_FIELDS: Record<
@@ -53,11 +58,14 @@ export const FILTER_FIELDS: Record<
   verdict: { type: "enum", label: "الحكم" },
   status: { type: "enum", label: "الحالة", options: ["ACTIVE", "PAUSED"] },
   level: { type: "enum", label: "المستوى" },
+  // Spec 016 self-review S4 — numeric fields use the column labels
+  // (contracts/copy.md L1), so the filter panel and the table name a metric
+  // the same way. Pinned by DecisionTable.copy.test.ts.
   spend: { type: "numeric", label: "الصرف" },
-  impressions: { type: "numeric", label: "المشاهدات" },
-  cpa: { type: "numeric", label: "تكلفة العميل" },
-  ctrLink: { type: "numeric", label: "نسبة النقر" },
-  cpm: { type: "numeric", label: "سعر الظهور" },
+  impressions: { type: "numeric", label: "مشاهدات" },
+  cpa: { type: "numeric", label: "تكلفة النتيجة" },
+  ctrLink: { type: "numeric", label: "نسبة الضغط على الرابط" },
+  cpm: { type: "numeric", label: "تكلفة ألف ظهور" },
 };
 
 function getNumericValue(

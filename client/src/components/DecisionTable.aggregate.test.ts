@@ -63,7 +63,7 @@ describe("aggregate() — preset chips exclude today (SC-002)", () => {
 
   for (const c of cases) {
     it(`${c.range}: excludes today (07-12), includes yesterday (07-11), matches hand sum`, () => {
-      const agg = aggregate(series, c.range, "", "", ASOF);
+      const agg = aggregate(series, c.range, "", "", ASOF, undefined, "paid_lto");
       expect(agg).not.toBeNull();
       // (a) today's row (spend 12) is never added → total excludes it
       expect(agg!.spend).toBe(c.spend);
@@ -74,12 +74,12 @@ describe("aggregate() — preset chips exclude today (SC-002)", () => {
   }
 
   it("(b) yesterday's row is included — dropping it would lower the 7d spend", () => {
-    const withYesterday = aggregate(series, "7d", "", "", ASOF)!.spend;
+    const withYesterday = aggregate(series, "7d", "", "", ASOF, undefined, "paid_lto")!.spend;
     const seriesNoYesterday: SeriesObj = {
       ...series,
       daily30: daily30.filter(d => d.date !== "2026-07-11"),
     };
-    const withoutYesterday = aggregate(seriesNoYesterday, "7d", "", "", ASOF)!.spend;
+    const withoutYesterday = aggregate(seriesNoYesterday, "7d", "", "", ASOF, undefined, "paid_lto")!.spend;
     expect(withYesterday - withoutYesterday).toBe(11);
   });
 
@@ -126,12 +126,12 @@ describe("aggregate() — preset chips exclude today (SC-002)", () => {
     };
 
     it("lazyDaily = null ⇒ loading (returns null, caller renders em-dash)", () => {
-      const agg = aggregate(emptyAdSeries, "30d", "", "", ASOF, null);
+      const agg = aggregate(emptyAdSeries, "30d", "", "", ASOF, null, "paid_lto");
       expect(agg).toBeNull();
     });
 
     it("lazyDaily = [] ⇒ AUTHORITATIVE empty (zeros, NOT falling through to s.daily30's non-zero row)", () => {
-      const agg = aggregate(emptyAdSeries, "30d", "", "", ASOF, []);
+      const agg = aggregate(emptyAdSeries, "30d", "", "", ASOF, [], "paid_lto");
       expect(agg).not.toBeNull();
       expect(agg!.spend).toBe(0);
       expect(agg!.impressions).toBe(0);
@@ -145,7 +145,7 @@ describe("aggregate() — preset chips exclude today (SC-002)", () => {
       // The 3d chip is a special case — historical code (and the post-fix
       // code) prefer the engine's w3d window when daily data is empty,
       // so the user still sees today's / 3d metrics on the default view.
-      const agg = aggregate(emptyAdSeries, "3d", "", "", ASOF, []);
+      const agg = aggregate(emptyAdSeries, "3d", "", "", ASOF, [], "paid_lto");
       expect(agg).not.toBeNull();
       expect(agg!.spend).toBe(3); // matches w3d.spend
     });
@@ -156,7 +156,7 @@ describe("aggregate() — preset chips exclude today (SC-002)", () => {
         { ...win({ spend: 8, impressions: 800, conversions: 1, linkClicks: 80 }), date: "2026-07-07" },
         { ...win({ spend: 9, impressions: 900, conversions: 1, linkClicks: 90 }), date: "2026-07-08" },
       ];
-      const agg = aggregate(emptyAdSeries, "7d", "", "", ASOF, series);
+      const agg = aggregate(emptyAdSeries, "7d", "", "", ASOF, series, "paid_lto");
       expect(agg).not.toBeNull();
       expect(agg!.spend).toBe(7 + 8 + 9); // rows in last_7d window sum
     });
@@ -173,10 +173,55 @@ describe("aggregate() — preset chips exclude today (SC-002)", () => {
         w3d: win({ spend: 3, impressions: 300, conversions: 0 }),
         daily30, // 8 rows (4..7 days ago, total spend 5+6+7+8+9+10+11 = 56)
       };
-      const agg = aggregate(cmpSeries, "7d", "", "", ASOF, undefined);
+      const agg = aggregate(cmpSeries, "7d", "", "", ASOF, undefined, "paid_lto");
       expect(agg).not.toBeNull();
       // Last 7 calendar days: 5+6+7+8+9+10+11 = 56
       expect(agg!.spend).toBe(5 + 6 + 7 + 8 + 9 + 10 + 11);
     });
+  });
+});
+
+// Spec 016 / T025 (FR-013, research D11) — the 3d chip is the engine's own
+// window; every range counts with the shared rule; one unknown day makes the
+// range unknown.
+describe("aggregate() — spec 016 single source", () => {
+  it("3d always equals the engine window w3d, even when the daily rows disagree", () => {
+    const off: SeriesObj = { ...series, w3d: win({ spend: 99, impressions: 9900, conversions: 4 }) };
+    const agg = aggregate(off, "3d", "", "", ASOF, undefined, "paid_lto")!;
+    expect(agg.spend).toBe(99);
+    expect(agg.results).toBe(4);
+    expect(agg.cpa).toBeCloseTo(99 / 4);
+  });
+  it("appointment counts leadConversions in every range (not the blended conversions)", () => {
+    const leadDay = (date: string): DailyMetrics => ({
+      ...win({ spend: 10, impressions: 1000, conversions: 5, leadConversions: 2, purchaseConversions: 3 }),
+      date,
+    });
+    const s: SeriesObj = {
+      ...series,
+      today: win({ spend: 10, conversions: 5, leadConversions: 1 }),
+      w3d: win({ spend: 30, conversions: 15, leadConversions: 6 }),
+      daily30: ["2026-07-08", "2026-07-09", "2026-07-10", "2026-07-11"].map(leadDay),
+    };
+    expect(aggregate(s, "today", "", "", ASOF, undefined, "appointment")!.results).toBe(1);
+    expect(aggregate(s, "3d", "", "", ASOF, undefined, "appointment")!.results).toBe(6);
+    expect(aggregate(s, "7d", "", "", ASOF, undefined, "appointment")!.results).toBe(8);
+    expect(aggregate(s, "custom", "2026-07-09", "2026-07-10", ASOF, undefined, "appointment")!.results).toBe(4);
+  });
+  it("a range containing one resultsUnknown day → results null (unknown), not a partial sum", () => {
+    const s: SeriesObj = {
+      ...series,
+      daily30: daily30.map(d => (d.date === "2026-07-09" ? { ...d, resultsUnknown: true } : d)),
+    };
+    const agg = aggregate(s, "7d", "", "", ASOF, undefined, "paid_lto")!;
+    expect(agg.results).toBeNull();
+    expect(agg.cpa).toBeNull();
+  });
+  it("a day with conversionValue null → range conversionValue null", () => {
+    const s: SeriesObj = {
+      ...series,
+      daily30: daily30.map(d => (d.date === "2026-07-10" ? { ...d, conversionValue: null } : d)),
+    };
+    expect(aggregate(s, "7d", "", "", ASOF, undefined, "paid_lto")!.conversionValue).toBeNull();
   });
 });

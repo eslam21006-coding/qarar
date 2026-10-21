@@ -24,6 +24,7 @@ import {
 } from "./meta";
 import { buildDemoSnapshot, DEMO_FUNNEL } from "./demo";
 import { deriveTargets, judgingTargets, runEngine } from "./engine";
+import { sumChildDailyByDate } from "./seriesChildrenSum";
 import {
   AccountSnapshotPayload,
   DailyMetrics,
@@ -666,41 +667,7 @@ export const appRouter = router({
           const children = payload.objects.filter(c =>
             o.level === "campaign" ? c.level === "adset" && c.campaignId === o.id : c.parentId === o.id
           );
-          const byDate = new Map<string, (typeof payload.objects)[number]["daily7"][number]>();
-          for (const c of children) {
-            // Round-7 CodeRabbit: an empty `daily30` (post-fix: ad-level
-            // is []) would short-circuit `??` and discard `daily7`. Mirror
-            // the own-series selection: prefer non-empty daily30, else
-            // fall back to daily7. Without this fix a parent that sums
-            // its children would silently drop every child ad's data.
-            const childDaily =
-              c.daily30 && c.daily30.length > 0
-                ? c.daily30
-                : c.daily7 ?? [];
-            for (const d of childDaily) {
-              const cur = byDate.get(d.date);
-              if (!cur) byDate.set(d.date, { ...d });
-              else {
-                cur.spend += d.spend;
-                cur.impressions += d.impressions;
-                cur.clicks += d.clicks;
-                cur.linkClicks += d.linkClicks;
-                cur.conversions += d.conversions;
-                cur.lpViews += d.lpViews;
-                cur.videoViews3s = (cur.videoViews3s ?? 0) + (d.videoViews3s ?? 0);
-                cur.thruplays = (cur.thruplays ?? 0) + (d.thruplays ?? 0);
-              }
-            }
-          }
-          return Array.from(byDate.values())
-            .map(d => ({
-              ...d,
-              ctrAll: d.impressions > 0 ? (d.clicks / d.impressions) * 100 : 0,
-              ctrLink: d.impressions > 0 ? (d.linkClicks / d.impressions) * 100 : 0,
-              cpm: d.impressions > 0 ? (d.spend / d.impressions) * 1000 : 0,
-              cpa: d.conversions > 0 ? d.spend / d.conversions : null,
-            }))
-            .sort((a, b) => a.date.localeCompare(b.date));
+          return sumChildDailyByDate(children);
         };
         const series = payload.objects.map(o => ({
           id: o.id,

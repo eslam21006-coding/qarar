@@ -1,0 +1,218 @@
+{
+  "demo/paid_lto/hto-off": {
+    "account_funnel_cta": {
+      "reason_ar": "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+      "ctaUrl": "https://eslamsalah.com/team-discovery-call"
+    },
+    "campaigns": [
+      {
+        "id": "cmp_test",
+        "verdict": "continue",
+        "rule": "S2"
+      },
+      {
+        "id": "cmp_scale",
+        "verdict": "continue",
+        "rule": "S2"
+      }
+    ]
+  },
+  "demo/paid_lto/hto-on": {
+    "account_funnel_cta": {
+      "reason_ar": "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+      "ctaUrl": "https://eslamsalah.com/team-discovery-call"
+    },
+    "campaigns": [
+      {
+        "id": "cmp_test",
+        "verdict": "watch",
+        "rule": "W5"
+      },
+      {
+        "id": "cmp_scale",
+        "verdict": "watch",
+        "rule": "W5"
+      }
+    ]
+  },
+  "demo/free_lead/hto-off": {
+    "account_funnel_cta": {
+      "reason_ar": "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+      "ctaUrl": "https://eslamsalah.com/team-discovery-call"
+    },
+    "campaigns": [
+      {
+        "id": "cmp_test",
+        "verdict": "continue",
+        "rule": "S2"
+      },
+      {
+        "id": "cmp_scale",
+        "verdict": "continue",
+        "rule": "S2"
+      }
+    ]
+  },
+  "demo/free_lead/hto-on": {
+    "account_funnel_cta": {
+      "reason_ar": "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+      "ctaUrl": "https://eslamsalah.com/team-discovery-call"
+    },
+    "campaigns": [
+      {
+        "id": "cmp_test",
+        "verdict": "watch",
+        "rule": "W5"
+      },
+      {
+        "id": "cmp_scale",
+        "verdict": "watch",
+        "rule": "W5"
+      }
+    ]
+  },
+  "demo/appointment/hto-off": {
+    "account_funnel_cta": {
+      "reason_ar": "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+      "ctaUrl": "https://eslamsalah.com/team-discovery-call"
+    },
+    "campaigns": [
+      {
+        "id": "cmp_test",
+        "verdict": "continue",
+        "rule": "S2"
+      },
+      {
+        "id": "cmp_scale",
+        "verdict": "continue",
+        "rule": "S2"
+      }
+    ]
+  },
+  "demo/appointment/hto-on": {
+    "account_funnel_cta": {
+      "reason_ar": "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+      "ctaUrl": "https://eslamsalah.com/team-discovery-call"
+    },
+    "campaigns": [
+      {
+        "id": "cmp_test",
+        "verdict": "watch",
+        "rule": "W5"
+      },
+      {
+        "id": "cmp_scale",
+        "verdict": "watch",
+        "rule": "W5"
+      }
+    ]
+  },
+  "demo/webinar/hto-off": {
+    "account_funnel_cta": {
+      "reason_ar": "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+      "ctaUrl": "https://eslamsalah.com/team-discovery-call"
+    },
+    "campaigns": [
+      {
+        "id": "cmp_test",
+        "verdict": "continue",
+        "rule": "S2"
+      },
+      {
+        "id": "cmp_scale",
+        "verdict": "continue",
+        "rule": "S2"
+      }
+    ]
+  },
+  "demo/webinar/hto-on": {
+    "account_funnel_cta": {
+      "reason_ar": "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+      "ctaUrl": "https://eslamsalah.com/team-discovery-call"
+    },
+    "campaigns": [
+      {
+        "id": "cmp_test",
+        "verdict": "watch",
+        "rule": "W5"
+      },
+      {
+        "id": "cmp_scale",
+        "verdict": "watch",
+        "rule": "W5"
+      }
+    ]
+  },
+  "unknown-count/paid_lto/hto-off": {
+    "account_funnel_cta": {
+      "reason_ar": "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+      "ctaUrl": "https://eslamsalah.com/team-discovery-call"
+    },
+    "campaigns": [
+      {
+        "id": "cmp_test",
+        "verdict": "continue",
+        "rule": "S2"
+      },
+      {
+        "id": "cmp_scale",
+        "verdict": "continue",
+        "rule": "S2"
+      }
+    ]
+  },
+  "unknown-count/paid_lto/hto-on": {
+    "account_funnel_cta": {
+      "reason_ar": "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+      "ctaUrl": "https://eslamsalah.com/team-discovery-call"
+    },
+    "campaigns": [
+      {
+        "id": "cmp_test",
+        "verdict": "watch",
+        "rule": "W5"
+      },
+      {
+        "id": "cmp_scale",
+        "verdict": "watch",
+        "rule": "W5"
+      }
+    ]
+  },
+  "split-family/paid_lto/hto-off": {
+    "account_funnel_cta": {
+      "reason_ar": "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+      "ctaUrl": "https://eslamsalah.com/team-discovery-call"
+    },
+    "campaigns": [
+      {
+        "id": "cmp_test",
+        "verdict": "continue",
+        "rule": "S2"
+      },
+      {
+        "id": "cmp_scale",
+        "verdict": "continue",
+        "rule": "S2"
+      }
+    ]
+  },
+  "split-family/paid_lto/hto-on": {
+    "account_funnel_cta": {
+      "reason_ar": "التحويل على الصفحة أو بعد البيع ضعيف — احجز مكالمة تشخيصية مجانية مع الفريق لمراجعة العرض أو مسار الفانل",
+      "ctaUrl": "https://eslamsalah.com/team-discovery-call"
+    },
+    "campaigns": [
+      {
+        "id": "cmp_test",
+        "verdict": "watch",
+        "rule": "W5"
+      },
+      {
+        "id": "cmp_scale",
+        "verdict": "watch",
+        "rule": "W5"
+      }
+    ]
+  }
+}
