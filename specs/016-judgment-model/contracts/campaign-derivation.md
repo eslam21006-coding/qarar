@@ -143,7 +143,7 @@ faded line under the campaign reason, `العائد الكلي للفانل: {x}
 | ad | `null` |
 
 Client: buttons render only when `budget_control !== null`; `disabled` → both buttons disabled,
-wrapper `title="زد الميزانية فقط عندما تكون كل المجموعات بالداخل ناجحة"`. `control.setBudget` is
+wrapper `title="غيّر ميزانية الحملة فقط عندما تكون كل المجموعات بالداخل ناجحة — وإلا أوقِف المجموعات الخاسرة، والميزانية تذهب وحدها إلى الرابحة"`. `control.setBudget` is
 unchanged.
 
 ## C7a. Funnel card input for derived campaigns (FR-020a)

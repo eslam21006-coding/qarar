@@ -2542,7 +2542,9 @@ export function runEngine(
 /**
  * Spec 016 / FR-006 (C5) — full-funnel return for a campaign row: counted
  * results × full buyer value ÷ spend. `null` when the buyer value is not
- * set, spend is 0, or the count is unknown.
+ * set, spend is 0, the count is unknown or 0, or the campaign is non-sales
+ * (NS-exempt): there the figure says nothing, and "0.00x" would read as a
+ * loss (self-review S2, owner decision 2026-10-21).
  */
 function fullRoas3d(
   o: NormalizedObject,
@@ -2550,7 +2552,8 @@ function fullRoas3d(
   archetype: FunnelInputs["archetype"]
 ): number | null {
   const counted = countedResults(o.w3d, archetype);
-  if (t.fullBuyerValue === null || o.w3d.spend <= 0 || counted === null) return null;
+  if (t.fullBuyerValue === null || o.w3d.spend <= 0 || counted === null || counted <= 0) return null;
+  if (isNonSalesExempt(o.objective ?? null)) return null;
   return round2((counted * t.fullBuyerValue) / o.w3d.spend);
 }
 

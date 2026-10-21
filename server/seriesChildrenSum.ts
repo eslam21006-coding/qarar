@@ -36,8 +36,10 @@ export function sumChildDailyByDate(
         cur.conversions += d.conversions;
         cur.leadConversions = addOpt(cur.leadConversions, d.leadConversions);
         cur.purchaseConversions = addOpt(cur.purchaseConversions, d.purchaseConversions);
+        // Self-review N4 — `== null` also covers a cached pre-015 day with
+        // no value field at all: unknown, never NaN.
         cur.conversionValue =
-          cur.conversionValue === null || d.conversionValue === null
+          cur.conversionValue == null || d.conversionValue == null
             ? null
             : cur.conversionValue + d.conversionValue;
         if (d.resultsUnknown) cur.resultsUnknown = true;
@@ -54,6 +56,7 @@ export function sumChildDailyByDate(
       ctrLink: d.impressions > 0 ? (d.linkClicks / d.impressions) * 100 : 0,
       cpm: d.impressions > 0 ? (d.spend / d.impressions) * 1000 : 0,
       cpa: d.conversions > 0 ? d.spend / d.conversions : null,
+      conversionValue: d.conversionValue ?? null,
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
 }

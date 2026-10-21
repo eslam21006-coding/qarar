@@ -9,6 +9,7 @@ import { targetSourceLabel } from "@shared/qarar";
 import { money, pct, timeAgoAr } from "@/lib/format";
 import { killCountPart, type KillCountPart } from "@/lib/killCountLabel";
 import { ruleTitleText } from "@/lib/cellFormat";
+import { withLtrNumerals } from "@/lib/ltrNumerals";
 import { trpc } from "@/lib/trpc";
 import type { EngineRow, Finding, TopAction } from "@shared/qarar";
 import {
@@ -711,7 +712,7 @@ function DiagnosisSection({
             className="rounded-lg border border-border/50 bg-background/50 p-3"
           >
             <div className="mb-2 flex items-center gap-2">
-              <VerdictBadge verdict={r.verdict} rule={r.rule} />
+              <VerdictBadge verdict={r.verdict} rule={r.rule} fromAdsetName={r.derived_from_adset?.name} />
               <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
                 {levelLabel(r.level)}
               </span>
@@ -754,51 +755,6 @@ function FindingRow({ finding }: { finding: Finding }) {
   );
 }
 
-/**
- * Matches one numeric run: an optional ASCII currency symbol, digits
- * with thousands separators and an optional decimal part, and an
- * optional trailing `%` or `+`.
- *
- * Arabic currency symbols (د.إ, ر.س, …) are deliberately NOT part of
- * this pattern — they are strong-RTL text belonging to the sentence,
- * not to the number, and pulling them inside the isolate would reorder
- * them against the surrounding line.
- */
-const FIGURE_RE = /[$£€]?\d[\d,]*(?:\.\d+)?%?\+?/g;
-
-/**
- * Splits a diagnosis sentence so every figure in it renders
- * left-to-right inside the RTL layout (Constitution III, contract C5.2).
- *
- * Each numeric run is wrapped in `.num`
- * (`direction: ltr; unicode-bidi: isolate` — `client/src/index.css`);
- * the Arabic between runs is returned untouched, so the sentence
- * survives the split intact.
- *
- * A table cell holding a bare number can simply carry
- * `className="num"`. Finding text cannot: it arrives from the engine as
- * ONE Arabic sentence with its figures embedded, which is why it has to
- * be split here rather than wrapped at the call site.
- *
- * @param text the finding's `text_ar`, or the account card's `reason_ar`
- * @returns alternating plain-text and `.num`-wrapped nodes, in order
- */
-function withLtrNumerals(text: string): ReactNode[] {
-  const out: ReactNode[] = [];
-  let last = 0;
-  for (const m of Array.from(text.matchAll(FIGURE_RE))) {
-    const i = m.index ?? 0;
-    if (i > last) out.push(text.slice(last, i));
-    out.push(
-      <span className="num" key={`${i}-${m[0]}`}>
-        {m[0]}
-      </span>
-    );
-    last = i + m[0].length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
-}
 
 /**
  * Maps an object level to its Arabic label (spec 014 / T041, FR-012).
@@ -850,7 +806,7 @@ function PromotionList({ rows }: { rows: EngineRow[] }) {
             className="rounded-lg border border-emerald-500/30 bg-background/70 p-3"
           >
             <div className="mb-1 flex flex-wrap items-center gap-2">
-              <VerdictBadge verdict={r.verdict} rule={r.rule} />
+              <VerdictBadge verdict={r.verdict} rule={r.rule} fromAdsetName={r.derived_from_adset?.name} />
               <span className="truncate text-sm font-extrabold">{r.name}</span>
             </div>
             <p className="text-sm leading-relaxed">{r.promotion_note}</p>

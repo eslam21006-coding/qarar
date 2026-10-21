@@ -171,8 +171,7 @@ campaign row shows 🟡, its action names the two 🔴 ad sets to stop and the �
 9. **Given** a CBO campaign (campaign budget set) where every active ad set is 🟢, **When** the
    table renders, **Then** ±20% controls on the campaign row are enabled.
 10. **Given** a CBO campaign where any active ad set is not 🟢, **When** the table renders,
-    **Then** the campaign's ±20% controls are disabled with the tooltip "زد الميزانية فقط عندما
-    تكون كل المجموعات بالداخل ناجحة".
+    **Then** the campaign's ±20% controls are disabled with the tooltip "غيّر ميزانية الحملة فقط عندما تكون كل المجموعات بالداخل ناجحة — وإلا أوقِف المجموعات الخاسرة، والميزانية تذهب وحدها إلى الرابحة".
 11. **Given** a campaign that becomes 🔴 by derivation in the daily refresh, **When** the refresh
     completes, **Then** the owner is notified as for any newly 🔴 object.
 12. **Live account (brief §4.1)**: after merge, no campaign shows 🔴 while it contains a 🟢 ad
@@ -406,7 +405,9 @@ clause)
   ad-set rows only.
 - **FR-009**: CBO campaigns (campaign daily budget set) MUST show ±20% controls on the campaign
   row, enabled only when every active ad set inside is 🟢; otherwise disabled with the tooltip
-  "زد الميزانية فقط عندما تكون كل المجموعات بالداخل ناجحة".
+  "غيّر ميزانية الحملة فقط عندما تكون كل المجموعات بالداخل ناجحة — وإلا أوقِف المجموعات الخاسرة، والميزانية تذهب وحدها إلى الرابحة". Both
+  buttons stay disabled, −20% included (owner decision S3, 2026-10-21: the tooltip now says what to
+  do instead).
 - **FR-010**: The summary counters MUST keep excluding campaigns (015 FR-030), unchanged.
 - **FR-011**: A campaign that becomes 🔴 by derivation MUST trigger the same daily-refresh owner
   notification as any newly 🔴 object.

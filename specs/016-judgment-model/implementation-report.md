@@ -158,7 +158,7 @@ text is filled when T021 confirms each row.
 |---|---|---|---|---|
 | T008 snapshot · paid_lto `cmp_test` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 2.6x عند حساب قيمة العميل الكاملة ($148) — مع 2 إعلان/مجموعة تحتاج إيقافًا بالداخل" / action "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك" | watch / CB2 (from as_cb) / "مجموعات هذه الحملة — ناجحة: مجموعة واحدة · خاسرة: مجموعتان · لم يُحكم عليها بعد: مجموعة واحدة" / action "أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B — جمهور Lookalike 1%» وأبقِ «Stage A — بروود + Advantage» — فيها إعلان واحد يستحق الإنقاذ" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 | ✅ confirmed (matches expected) |
 | T008 snapshot · paid_lto `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبها يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 + FR-030 copy agreement (level-aware W copy) | ✅ confirmed (matches expected) |
-| T008 snapshot · free_lead `cmp_test` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 2.6x عند حساب قيمة العميل الكاملة ($148) — مع 2 إعلان/مجموعة تحتاج إيقافًا بالداخل" / action "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك" | watch / W3 (from as_good) / "مجموعات هذه الحملة — خاسرة: مجموعتان · تحت المراقبة: مجموعة واحدة · لم يُحكم عليها بعد: مجموعة واحدة" / action "«Stage A — جمهور اهتمام: ريادة أعمال»: أوقِف هذه المجموعة · «Stage B — جمهور Lookalike 1%»: أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى · «Stage A — بروود + Advantage»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا — فيها إعلان واحد يستحق الإنقاذ" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 | ✅ confirmed (matches expected) |
+| T008 snapshot · free_lead `cmp_test` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 2.6x عند حساب قيمة العميل الكاملة ($148) — مع 2 إعلان/مجموعة تحتاج إيقافًا بالداخل" / action "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك" | watch / W3 (from as_good) / "مجموعات هذه الحملة — خاسرة: مجموعتان · تحت المراقبة: مجموعة واحدة · لم يُحكم عليها بعد: مجموعة واحدة" / action "«Stage A — جمهور اهتمام: ريادة أعمال»: أوقِف هذه المجموعة · «Stage B — جمهور Lookalike 1%»: أوقِفه الآن — وراجعه بنفسك قبل تشغيله مرة أخرى · «Stage A — بروود + Advantage»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا — فيها إعلان واحد يستحق الإنقاذ" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 | ✅ confirmed (matches expected); final action wording: see the T047 row for this id below |
 | T008 snapshot · free_lead `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبها يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004 (D-R1), FR-005, FR-007 / T013, T021 + FR-030 copy agreement (level-aware W copy) | ✅ confirmed (matches expected) |
 | Scenario 13 baseline (`specs/014-diagnosis-evidence-fallbacks/verdict-baseline.json`) · paid_lto `cmp_test` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 2.6x عند حساب قيمة العميل الكاملة ($148) — مع 2 إعلان/مجموعة تحتاج إيقافًا بالداخل" / action "الحملة رابحة إجمالًا — نفّذ قرارات الإيقاف الداخلية لتزيد ربحك" | watch / CB2 (from as_cb) / "مجموعات هذه الحملة — ناجحة: مجموعة واحدة · خاسرة: مجموعتان · لم يُحكم عليها بعد: مجموعة واحدة" / action "أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B — جمهور Lookalike 1%» وأبقِ «Stage A — بروود + Advantage» — فيها إعلان واحد يستحق الإنقاذ" | FR-003, FR-004, FR-007 / T016 — owner-approved (decision 3) | ✅ updated, same values as the snapshot |
 | Scenario 13 baseline (`specs/014-diagnosis-evidence-fallbacks/verdict-baseline.json`) · paid_lto `cmp_scale` | continue / S2 / "في آخر 3 أيام: الحملة تربح — كل دولار تصرفه يرجع 4.0x عند حساب قيمة العميل الكاملة ($148)" / action "واصل — وإن أردت التوسيع فزد الميزانية 20% فقط كل يومين أو ثلاثة" | watch / W1 (from as_w1) / "مجموعات هذه الحملة — تحت المراقبة: مجموعتان" / action "«توسيع — الجمهور الرابح + Advantage»: راقبها يومين أو ثلاثة بدون أي تعديل · «توسيع — بروود (مساحة التمدد)»: ⚠️ لا تغيّر شيئًا في الإعلانات — أصلح صفحة البيع أو العرض أولًا" | FR-003, FR-004, FR-007 / T016 — owner-approved (decision 3) + FR-030 copy agreement (level-aware W copy) | ✅ updated, same values as the snapshot |
@@ -1155,7 +1155,7 @@ Folded in from T051 (demo account, in the running app):
 - [ ] S-R1-2c: the history dialog of a campaign now 🟡 CB2 shows "من إحدى مجموعاتها: …" only on
   that entry.
 - [ ] S-R1-5: ABO `cmp_test` shows no campaign ±20%, and its ad sets do; CBO `cmp_scale` shows
-  disabled ±20% with "زد الميزانية فقط عندما تكون كل المجموعات بالداخل ناجحة", and its ad sets
+  disabled ±20% with "غيّر ميزانية الحملة فقط عندما تكون كل المجموعات بالداخل ناجحة — وإلا أوقِف المجموعات الخاسرة، والميزانية تذهب وحدها إلى الرابحة", and its ad sets
   show none.
 - [ ] Campaign rows show "العائد الكلي للفانل: {x}x" with its tooltip.
 - [ ] S-R2-1/2/4: a ⏳ row with results shows its cost uncolored; an unknown count shows `؟` with
@@ -1375,6 +1375,87 @@ Error: Database connection failed
       Tests  913 passed | 37 skipped (950)
    Start at  09:15:26
    Duration  21.80s (transform 14.91s, setup 141.93s, collect 104.83s, tests 37.07s, environment 37.14s, prepare 47.51s)
+
+ ELIFECYCLE  Test failed. See above for more details.
+```
+
+
+## ▶ Self-review owner decisions applied (2026-10-21)
+
+- **Commit message**: the M1 commit is amended to "fix(016): self-review M1" (`8bbb205`). The
+  tree is unchanged.
+- **S1**: deferred to 018 (level-aware rule titles).
+- **S2** — `fullRoas3d` returns `null` in three cases:
+  - combined counted results are 0;
+  - combined counted results are unknown;
+  - the campaign is NS-exempt.
+
+  The table also hides a value ≤ 0, so "0.00x" never renders. Tests: 3 new cases. The 0-result and
+  NS cases failed before the fix; the unknown case was already `null`.
+- **S3**: FR-009 behaviour is kept. The disabled tooltip now reads "غيّر ميزانية الحملة فقط عندما
+  تكون كل المجموعات بالداخل ناجحة — وإلا أوقِف المجموعات الخاسرة، والميزانية تذهب وحدها إلى
+  الرابحة". Updated: FR-009 (with a decision note), contract C6, copy.md L3, research.md, the T053
+  checklist and `cellFormat.test.ts`. The owner's brief and historic log lines stay as written.
+- **S4**: the numeric filter labels now equal the L1 column labels. A test pins them to
+  `ALL_COLUMNS`.
+- **S5**: copy.md L3 now lists:
+  - the FR-036 strings (both variants);
+  - the level-aware W copy;
+  - the CB1/CB2 titles, the T047 actions and the N10 notification copy.
+- **N3**: the diagnosis-panel and promotion-list badges pass `fromAdsetName`.
+- **N4**: `sumChildDailyByDate` treats a missing `conversionValue` as unknown (`null`), never
+  `NaN`. One test added.
+- **N6**: the T021 row in "Snapshot changes" points to the T047 row for the final wording.
+- **N9**: an exported `sortValue()` sorts each column by the value its cell shows:
+  - ROAS by `roas_3d` (before this, every row sorted as −1);
+  - 3d results by `conversions_3d`.
+
+  4 tests in `DecisionTable.sort.test.ts`.
+- **N10**: the daily-refresh notification names each object by its level:
+  - title "إيقاف جديد: حملة واحدة، مجموعتان، 3 إعلانات";
+  - body one line per object, "الحملة / المجموعة / الإعلان: {name}".
+
+  3 tests. They failed first.
+- **N11**: `withLtrNumerals` moved to `client/src/lib/ltrNumerals.tsx`, re-exported by
+  Dashboard. It now wraps the table's reason and action lines.
+- **Left open**:
+  - N1: it would move snapshot reason text;
+  - N5: test-only;
+  - N8: a file move.
+- **Accepted**: N2, N7 and N12.
+
+**Untracked, not committed**: `docs/spec-016/qarar-rulebook-v2.2.md` (created 2026-10-20 20:07). It
+is a byte-identical copy of `docs/spec-015/qarar-rulebook-v2.2.md`, left for the owner.
+
+### Gate ✅
+
+- `pnpm run check`: clean.
+- `pnpm test`: **925 passed**, 37 skipped. Only `auth-flow.e2e.test.ts` fails, as expected: it
+  needs a database and `DATABASE_URL` is empty.
+- **No verdict, rule code, snapshot or baseline row moved**: `git diff` on the snapshot and
+  baseline is empty.
+- **Campaign verdicts and rules**: identical to the previous report run on all 12 fixtures.
+- **Funnel card vs `funnel-card-main.json`**: 0 differences on all 12 fixtures.
+- **No whole-file churn** (numstat).
+
+Raw `pnpm run check`:
+
+```text
+> qarar@1.0.0 check D:\Qarar worktrees\Qarar-016-judgment-model
+> tsc --noEmit
+
+```
+
+Raw `pnpm test` (closing block):
+
+```text
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+Error: Database connection failed
+
+ Test Files  1 failed | 61 passed | 2 skipped (64)
+      Tests  925 passed | 37 skipped (962)
+   Start at  09:47:49
+   Duration  16.26s (transform 11.32s, setup 100.11s, collect 72.98s, tests 25.48s, environment 31.06s, prepare 32.65s)
 
  ELIFECYCLE  Test failed. See above for more details.
 ```

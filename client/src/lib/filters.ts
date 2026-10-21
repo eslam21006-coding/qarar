@@ -58,11 +58,14 @@ export const FILTER_FIELDS: Record<
   verdict: { type: "enum", label: "الحكم" },
   status: { type: "enum", label: "الحالة", options: ["ACTIVE", "PAUSED"] },
   level: { type: "enum", label: "المستوى" },
+  // Spec 016 self-review S4 — numeric fields use the column labels
+  // (contracts/copy.md L1), so the filter panel and the table name a metric
+  // the same way. Pinned by DecisionTable.copy.test.ts.
   spend: { type: "numeric", label: "الصرف" },
-  impressions: { type: "numeric", label: "المشاهدات" },
-  cpa: { type: "numeric", label: "تكلفة العميل" },
-  ctrLink: { type: "numeric", label: "نسبة النقر" },
-  cpm: { type: "numeric", label: "سعر الظهور" },
+  impressions: { type: "numeric", label: "مشاهدات" },
+  cpa: { type: "numeric", label: "تكلفة النتيجة" },
+  ctrLink: { type: "numeric", label: "نسبة الضغط على الرابط" },
+  cpm: { type: "numeric", label: "تكلفة ألف ظهور" },
 };
 
 function getNumericValue(

@@ -261,7 +261,7 @@ needs agreement and no adjective has to agree with a number.
   - ad set inside an ABO campaign → `enabled` when `daily_budget !== null`, else `null`;
   - ad → `null`.
   The client renders buttons from this field only; `disabled` shows them disabled with
-  `title="زد الميزانية فقط عندما تكون كل المجموعات بالداخل ناجحة"`.
+  `title="غيّر ميزانية الحملة فقط عندما تكون كل المجموعات بالداخل ناجحة — وإلا أوقِف المجموعات الخاسرة، والميزانية تذهب وحدها إلى الرابحة"`.
 - **Rationale**: the engine already knows status and derived verdicts; computing it client-side would
   duplicate the population rule. `control.setBudget` is unchanged — Principle V's confirmation dialog
   stays the write guard.

@@ -258,6 +258,34 @@ describe("runEngine — demo campaigns are derived (FR-001–FR-007)", () => {
     expect(get(paid, "cmp_scale").full_roas_3d).toBe(Math.round(((19 * fbv) / 705) * 100) / 100);
     for (const x of paid.rows.filter(x => x.level !== "campaign")) expect(x.full_roas_3d ?? null).toBeNull();
   });
+  // Self-review S2 (owner decision 2026-10-21) — no full-funnel return
+  // where it says nothing: 0 or unknown combined results, or a non-sales
+  // campaign. The row then shows no line at all, never "0.00x".
+  function campaignWith(edit: (c: import("../shared/qarar").NormalizedObject) => void) {
+    const snap = buildDemoSnapshot();
+    const c = snap.objects.find(o => o.id === "cmp_test")!;
+    edit(c);
+    return get(runEngine(snap, DEMO_FUNNEL as FunnelInputs), "cmp_test");
+  }
+  it("full_roas_3d is null when the campaign's combined 3-day results are 0 (S2)", () => {
+    const c = campaignWith(o => {
+      o.w3d = { ...o.w3d, conversions: 0, leadConversions: 0, purchaseConversions: 0, cpa: null };
+    });
+    expect(c.full_roas_3d).toBeNull();
+  });
+  it("full_roas_3d is null when the campaign's combined 3-day count is unknown (S2)", () => {
+    const c = campaignWith(o => {
+      o.w3d = { ...o.w3d, resultsUnknown: true };
+    });
+    expect(c.full_roas_3d).toBeNull();
+  });
+  it("full_roas_3d is null on a non-sales (NS-exempt) campaign (S2)", () => {
+    const c = campaignWith(o => {
+      o.objective = "OUTCOME_AWARENESS";
+    });
+    expect(c.rule.startsWith("NS") || c.rule === "GATE").toBe(true);
+    expect(c.full_roas_3d).toBeNull();
+  });
   it("budget controls: ABO on ad sets only, CBO on the campaign, disabled unless every ad set is 🟢 (FR-008, FR-009)", () => {
     expect(get(paid, "cmp_test").budget_control).toBeNull();
     for (const id of ["as_k1", "as_good", "as_cb", "as_gate"]) expect(get(paid, id).budget_control).toBe("enabled");

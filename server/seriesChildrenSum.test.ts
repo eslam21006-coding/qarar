@@ -18,6 +18,14 @@ function day(date: string, p: Partial<DailyMetrics> = {}): DailyMetrics {
 const child = (d: DailyMetrics[]) => ({ daily7: d, daily30: d });
 
 describe("sumChildDailyByDate", () => {
+  it("a child day with no conversionValue field (pre-015 cache) makes the value unknown, never NaN (N4)", () => {
+    const legacy = day("2026-10-01");
+    delete (legacy as Partial<DailyMetrics>).conversionValue;
+    const [a] = sumChildDailyByDate([child([day("2026-10-01")]), child([legacy])]);
+    expect(a.conversionValue).toBeNull();
+    const [b] = sumChildDailyByDate([child([legacy]), child([day("2026-10-01")])]);
+    expect(b.conversionValue).toBeNull();
+  });
   it("sums the lead / purchase split and the sales value per date", () => {
     const [d] = sumChildDailyByDate([
       child([day("2026-10-01", { leadConversions: 2, purchaseConversions: 1, conversionValue: 7 })]),

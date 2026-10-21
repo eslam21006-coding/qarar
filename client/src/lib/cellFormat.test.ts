@@ -172,7 +172,7 @@ describe("budgetControlView — spec 016 C6", () => {
     expect(budgetControlView({ budget_control: "disabled" })).toEqual({
       show: true,
       disabled: true,
-      title: "زد الميزانية فقط عندما تكون كل المجموعات بالداخل ناجحة",
+      title: "غيّر ميزانية الحملة فقط عندما تكون كل المجموعات بالداخل ناجحة — وإلا أوقِف المجموعات الخاسرة، والميزانية تذهب وحدها إلى الرابحة",
     });
   });
 });

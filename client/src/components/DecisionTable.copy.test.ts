@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ALL_COLUMNS, CPA_3D_HEADER, WINDOW_BANNER_TEXT } from "./DecisionTable";
+import { FILTER_FIELDS } from "@/lib/filters";
 
 // Spec 016 / US6 (R6, FR-028, FR-029) — contract copy.md §L1, §L2.
 
@@ -28,6 +29,12 @@ describe("DecisionTable copy — spec 016 R6", () => {
       expect(c.label, c.key).toBe(label);
       expect(c.hint, c.key).toBe(hint);
       expect(c.label, c.key).not.toMatch(/[A-Za-z]/);
+    }
+  });
+  it("numeric filter fields use the same labels as the columns (self-review S4)", () => {
+    for (const key of ["spend", "impressions", "cpa", "ctrLink", "cpm"] as const) {
+      const col = ALL_COLUMNS.find(c => c.key === key)!;
+      expect(FILTER_FIELDS[key].label, key).toBe(col.label);
     }
   });
   it("the 3d CPA header uses an LTR numeral", () => {

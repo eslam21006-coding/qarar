@@ -33,6 +33,7 @@ import { cpaColorClass, ctrColorClass, money, num, pct } from "@/lib/format";
 import { cpaCell, budgetControlView, resultsCell, RESULTS_UNKNOWN_TITLE, ROAS_UNKNOWN_TITLE } from "@/lib/cellFormat";
 import { applyFilters, FILTER_FIELDS, type FilterAgg, type FilterField, type FilterJoin, type FilterOp, type FilterRule } from "@/lib/filters";
 import { aggregateTotals } from "@/lib/aggregate";
+import { withLtrNumerals } from "@/lib/ltrNumerals";
 import { presetRangeBounds } from "@/lib/dateWindow";
 import { trpc } from "@/lib/trpc";
 import type { AccountSummary, DailyMetrics, EngineRow, Verdict, WindowMetrics } from "@shared/qarar";
@@ -225,6 +226,55 @@ export function aggregate(
     spendShare: null,
     conversionValue: value,
   };
+}
+
+const VERDICT_SORT_ORDER: Record<Verdict, number> = {
+  kill: 0,
+  rescue: 1,
+  watch: 2,
+  continue: 3,
+  too_early: 4,
+};
+
+/**
+ * The value a row sorts by, read from the same source the cell renders
+ * (spec 016 self-review N9: ROAS used to read a `FilterAgg` key that does
+ * not exist, so every row sorted as −1). Unknown or missing sorts as −1.
+ */
+export function sortValue(
+  r: EngineRow,
+  a: FilterAgg | null | undefined,
+  key: ColKey | "verdict" | "name",
+  range: RangeKey,
+): number | string {
+  switch (key) {
+    case "verdict":
+      return VERDICT_SORT_ORDER[r.verdict] * 1e9 - r.spend_3d;
+    case "name":
+      return r.name;
+    case "spendShare":
+      return r.spend_share_pct ?? -1;
+    case "frequency":
+      return r.frequency_3d ?? -1;
+    case "roas":
+      // The ROAS cell always shows the engine's 3-day figure.
+      return r.roas_3d ?? -1;
+    case "results":
+      // Spec 016 / FR-018 — in 3d the cell reads the engine row.
+      if (range === "3d") return r.conversions_3d ?? -1;
+      return a?.results ?? -1;
+    case "cpa":
+      // Batch 2 / ISSUE-004 — match the render path. In the default
+      // 3d view the column shows r.cpa_3d; for every other range we
+      // fall back to the per-range aggregate CPA so the sort order
+      // matches the on-screen value.
+      if (range === "3d") return r.cpa_3d ?? -1;
+      return a?.cpa ?? -1;
+    default: {
+      const v = a?.[key as keyof FilterAgg];
+      return typeof v === "number" ? v : -1;
+    }
+  }
 }
 
 // ---------- columns ----------
@@ -625,41 +675,10 @@ export function DecisionTable({
     return list;
   }, [rows, level, path, q, verdicts, isSearching, hasFilters, filterRules, filterJoin, aggs, getStatus, hidePaused]);
 
-  const verdictOrder: Record<Verdict, number> = {
-    kill: 0,
-    rescue: 1,
-    watch: 2,
-    continue: 3,
-    too_early: 4,
-  };
-
   const sorted = useMemo(() => {
-    const val = (r: EngineRow): number | string => {
-      const a = aggs.get(r.id);
-      switch (sort.key) {
-        case "verdict":
-          return verdictOrder[r.verdict] * 1e9 - r.spend_3d;
-        case "name":
-          return r.name;
-        case "spendShare":
-          return r.spend_share_pct ?? -1;
-        case "frequency":
-          return r.frequency_3d ?? -1;
-        case "cpa":
-          // Batch 2 / ISSUE-004 — match the render path. In the default
-          // 3d view the column shows r.cpa_3d; for every other range we
-          // fall back to the per-range aggregate CPA so the sort order
-          // matches the on-screen value.
-          if (range === "3d") return r.cpa_3d ?? -1;
-          return a?.cpa ?? -1;
-        default: {
-          const v = a?.[sort.key as keyof FilterAgg];
-          return typeof v === "number" ? v : -1;
-        }
-      }
-    };
     return [...visible].sort((x, y) => {
-      const a = val(x), b = val(y);
+      const a = sortValue(x, aggs.get(x.id), sort.key, range);
+      const b = sortValue(y, aggs.get(y.id), sort.key, range);
       if (typeof a === "string" || typeof b === "string")
         return String(a).localeCompare(String(b), "ar") * sort.dir;
       return (a - b) * sort.dir;
@@ -1326,15 +1345,16 @@ export function DecisionTable({
                       )}
                     </td>
                     <td className="max-w-[340px] px-4 py-2.5">
-                      <p className="text-xs leading-relaxed">{r.reason_ar}</p>
+                      {/* Spec 016 self-review N11 — figures render LTR, as in the diagnosis panel. */}
+                      <p className="text-xs leading-relaxed">{withLtrNumerals(r.reason_ar)}</p>
                       <p className="mt-0.5 text-xs font-bold text-foreground/90">
-                        ← {r.action_ar}
+                        ← {withLtrNumerals(r.action_ar)}
                       </p>
                       {r.promotion_note && (
                         <p className="mt-0.5 text-[11px] text-v-continue">{r.promotion_note}</p>
                       )}
                       {/* Spec 016 / FR-006 — campaign full-funnel return: display data only. */}
-                      {r.level === "campaign" && r.full_roas_3d != null && (
+                      {r.level === "campaign" && r.full_roas_3d != null && r.full_roas_3d > 0 && (
                         <p
                           className="mt-0.5 text-[11px] text-muted-foreground"
                           title="قيمة المشتري الكاملة ÷ تكلفة النتيجة — معلومة فقط ولا تغيّر الحكم"
