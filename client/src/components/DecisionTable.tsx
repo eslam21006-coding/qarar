@@ -817,10 +817,13 @@ export function DecisionTable({
           currency: currencySymbol,
         }).className;
       }
+      // Loading (no aggregate yet): the cell shows "—", so no verdict colour
+      // either — a 🔴 row used to get the red class on a dash (CodeRabbit #32).
+      if (!a) return "font-bold";
       return cpaCell({
         verdict: r.verdict,
-        results: a ? a.results : 0,
-        cpa: a?.cpa ?? null,
+        results: a.results,
+        cpa: a.cpa,
         target: unitTarget,
         currency: currencySymbol,
       }).className;

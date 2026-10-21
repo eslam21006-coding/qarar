@@ -290,7 +290,8 @@ with 1 counted result, one with 2.
    **Then** the cost half of the high-efficiency test can fire 🛟.
 3. **Given** a starved ad whose high efficiency comes from CTR, **When** the matrix runs, **Then**
    the 500-impression floor from 015 still applies unchanged.
-4. **Live account (brief §4.4)**: no 🛟 appears on an ad with a single sale.
+4. **Live account (brief §4.4)**: no **cost-based** 🛟 appears on an ad with fewer than 2 counted
+   results. A CTR-based 🛟 with one result is still valid (FR-025).
 
 ---
 
@@ -366,7 +367,7 @@ clause)
   | none past their gates | ⏳ | "اترك البيانات تتجمع" |
   | 🔴 + ⏳ only (no 🟢, no 🟡) | 🟡 | "أوقِف [names of 🔴 ad sets]" |
   | otherwise | 🟡 | list what to do inside |
-  | any 🛟 ad inside its active ad sets | append the count of rescue-worthy ads (FR-003a); never changes the derived color |
+  | any 🛟 ad inside its active ad sets | (unchanged) | append the count of rescue-worthy ads (FR-003a); never changes the derived color |
 
   "Judged" means a verdict other than ⏳.
 - **FR-003a**: The campaign action MUST end with a count of rescue-worthy ads: ads whose verdict is

@@ -18,13 +18,16 @@ DATABASE_URL= pnpm exec vitest run server/engine.test.ts   # engine only
 ```
 
 Never run `vitest -u` blindly. Every snapshot change gets a row in the justification table in the
-implementation report (expected: the four campaign rows in research.md §4.2, nothing else).
+implementation report (final approved list: the T021 campaign rows, `ad_cb` (FR-036), `as_cb`
+(T047) and `as_w1` (level-aware W copy), nothing else).
+
+**"Green" with `DATABASE_URL` empty** means every suite passes except `server/auth-flow.e2e.test.ts`, which needs a database and fails by design while `DATABASE_URL` is empty.
 
 ## Checkpoint 0 — shared selector is behaviour-neutral (SC-004)
 
 After adopting `countedResults` in the engine and **before any other change**:
-`DATABASE_URL= pnpm test` green with **no** snapshot diff (`git diff --stat server/__snapshots__`
-empty).
+`DATABASE_URL= pnpm test` green — every suite passes except `server/auth-flow.e2e.test.ts`, which needs a database and fails by design while `DATABASE_URL` is empty — with **no** snapshot diff
+(`git diff --stat server/__snapshots__` empty).
 
 ## Scenarios
 
@@ -58,4 +61,5 @@ empty).
 2. Switch the table 3d → 7d → 30d: never results > 0 with an empty cost; 3d numbers equal the
    verdict's numbers.
 3. Column headers are Arabic; the banner says "بدون اليوم".
-4. No 🛟 on an ad with a single sale.
+4. No **cost-based** 🛟 on an ad with fewer than 2 counted results (a CTR-based 🛟 with one result is
+   still valid, FR-025).

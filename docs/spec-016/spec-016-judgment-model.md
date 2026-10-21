@@ -36,7 +36,7 @@ Plus leftover copy from spec 015's P3 that the owner sees every day: English col
   | all judged children 🔴 | 🔴 | "أوقِف الحملة — كل مجموعاتها تخسر" |
   | none past their gates | ⏳ | "اترك البيانات تتجمع" |
   | otherwise | 🟡 | list what to do inside |
-  | any 🛟 child | add the rescue to the action list; never changes the derived color |
+  | any 🛟 child | (unchanged) | add the rescue to the action list; never changes the derived color |
 
 - **Rule code** of the derived verdict: the rule of the most severe child (kill > watch > rescue > continue > too_early); ties → first by spend. Reason names the count of children per color (with correct number–noun agreement).
 - Campaign full-funnel ROAS stays **displayed** (row + tooltip), never a verdict source. Remove campaign-level K1/W6/S2 rule logic.

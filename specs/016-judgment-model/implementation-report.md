@@ -1142,7 +1142,7 @@ Live account (brief §4), unticked:
 - [ ] Switch the table 3d → 7d → 30d: never results > 0 with an empty cost; 3d numbers equal the
   verdict's numbers.
 - [ ] Column headers are Arabic; the banner says "بدون اليوم".
-- [ ] No 🛟 on an ad with a single sale.
+- [ ] No cost-based 🛟 on an ad with fewer than 2 counted results (a CTR-based 🛟 with one result is still valid, FR-025).
 
 Folded in from T051 (demo account, in the running app):
 
