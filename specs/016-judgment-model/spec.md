@@ -85,7 +85,7 @@ verdict excludes today.
   verdict equals the derived verdict** (ties → highest spend) (owner decision D-R1). If no child has
   that verdict — a 🟡 derived from 🟢 + 🔴, or from 🔴 + ⏳, children — use the most severe child's code, and the
   campaign's rule tooltip reads "من مجموعة {ad set name}: {rule title}", so a 🟡 row never shows a
-  bare stop title such as "خطر اليوم — أوقِفه فورًا". The funnel card's fault class follows the code
+  bare stop title such as "خطر اليوم — أوقِفها فورًا". The funnel card's fault class follows the code
   actually chosen. The derived row names its source ad set for the tooltip.
 - Q: Where does the "من مجموعة" prefix appear? → A: On **every** derived campaign, not only when no
   child matches the derived verdict (owner decision Q3), and on every surface that shows a derived
@@ -153,12 +153,12 @@ campaign row shows 🟡, its action names the two 🔴 ad sets to stop and the �
    **Then** the campaign is 🟡 and its action lists what to do inside it.
 5b. **Given** an active campaign with one 🟢 and one 🔴 ad set (CB2) and no 🟡, **When** the
    dashboard loads, **Then** it is 🟡 with rule code CB2 and its rule tooltip reads "من مجموعة
-   {the 🔴 ad set's name}: خطر اليوم — أوقِفه فورًا".
+   {the 🔴 ad set's name}: خطر اليوم — أوقِفها فورًا".
 5c. **Given** an active campaign with a 🟡 ad set (W3) and a more severe 🔴 ad set (K1) and no 🟢,
    **When** the dashboard loads, **Then** it is 🟡 with rule code W3, taken from the 🟡 ad set.
 5d. **Given** the verdict history of a campaign, **When** the dialog shows an old entry "campaign,
    kill, K1" and a new entry "campaign, watch, CB2", **Then** the first shows the bare K1 title and
-   the second shows "من إحدى مجموعاتها: خطر اليوم — أوقِفه فورًا".
+   the second shows "من إحدى مجموعاتها: خطر اليوم — أوقِفها فورًا".
 5a. **Given** an active campaign whose active ad sets hold 3 active 🛟 ads, **When** the dashboard
    loads, **Then** its action ends with "فيها 3 إعلانات تستحق الإنقاذ", names no ad, and its color
    is the one its ad sets alone produce.

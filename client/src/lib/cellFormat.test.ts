@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { budgetControlView, cpaCell, historyRuleTitle, resultsCell, ruleTitleText } from "./cellFormat";
+import { RULES } from "@shared/qarar";
 
 describe("T058: cpaCell formatter — too_early vs kill+zero-results", () => {
   it("too_early row renders a neutral dash (no color)", () => {
@@ -178,12 +179,24 @@ describe("budgetControlView — spec 016 C6", () => {
 
 describe("ruleTitleText — spec 016 C2a", () => {
   it("no ad-set name → the bare rule title", () => {
-    expect(ruleTitleText("CB2")).toBe("خطر اليوم — أوقِفه فورًا");
+    expect(ruleTitleText("CB2")).toBe("خطر اليوم — أوقِفها فورًا");
   });
   it("with the source ad set → prefixed", () => {
     expect(ruleTitleText("CB2", "Stage B — جمهور Lookalike 1%")).toBe(
-      "من مجموعة Stage B — جمهور Lookalike 1%: خطر اليوم — أوقِفه فورًا"
+      "من مجموعة Stage B — جمهور Lookalike 1%: خطر اليوم — أوقِفها فورًا"
     );
+  });
+});
+
+// Self-review M1 — CB1 and CB2 fire on ad sets only (circuit breaker, §5.3),
+// so their titles and definitions use the feminine forms, like their
+// actions (T047). They render as "من مجموعة {name}: …" on derived campaigns.
+describe("RULES CB1 / CB2 — ad-set agreement (self-review M1)", () => {
+  it("titles and definitions are feminine", () => {
+    expect(RULES.CB1.titleAr).toBe("تنبيه اليوم — راجعها غدًا");
+    expect(RULES.CB1.defAr).toBe("صرفت اليوم مبلغًا كبيرًا بلا أي نتيجة — راجعها صباح الغد قبل أن تتركها تصرف من جديد.");
+    expect(RULES.CB2.titleAr).toBe("خطر اليوم — أوقِفها فورًا");
+    expect(RULES.CB2.defAr).toBe("صرفت اليوم أكثر من ضعفين ونصف هدفك بلا أي نتيجة — أوقِفها الآن وقيّم الوضع بنفسك.");
   });
 });
 
@@ -193,7 +206,7 @@ describe("historyRuleTitle — spec 016 C2b (FR-004a)", () => {
   });
   it("derived entry (campaign, watch, CB2) → prefixed", () => {
     expect(historyRuleTitle({ level: "campaign", verdict: "watch", rule: "CB2" })).toBe(
-      "من إحدى مجموعاتها: خطر اليوم — أوقِفه فورًا"
+      "من إحدى مجموعاتها: خطر اليوم — أوقِفها فورًا"
     );
   });
   it("ad set / watch / K1 → no prefix", () => {

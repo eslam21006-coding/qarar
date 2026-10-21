@@ -32,9 +32,9 @@ empty).
 |---|---|---|---|
 | S-R1-1 | FR-003 ≥1 🟢 | demo paid_lto `cmp_test` | 🟡 CB2; action `أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B — جمهور Lookalike 1%» وأبقِ «Stage A — بروود + Advantage» — فيها إعلان واحد يستحق الإنقاذ` |
 | S-R1-2 | FR-003 otherwise | demo `cmp_scale` (both funnels); demo free_lead `cmp_test` | 🟡 W1 from `as_w1`; free_lead `cmp_test` 🟡 W3 from `as_good`; actions list the ad sets with their own actions |
-| S-R1-2a | FR-004 / D-R1 | hover the rule chip on demo paid_lto `cmp_test` | "من مجموعة Stage B — جمهور Lookalike 1%: خطر اليوم — أوقِفه فورًا" |
+| S-R1-2a | FR-004 / D-R1 | hover the rule chip on demo paid_lto `cmp_test` | "من مجموعة Stage B — جمهور Lookalike 1%: خطر اليوم — أوقِفها فورًا" |
 | S-R1-2b | FR-004 / Q2 | a derived 🔴 campaign in today's decisions | badge and "قاعدة: …" line carry "من مجموعة {name}: …" |
-| S-R1-2c | FR-004a / Q1 | open the history dialog of a campaign that was S2 and is now 🟡 CB2 | old entries keep bare titles; the new 🟡 CB2 entry reads "من إحدى مجموعاتها: خطر اليوم — أوقِفه فورًا" |
+| S-R1-2c | FR-004a / Q1 | open the history dialog of a campaign that was S2 and is now 🟡 CB2 | old entries keep bare titles; the new 🟡 CB2 entry reads "من إحدى مجموعاتها: خطر اليوم — أوقِفها فورًا" |
 | S-R1-3 | FR-003 all 🔴 / ⏳ / empty | hand-built campaigns | 🔴 "أوقِف الحملة — كل مجموعاتها تخسر"; ⏳ "اترك البيانات تتجمع" |
 | S-R1-4 | FR-002 W5 | demo with `htoUnderperforming` | `cmp_scale` stays 🟡 W5 with findings + CTA |
 | S-R1-5 | FR-008/009 | demo table | ABO `cmp_test`: no campaign buttons, ad-set buttons enabled; CBO `cmp_scale`: campaign buttons disabled with tooltip, ad-set rows show none |

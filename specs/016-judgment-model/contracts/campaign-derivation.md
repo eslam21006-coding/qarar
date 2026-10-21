@@ -186,14 +186,14 @@ fixture whose `account_funnel_cta` differs gets a row in "Funnel card changes" (
 2a. (D-R1 a) A 🟡 campaign with a 🟡 W3 child and a more severe 🔴 K1 child (no 🟢) carries W3 from
    the 🟡 child, not K1.
 2b. (D-R1 b) A campaign with a 🟢 child and a 🔴 CB2 child (no 🟡) is 🟡 with rule CB2,
-   `derived_from_adset` = the 🔴 child, and `ruleTitleText` = "من مجموعة {name}: خطر اليوم — أوقِفه
+   `derived_from_adset` = the 🔴 child, and `ruleTitleText` = "من مجموعة {name}: خطر اليوم — أوقِفها
    فورًا".
 2c. (Q3) A derived 🟢 campaign (matching source) also has `derived_from_adset` set and the prefixed
    title.
 2d. (Q2) A derived 🔴 campaign in `top_3_actions` carries `derived_from_adset`; its top-action title
    is prefixed.
 2e. (Q1) `historyRuleTitle`: campaign/kill/K1 → bare title; campaign/watch/CB2 → "من إحدى
-   مجموعاتها: خطر اليوم — أوقِفه فورًا"; ad set/watch/K1 → bare title; campaign/watch/W1 → bare
+   مجموعاتها: خطر اليوم — أوقِفها فورًا"; ad set/watch/K1 → bare title; campaign/watch/W1 → bare
    title.
 3. Paused child excluded from P; paused 🛟 ad and 🛟 ad in a paused ad set excluded from R.
 4. FR-003a text for 0, 1, 2, 3, 11; verdict and rule identical with and without R.

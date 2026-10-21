@@ -1149,7 +1149,7 @@ Folded in from T051 (demo account, in the running app):
 - [ ] S-R1-1 paid_lto `cmp_test`: 🟡, action "أوقِف «Stage A — جمهور اهتمام: ريادة أعمال»، «Stage B
   — جمهور Lookalike 1%» وأبقِ «Stage A — بروود + Advantage» — فيها إعلان واحد يستحق الإنقاذ".
 - [ ] S-R1-2 / 2a: the rule chip on `cmp_test` reads "من مجموعة Stage B — جمهور Lookalike 1%: خطر
-  اليوم — أوقِفه فورًا"; `cmp_scale` is 🟡 W1.
+  اليوم — أوقِفها فورًا"; `cmp_scale` is 🟡 W1.
 - [ ] S-R1-2b: a derived 🔴 campaign in today's decisions shows "من مجموعة …" in its badge and its
   "قاعدة: …" line.
 - [ ] S-R1-2c: the history dialog of a campaign now 🟡 CB2 shows "من إحدى مجموعاتها: …" only on
@@ -1315,6 +1315,66 @@ Error: Database connection failed
       Tests  912 passed | 37 skipped (949)
    Start at  20:03:15
    Duration  15.74s (transform 9.25s, setup 112.39s, collect 64.58s, tests 22.95s, environment 30.38s, prepare 34.74s)
+
+ ELIFECYCLE  Test failed. See above for more details.
+```
+
+
+## ▶ Self-review before the PR (2026-10-21)
+
+Findings: `specs/016-judgment-model/self-review.md`.
+- **1 must-fix (M1)**, fixed below.
+- **5 should-fix (S1–S5)**, open, for the owner.
+- **12 nits (N1–N12)**: 4 pre-existing or accepted, the rest open.
+
+The rulebook 2.2.1 table and changelog fixes were committed alone beforehand: `27ac38e`.
+
+### M1 — CB1 / CB2 rule titles and definitions agree with the ad set ✅
+
+`shared/qarar.ts` RULES, which feeds the tooltip only:
+
+| Field | Before | After |
+|---|---|---|
+| CB1 title | تنبيه اليوم — راجعه غدًا | تنبيه اليوم — راجعها غدًا |
+| CB1 definition | صرف اليوم … راجعه صباح الغد قبل أن تتركه يصرف من جديد. | صرفت اليوم … راجعها صباح الغد قبل أن تتركها تصرف من جديد. |
+| CB2 title | خطر اليوم — أوقِفه فورًا | خطر اليوم — أوقِفها فورًا |
+| CB2 definition | صرف اليوم … أوقِفه الآن وقيّم الوضع بنفسك. | صرفت اليوم … أوقِفها الآن وقيّم الوضع بنفسك. |
+
+- **Tests first** (`client/src/lib/cellFormat.test.ts`):
+  - new: "RULES CB1 / CB2 — ad-set agreement";
+  - updated: the `ruleTitleText` and `historyRuleTitle` CB2 expectations.
+  - 4 failed before the fix, then 28/28 passed.
+- **Docs**: the quoted title is updated in spec.md (3 places), contracts/campaign-derivation.md,
+  quickstart.md (S-R1-2a/2c) and the T053 checklist. Historic log entries stay as written.
+- **No verdict, rule code, snapshot row or baseline row moves**: `RULES` is not part of either
+  lock.
+
+### Gate ✅
+
+- `pnpm run check`: clean.
+- `pnpm test`: **913 passed**, 37 skipped. Only `auth-flow.e2e.test.ts` fails, as expected: it
+  needs a database and `DATABASE_URL` is empty.
+- Snapshot and baseline: no change on this run.
+- Funnel card vs `funnel-card-main.json`: 0 differences on all 12 fixtures.
+
+Raw `pnpm run check`:
+
+```text
+> qarar@1.0.0 check D:\Qarar worktrees\Qarar-016-judgment-model
+> tsc --noEmit
+
+```
+
+Raw `pnpm test` (closing block):
+
+```text
+ FAIL  server/auth-flow.e2e.test.ts > Authentication Flow E2E
+Error: Database connection failed
+
+ Test Files  1 failed | 60 passed | 2 skipped (63)
+      Tests  913 passed | 37 skipped (950)
+   Start at  09:15:26
+   Duration  21.80s (transform 14.91s, setup 141.93s, collect 104.83s, tests 37.07s, environment 37.14s, prepare 47.51s)
 
  ELIFECYCLE  Test failed. See above for more details.
 ```
